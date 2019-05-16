@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <script src="https://cdn.jsdelivr.net/npm/viz.js@1.8.0/viz.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.5.0/dist/svg-pan-zoom.min.js"></script>
+        <style>
+head, body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+}
+#list-container {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 200px;
+    overflow-y: auto;
+}
+#graph {
+    position: absolute;
+    left: 200px;
+    right: 0;
+    top: 0;
+    bottom: 0;
+}
+#graph svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+#list {
+    padding: 1em;
+}
+.list-item {
+    cursor: pointer;
+}
+.list-item:hover {
+    background: skyblue;
+}
+.list-item.active {
+    background: blue;
+    color: white;
+}
+        </style>
+    </head>
+    <body>
+        <div id="list-container"><div id="list"></div></div>
+        <div id="graph">
+
+        </div>
+        <script>/*PLACEHOLDER*/</script>
+        <script>
+var list = document.getElementById('list');
+var graph = document.getElementById('graph');
+
+var panZoom = null;
+var activeItem = null;
+
+function bestZoom() {
+    return document.getElementsByTagName('svg')[0].height.baseVal.value / graph.offsetHeight;
+}
+
+Object.keys(data).sort((a, b) => parseInt(a, 16) - parseInt(b, 16)).forEach(pc => {
+    let div = document.createElement('div');
+    div.className = 'list-item';
+    div.textContent = pc;
+    div.addEventListener('click', event => {
+        event.preventDefault();
+
+        if (activeItem) activeItem.classList.remove('active');
+        div.classList.add('active');
+        activeItem = div;
+
+        let result = Viz(data[pc]);
+        let svg = new DOMParser().parseFromString(result, "image/svg+xml").documentElement;
+        graph.innerHTML = '';
+        graph.appendChild(svg);
+
+        panZoom = svgPanZoom(svg, {
+          controlIconsEnabled: true,
+          zoomScaleSensitivity: 0.5,
+          minZoom: 0.8,
+          maxZoom: bestZoom(),
+        });
+    })
+    list.appendChild(div);
+});
+
+window.addEventListener('resize', () => {
+    if (panZoom) {
+        panZoom.setMaxZoom(bestZoom());
+        panZoom.resize();
+    }
+});
+
+        </script>
+    </body>
+</html>
