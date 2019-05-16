@@ -160,7 +160,7 @@ Dbt_runtime::Dbt_runtime() {
     icache_tag_ = std::unique_ptr<emu::reg_t[]> { new emu::reg_t[4096] };
     icache_ = std::unique_ptr<std::byte*[]> { new std::byte*[4096] };
     for (size_t i = 0; i < 4096; i++) {
-        icache_tag_[i] = 0;
+        icache_tag_[i] = INT64_MIN;
     }
 }
 
@@ -437,7 +437,7 @@ void Dbt_compiler::generate_eh_frame() {
 
 void Dbt_runtime::flush_cache() {
     for (int i = 0; i < 4096; i++)
-        icache_tag_[i] = 0;
+        icache_tag_[i] = INT64_MIN;
     inst_cache_.clear();
 }
 
