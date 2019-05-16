@@ -1077,7 +1077,7 @@ Basic_block Decoder::decode_basic_block() {
         block.instructions.push_back(inst);
 
         // TODO: We should also consider breaking when this gets large.
-        if (can_change_control_flow(inst)) {
+        if (can_change_control_flow(inst) || (pc_ &~ 4095) != (block.start_pc &~ 4095)) {
             break;
         }
     }
