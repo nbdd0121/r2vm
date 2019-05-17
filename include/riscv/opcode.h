@@ -215,6 +215,10 @@ enum class Opcode {
     /* Base Opcode = NMADD */
     fnmadd_d,
 
+    /* Privileged */
+    sret,
+    wfi,
+    sfence_vma,
 };
 
 } // riscv

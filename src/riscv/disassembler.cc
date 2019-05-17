@@ -34,6 +34,16 @@ const char* Disassembler::csr_name(Csr csr) {
         CASE(cycleh)
         CASE(timeh)
         CASE(instreth)
+        CASE(sstatus)
+        CASE(sie)
+        CASE(stvec)
+        CASE(scounteren)
+        CASE(sscratch)
+        CASE(sepc)
+        CASE(scause)
+        CASE(stval)
+        CASE(sip)
+        CASE(satp)
 #undef CASE
         default:
             return "(unknown)";
@@ -199,6 +209,9 @@ const char* Disassembler::opcode_name(Opcode opcode) {
         case Opcode::fmsub_d: return "fmsub.d";
         case Opcode::fnmsub_d: return "fnmsub.d";
         case Opcode::fnmadd_d: return "fnmadd.d";
+        case Opcode::sret: return "sret";
+        case Opcode::wfi: return "wfi";
+        case Opcode::sfence_vma: return "sfence.vma";
         default: return "(unknown)";
     }
 }
@@ -268,11 +281,14 @@ void Disassembler::print_instruction(reg_t pc, uint32_t bits, Instruction inst) 
         case Opcode::jalr:
             util::log("{}, {}({})", register_name(rd), imm, register_name(rs1));
             break;
-        // TODO: display the arguments of fence?
+        // TODO: display the arguments of fence/sfence.vma?
         case Opcode::fence:
         case Opcode::fence_i:
         case Opcode::ecall:
         case Opcode::ebreak:
+        case Opcode::sret:
+        case Opcode::wfi:
+        case Opcode::sfence_vma:
             break;
         case Opcode::sb:
         case Opcode::sh:
@@ -444,7 +460,6 @@ void Disassembler::print_instruction(reg_t pc, uint32_t bits, Instruction inst) 
         case Opcode::fnmadd_d:
             util::log("f{}, f{}, f{}, f{}", rd, rs1, rs2, inst.rs3());
             break;
-
         case Opcode::illegal:
             break;
     }

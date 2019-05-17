@@ -975,12 +975,14 @@ Instruction Decoder::decode(uint32_t bits) {
             case 0b1110011: {
                 switch (function) {
                     case 0b000:
-                        if (bits == 0x73) {
-                            // All other bits cleared
-                            ret.opcode(Opcode::ecall);
-                            return ret;
-                        } else if (bits == 0x100073) {
-                            ret.opcode(Opcode::ebreak);
+                        switch (bits) {
+                            case 0x73: ret.opcode(Opcode::ecall); return ret;
+                            case 0x100073: ret.opcode(Opcode::ebreak); return ret;
+                            case 0x10200073: ret.opcode(Opcode::sret); return ret;
+                            case 0x10500073: ret.opcode(Opcode::wfi); return ret;
+                        }
+                        if (ret.rd() == 0 && Funct7_field::extract(bits) == 0b0001001) {
+                            ret.opcode(Opcode::sfence_vma);
                             return ret;
                         }
                         goto illegal;
@@ -1025,13 +1027,17 @@ bool Decoder::can_change_control_flow(Instruction inst) {
         case Opcode::bgeu:
         case Opcode::jalr:
         case Opcode::jal:
+        // Return from ecall also changes control flow.
+        case Opcode::sret:
         // ecall and illegal logically does not interrupt control flow, but as they trigger fault, the control flow
         // will eventually be redirected to the signal handler.
         case Opcode::ebreak:
         case Opcode::illegal:
         // fence.i might cause instruction cache to be invalidated. If the code executing is invalidated, then we need
         // to stop executing, so it is safer to treat it as special instruction at the moment.
+        // sfence.vma has similar effects.
         case Opcode::fence_i:
+        case Opcode::sfence_vma:
         // ecall usually does not change control flow, but due to existence of syscall such as exit(), it is safer to
         // treat it as specially at the moment, and maybe considering optimizing later.
         case Opcode::ecall:
@@ -1045,7 +1051,9 @@ bool Decoder::can_change_control_flow(Instruction inst) {
         case Opcode::csrrsi:
         case Opcode::csrrci: {
             Csr csr = static_cast<Csr>(inst.imm());
-            return csr == Csr::instret || csr == Csr::instreth;
+            // Workaround Linux's setup code which assumes setting SATP changes addressing mode
+            // immediately.
+            return csr == Csr::instret || csr == Csr::instreth || csr == Csr::satp;
         }
         default:
             return false;
