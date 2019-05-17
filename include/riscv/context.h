@@ -6,7 +6,7 @@
 
 namespace riscv {
 
-// This class represent the state of a single hard (i.e. hardware thread).
+// This class represent the state of a single hart (i.e. hardware thread).
 struct Context {
     // registers[0] is reserved and maybe used for other purpose later
     reg_t registers[32];
