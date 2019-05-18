@@ -31,6 +31,19 @@ enum class Csr {
     satp = 0x180,
 };
 
+enum class Cause: uint8_t {
+    illegal_inst = 2,
+    breakpoint = 3,
+    ecall_from_u = 8,
+    load_page_fault = 13,
+};
+
+// Represent a synchronous trap caused by software.
+struct Trap: std::runtime_error {
+    Cause cause;
+    Trap(Cause cause): std::runtime_error { "trap" }, cause {cause} {}
+};
+
 } // riscv
 
 #endif

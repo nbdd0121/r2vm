@@ -1,6 +1,7 @@
 #include <iostream>
 
 #include "emu/mmu.h"
+#include "emu/state.h"
 #include "riscv/context.h"
 #include "riscv/csr.h"
 #include "riscv/instruction.h"
@@ -116,8 +117,8 @@ reg_t read_csr(Context *context, int csr) {
             // Assume that instret is incremented already.
             return context->instret - 1;
         default:
-            std::cerr << "READ CSR " << csr << std::endl;
-            throw "Illegal CSR";
+            std::cerr << "READ CSR " << std::hex << csr << std::endl;
+            throw Trap { Cause::illegal_inst };
     }
 }
 
@@ -136,8 +137,8 @@ void write_csr(Context *context, int csr, reg_t value) {
             context->instret = value;
             break;
         default:
-            std::cerr << "WRITE CSR " << csr << std::endl;
-            throw "Illegal CSR";
+            std::cerr << "WRITE CSR " << std::hex << csr << std::endl;
+            throw Trap { Cause::illegal_inst };
     }
 }
 
@@ -345,7 +346,7 @@ void step(Context *context, Instruction inst) {
             );
             break;
         case Opcode::ebreak:
-            throw "Break point";
+            throw Trap { Cause::breakpoint };
         /* CSR operations */
         case Opcode::csrrw: {
             int csr = inst.imm();
@@ -1031,9 +1032,11 @@ void step(Context *context, Instruction inst) {
             update_flags();
             break;
 
-        case Opcode::illegal:
-            std::cerr << "Illegal opcode " << std::endl;
-            throw "Illegal";
+        case Opcode::illegal: {
+            auto bin = emu::load_memory<uint32_t>(context->pc - inst.length());
+            std::cerr << "Illegal opcode " << std::hex << bin << std::endl;
+            throw Trap { Cause::illegal_inst };
+        }
     }
 }
 
