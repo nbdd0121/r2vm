@@ -19,7 +19,8 @@ void Interpreter::step(riscv::Context& context) {
 
         // Function step will assume the pc is pre-incremented, but this is clearly not the case for auipc. Therfore we
         // preprocess all auipc instructions to compensate this.
-        for (auto& inst: basic_block.instructions) {
+        for (size_t i = 0; i < basic_block.instructions.size() - 1; i++) {
+            auto& inst = basic_block.instructions[i];
             if (inst.opcode() == riscv::Opcode::auipc) {
                 inst.imm(inst.imm() + (pc - basic_block.start_pc) + inst.length());
             }
