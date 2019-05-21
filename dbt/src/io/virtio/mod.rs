@@ -1,8 +1,12 @@
 mod queue;
 mod mmio;
+mod block;
+mod rng;
 
 pub use queue::{Queue, Buffer};
 pub use mmio::Mmio;
+pub use block::Block;
+pub use rng::Rng;
 
 #[derive(Clone, Copy)]
 pub enum DeviceId {

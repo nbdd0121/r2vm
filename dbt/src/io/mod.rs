@@ -1,3 +1,7 @@
+pub mod virtio;
+pub mod console;
+pub mod plic;
+
 /// IoMemory represents a region of physically continuous I/O memory.
 ///
 /// We currently expect only one guest core can access a region of I/O memory at a time. Usually as
