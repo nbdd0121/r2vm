@@ -1,1 +1,5 @@
 bin/
+.vscode/
+dbt/target
+/release
+/codegen
