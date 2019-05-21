@@ -229,8 +229,6 @@ int main(int argc, const char **argv) {
                 executor.step(context);
             }
         }
-    } catch (emu::Exit_control& ex) {
-        return ex.exit_code;
     } catch (std::exception& ex) {
         util::print("{}\npc  = {:16x}  ra  = {:16x}\n", ex.what(), context.pc, context.registers[1]);
         for (int i = 2; i < 32; i += 2) {

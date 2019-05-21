@@ -63,12 +63,6 @@ extern bool no_direct_memory_access;
 
 }
 
-// This is not really an error. However it shares some properties with an exception, as it needs to break out from
-// any nested controls and stop executing guest code.
-struct Exit_control: std::runtime_error {
-    uint8_t exit_code;
-    Exit_control(uint8_t exit_code): std::runtime_error { "exit" }, exit_code {exit_code} {}
-};
 
 // Load elf, and setup auxillary vectors.
 reg_t load_elf(const char *filename, reg_t& sp);

@@ -552,16 +552,14 @@ reg_t syscall(
                 util::log("exit({}) = ?\n", arg0);
             }
 
-            // Record the exit_code so that the emulator can correctly return it.
-            throw emu::Exit_control { static_cast<uint8_t>(arg0) };
+            exit(arg0);
         }
         case riscv::abi::Syscall_number::exit_group: {
             if (state::strace) {
                 util::log("exit_group({}) = ?\n", arg0);
             }
 
-            // Record the exit_code so that the emulator can correctly return it.
-            throw emu::Exit_control { static_cast<uint8_t>(arg0) };
+            exit(arg0);
         }
         case riscv::abi::Syscall_number::uname: {
             sreg_t ret;
