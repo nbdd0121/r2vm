@@ -36,12 +36,15 @@ enum class Cause: uint8_t {
     breakpoint = 3,
     ecall_from_u = 8,
     load_page_fault = 13,
+    store_page_fault = 15,
 };
 
 // Represent a synchronous trap caused by software.
-struct Trap: std::runtime_error {
+struct Trap {
     Cause cause;
-    Trap(Cause cause): std::runtime_error { "trap" }, cause {cause} {}
+    reg_t tval;
+    Trap(Cause cause): cause {cause}, tval {0} {}
+    Trap(Cause cause, reg_t tval): cause {cause}, tval {tval} {}
 };
 
 } // riscv

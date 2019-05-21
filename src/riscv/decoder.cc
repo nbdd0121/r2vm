@@ -1061,7 +1061,15 @@ bool Decoder::can_change_control_flow(Instruction inst) {
 }
 
 Instruction Decoder::decode_instruction() {
-    uint32_t bits = emu::load_memory<uint32_t>(pc_);
+    uint32_t bits;
+    bits = emu::load_memory<uint16_t>(pc_);
+    if ((bits & 0b11) == 0b11) {
+        if ((pc_ & 4095) == 4094) {
+            bits |= (uint32_t)emu::load_memory<uint16_t>(pc_next_) << 16;
+        } else {
+            bits |= (uint32_t)emu::load_memory<uint16_t>(pc_ + 2) << 16;
+        }
+    }
     Instruction inst = decode(bits);
     if (emu::state::disassemble) {
         Disassembler::print_instruction(pc_, bits, inst);

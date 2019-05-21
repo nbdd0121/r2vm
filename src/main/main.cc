@@ -22,6 +22,7 @@
 #include "riscv/instruction.h"
 #include "riscv/opcode.h"
 #include "util/format.h"
+#include "util/bit_op.h"
 
 static const char *usage_string = "Usage: {} [options] program [arguments...]\n\
 Options:\n\
@@ -50,13 +51,24 @@ extern "C" {
     extern char **environ;
 }
 
+riscv::Context* ctx;
+extern "C" void interrupt() {
+    ctx->sip |= 512;
+    ctx->pending = ctx->sstatus & 0x2 ? ctx->sip & ctx->sie : 0;
+}
+
+extern "C" void rust_init();
+
 int main(int argc, const char **argv) {
 
     setup_fault_handler();
+    rust_init();
 
     /* Arguments to be parsed */
     bool use_dbt = false;
-    bool use_ir = true;
+    bool use_ir = false;
+
+    emu::state::no_direct_memory_access = true;
 
     // Parsing arguments
     int arg_index;
@@ -111,6 +123,7 @@ int main(int argc, const char **argv) {
     const char *program_name = argv[arg_index];
 
     riscv::Context context;
+    ctx = &context;
     emu::state::exec_path = program_name;
     for (int i = 0; i < 32; i++) {
         // Reset to some easily debuggable value.
@@ -122,6 +135,16 @@ int main(int argc, const char **argv) {
     context.fcsr = 0;
     context.instret = 0;
     context.lr = 0;
+    // UXL = 0b10, indicating 64-bit
+    context.sstatus = 0x200000000;
+    context.satp = 0;
+    context.pending = 0;
+    context.sip = 0;
+    context.timecmp = -1;
+
+    for (auto& l: context.line) {
+        l.tag = INT64_MAX;
+    }
 
     if (emu::state::user_only) {
         // Set sp to be the highest possible address.
@@ -210,6 +233,21 @@ int main(int argc, const char **argv) {
         context.registers[2] = sp;
         // libc adds this value into exit hook, so we need to make sure it is zero.
         context.registers[10] = 0;
+        context.prv = 0;
+    } else {
+        // Allocate a 1G memory for physical address, starting at 0x200000.
+        emu::guest_mmap_nofail(
+            0x200000, 0x40000000 - 0x200000,
+            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+        emu::reg_t size = emu::load_bin(program_name, 0x200000);
+        emu::load_bin("dt", 0x200000 + size);
+
+        // a0 is the current hartid
+        context.registers[10] = 0;
+        // a1 should be the device tree
+        context.registers[11] = 0x200000 + size;
+        context.pc = 0x200000;
+        context.prv = 1;
     }
 
     while (true) {
@@ -232,6 +270,16 @@ int main(int argc, const char **argv) {
                 while (true) {
                     executor.step(context);
                 }
+                do {
+                    executor.step(context);
+                    if (context.instret >= context.timecmp) {
+                        context.sip |= 32;
+                        context.pending = context.sstatus & 0x2 ? context.sip & context.sie : 0;
+                    }
+                } while (context.pending == 0);
+                int pending = util::log2_floor(context.pending);
+                context.sip &= ~(1<<pending);
+                throw riscv::Trap { (riscv::Cause)(0x80 + pending) };
             }
         } catch (riscv::Trap& trap) {
             if (emu::state::user_only) {
@@ -245,6 +293,28 @@ int main(int argc, const char **argv) {
                 }
                 return 1;
             }
+            context.sepc = context.pc;
+            context.stval = trap.tval;
+            context.scause = static_cast<uint8_t>(trap.cause);
+            // printf("context.scause = %lx\n", context.scause);
+            context.scause = ((context.scause & 0x80) << (64 - 8)) | (context.scause & 0x1f);
+            // Clear or set SPP bit
+            if (context.prv)
+                context.sstatus |= 0x100;
+            else
+                context.sstatus &=~ 0x100;
+            // Clear of set SPIE bit
+            if (context.sstatus & 0x2)
+                context.sstatus |= 0x20;
+            else
+                context.sstatus &=~ 0x20;
+            // Clear SIE
+            context.sstatus &= ~0x2;
+            context.pending = 0;
+            // Switch to S-mode
+            context.prv = 1;
+            ASSERT((context.stvec & 3) == 0);
+            context.pc = context.stvec;
         }
     }
 }

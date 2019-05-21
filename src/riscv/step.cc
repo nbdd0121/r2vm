@@ -9,6 +9,10 @@
 #include "softfp/float.h"
 #include "util/memory.h"
 
+extern "C" void console_putchar(uint8_t);
+extern "C" int64_t console_getchar();
+// extern"C" emu::reg_t read_csr(riscv::Context *context, int csr);
+
 namespace riscv::abi { 
     enum class Syscall_number;
 }
@@ -43,6 +47,12 @@ static inline uint64_t zero_ext16(uint16_t value) {
 
 static inline uint64_t zero_ext(uint32_t value) {
     return value;
+}
+
+template<typename T>
+static inline T load_memory(reg_t address) {
+    if (address >= 0x80000000) return mmio_read(address - 0x80000000);
+    return *(T*)(emu::translate_address(address));
 }
 
 static_assert(sizeof(freg_t) == 8);
@@ -113,9 +123,44 @@ reg_t read_csr(Context *context, int csr) {
             return (context->fcsr >> 5) & 0b111;
         case Csr::fcsr:
             return context->fcsr;
+        case Csr::time:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            // Pretend that we're 100MHz
+            return context->instret / 100;
         case Csr::instret:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
             // Assume that instret is incremented already.
             return context->instret - 1;
+        case Csr::sstatus:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return context->sstatus;
+        case Csr::sie:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return context->sie;
+        case Csr::stvec:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return context->stvec;
+        case Csr::scounteren:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return 0;
+        case Csr::sscratch:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return context->sscratch;
+        case Csr::sepc:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return context->sepc;
+        case Csr::scause:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return context->scause;
+        case Csr::stval:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return context->stval;
+        case Csr::sip:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return context->sip;
+        case Csr::satp:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            return context->satp;
         default:
             std::cerr << "READ CSR " << std::hex << csr << std::endl;
             throw Trap { Cause::illegal_inst };
@@ -136,6 +181,58 @@ void write_csr(Context *context, int csr, reg_t value) {
         case Csr::instret:
             context->instret = value;
             break;
+        case Csr::sstatus: {
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            // Mask-out non-writable bits
+            value &= 0xC6122;
+            // SSTATUS.FS = dirty, also set SD
+            if ((value & 0x6000) == 0x6000) value |= 0x8000000000000000;
+            // Hard-wire UXL to 0b10, i.e. 64-bit.
+            value |= 0x200000000;
+            context->sstatus = value;
+            // printf("sstatus = %lx\n", value);
+            context->pending = context->sstatus & 0x2 ? context->sip & context->sie : 0;
+            break;
+        }
+        case Csr::sie:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            context->sie = value;
+            context->pending = context->sstatus & 0x2 ? context->sip & context->sie : 0;
+            break;
+        case Csr::stvec:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            // Currently MODE can only be 0 or 1.
+            if ((value & 2)) break;
+            context->stvec = value;
+            break;
+        case Csr::scounteren:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            break;
+        case Csr::sscratch:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            context->sscratch = value;
+            break;
+        case Csr::sepc:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            context->sepc = value &~ 1;
+            break;
+        // scause = 0x142,
+        // stval = 0x143,
+        // sip = 0x144,
+        case Csr::satp:
+            if (context->prv == 0) throw Trap { Cause::illegal_inst };
+            switch (value >> 60) {
+                // No paging
+                case 0: context->satp = 0; break;
+                // ASID not yet supported
+                case 8: context->satp = value &~ (0xffffull << 44); break;
+                // We only support SV39 at the moment.
+                default: break;
+            }
+            for (auto& l: context->line) {
+                l.tag = INT64_MAX;
+            }
+            break;
         default:
             std::cerr << "WRITE CSR " << std::hex << csr << std::endl;
             throw Trap { Cause::illegal_inst };
@@ -152,25 +249,25 @@ void step(Context *context, Instruction inst) {
     switch (inst.opcode()) {
         /* LOAD */
         case Opcode::lb:
-            write_rd(sign_ext8(emu::load_memory<uint8_t>(read_rs1() + inst.imm())));
+            write_rd(sign_ext8(load_memory<uint8_t>(translate(context, read_rs1() + inst.imm(), false))));
             break;
         case Opcode::lh:
-            write_rd(sign_ext16(emu::load_memory<uint16_t>(read_rs1() + inst.imm())));
+            write_rd(sign_ext16(load_memory<uint16_t>(translate(context, read_rs1() + inst.imm(), false))));
             break;
         case Opcode::lw:
-            write_rd(sign_ext(emu::load_memory<uint32_t>(read_rs1() + inst.imm())));
+            write_rd(sign_ext(load_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), false))));
             break;
         case Opcode::ld:
-            write_rd(emu::load_memory<uint64_t>(read_rs1() + inst.imm()));
+            write_rd(load_memory<uint64_t>(translate(context, read_rs1() + inst.imm(), false)));
             break;
         case Opcode::lbu:
-            write_rd(zero_ext8(emu::load_memory<uint8_t>(read_rs1() + inst.imm())));
+            write_rd(zero_ext8(load_memory<uint8_t>(translate(context, read_rs1() + inst.imm(), false))));
             break;
         case Opcode::lhu:
-            write_rd(zero_ext16(emu::load_memory<uint16_t>(read_rs1() + inst.imm())));
+            write_rd(zero_ext16(load_memory<uint16_t>(translate(context, read_rs1() + inst.imm(), false))));
             break;
         case Opcode::lwu:
-            write_rd(zero_ext(emu::load_memory<uint32_t>(read_rs1() + inst.imm())));
+            write_rd(zero_ext(load_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), false))));
             break;
         /* MISC-MEM */
         case Opcode::fence:
@@ -226,16 +323,16 @@ void step(Context *context, Instruction inst) {
             break;
         /* STORE */
         case Opcode::sb:
-            emu::store_memory<uint8_t>(read_rs1() + inst.imm(), read_rs2());
+            emu::store_memory<uint8_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
             break;
         case Opcode::sh:
-            emu::store_memory<uint16_t>(read_rs1() + inst.imm(), read_rs2());
+            emu::store_memory<uint16_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
             break;
         case Opcode::sw:
-            emu::store_memory<uint32_t>(read_rs1() + inst.imm(), read_rs2());
+            emu::store_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
             break;
         case Opcode::sd:
-            emu::store_memory<uint64_t>(read_rs1() + inst.imm(), read_rs2());
+            emu::store_memory<uint64_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
             break;
         /* OP */
         case Opcode::add:
@@ -335,15 +432,34 @@ void step(Context *context, Instruction inst) {
         /* SYSTEM */
         /* Environment operations */
         case Opcode::ecall:
-            context->registers[10] = emu::syscall(
-                static_cast<abi::Syscall_number>(context->registers[17]),
-                context->registers[10],
-                context->registers[11],
-                context->registers[12],
-                context->registers[13],
-                context->registers[14],
-                context->registers[15]
-            );
+            // Environment-call-from-U
+            if (context->prv == 0) {
+                if (emu::state::user_only) {
+                    context->registers[10] = emu::syscall(
+                        static_cast<abi::Syscall_number>(context->registers[17]),
+                        context->registers[10],
+                        context->registers[11],
+                        context->registers[12],
+                        context->registers[13],
+                        context->registers[14],
+                        context->registers[15]
+                    );
+                } else {
+                    throw Trap { Cause::ecall_from_u };
+                }
+            } else {
+                // This is a SBI-call
+                context->registers[10] = sbi_call(
+                    context,
+                    context->registers[17],
+                    context->registers[10],
+                    context->registers[11],
+                    context->registers[12],
+                    context->registers[13],
+                    context->registers[14],
+                    context->registers[15]
+                );
+            }
             break;
         case Opcode::ebreak:
             throw Trap { Cause::breakpoint };
@@ -518,13 +634,13 @@ void step(Context *context, Instruction inst) {
         // Stub implementations. Single thread only.
         case Opcode::lr_w: {
             reg_t addr = read_rs1();
-            write_rd(sign_ext(emu::load_memory<uint32_t>(addr)));
+            write_rd(sign_ext(load_memory<uint32_t>(translate(context, addr, true))));
             context->lr = addr;
             break;
         }
         case Opcode::lr_d: {
             reg_t addr = read_rs1();
-            write_rd(emu::load_memory<uint64_t>(addr));
+            write_rd(load_memory<uint64_t>(translate(context, addr, true)));
             context->lr = addr;
             break;
         }
@@ -534,7 +650,7 @@ void step(Context *context, Instruction inst) {
                 write_rd(1);
                 return;
             }
-            emu::store_memory<uint32_t>(addr, read_rs2());
+            emu::store_memory<uint32_t>(translate(context, addr, true), read_rs2());
             write_rd(0);
             break;
         }
@@ -544,7 +660,7 @@ void step(Context *context, Instruction inst) {
                 write_rd(1);
                 return;
             }
-            emu::store_memory<uint64_t>(addr, read_rs2());
+            emu::store_memory<uint64_t>(translate(context, addr, true), read_rs2());
             write_rd(0);
             break;
         }
@@ -552,158 +668,158 @@ void step(Context *context, Instruction inst) {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
             if (inst.rd() != 0) {
-                write_rd(sign_ext(emu::load_memory<uint32_t>(addr)));
+                write_rd(sign_ext(load_memory<uint32_t>(translate(context, addr, true))));
             }
-            emu::store_memory<uint32_t>(addr, src);
+            emu::store_memory<uint32_t>(translate(context, addr, true), src);
             break;
         }
         case Opcode::amoswap_d: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
             if (inst.rd() != 0) {
-                write_rd(emu::load_memory<uint64_t>(addr));
+                write_rd(load_memory<uint64_t>(translate(context, addr, true)));
             }
-            emu::store_memory<uint64_t>(addr, src);
+            emu::store_memory<uint64_t>(translate(context, addr, true), src);
             break;
         }
         case Opcode::amoadd_w: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint32_t mem = emu::load_memory<uint32_t>(addr);
+            uint32_t mem = load_memory<uint32_t>(translate(context, addr, true));
             write_rd(sign_ext(mem));
-            emu::store_memory<uint32_t>(addr, src + mem);
+            emu::store_memory<uint32_t>(translate(context, addr, true), src + mem);
             break;
         }
         case Opcode::amoadd_d: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint64_t mem = emu::load_memory<uint64_t>(addr);
+            uint64_t mem = load_memory<uint64_t>(translate(context, addr, true));
             write_rd(mem);
-            emu::store_memory<uint64_t>(addr, src + mem);
+            emu::store_memory<uint64_t>(translate(context, addr, true), src + mem);
             break;
         }
         case Opcode::amoand_w: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint32_t mem = emu::load_memory<uint32_t>(addr);
+            uint32_t mem = load_memory<uint32_t>(translate(context, addr, true));
             write_rd(sign_ext(mem));
-            emu::store_memory<uint32_t>(addr, src & mem);
+            emu::store_memory<uint32_t>(translate(context, addr, true), src & mem);
             break;
         }
         case Opcode::amoand_d: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint64_t mem = emu::load_memory<uint64_t>(addr);
+            uint64_t mem = load_memory<uint64_t>(translate(context, addr, true));
             write_rd(mem);
-            emu::store_memory<uint64_t>(addr, src & mem);
+            emu::store_memory<uint64_t>(translate(context, addr, true), src & mem);
             break;
         }
         case Opcode::amoor_w: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint32_t mem = emu::load_memory<uint32_t>(addr);
+            uint32_t mem = load_memory<uint32_t>(translate(context, addr, true));
             write_rd(sign_ext(mem));
-            emu::store_memory<uint32_t>(addr, src | mem);
+            emu::store_memory<uint32_t>(translate(context, addr, true), src | mem);
             break;
         }
         case Opcode::amoor_d: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint64_t mem = emu::load_memory<uint64_t>(addr);
+            uint64_t mem = load_memory<uint64_t>(translate(context, addr, true));
             write_rd(mem);
-            emu::store_memory<uint64_t>(addr, src | mem);
+            emu::store_memory<uint64_t>(translate(context, addr, true), src | mem);
             break;
         }
         case Opcode::amoxor_w: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint32_t mem = emu::load_memory<uint32_t>(addr);
+            uint32_t mem = load_memory<uint32_t>(translate(context, addr, true));
             write_rd(sign_ext(mem));
-            emu::store_memory<uint32_t>(addr, src ^ mem);
+            emu::store_memory<uint32_t>(translate(context, addr, true), src ^ mem);
             break;
         }
         case Opcode::amoxor_d: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint64_t mem = emu::load_memory<uint64_t>(addr);
+            uint64_t mem = load_memory<uint64_t>(translate(context, addr, true));
             write_rd(mem);
-            emu::store_memory<uint64_t>(addr, src ^ mem);
+            emu::store_memory<uint64_t>(translate(context, addr, true), src ^ mem);
             break;
         }
         case Opcode::amomin_w: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint32_t mem = emu::load_memory<uint32_t>(addr);
+            uint32_t mem = load_memory<uint32_t>(translate(context, addr, true));
             write_rd(sign_ext(mem));
-            emu::store_memory<uint32_t>(addr, std::min<int32_t>(src, mem));
+            emu::store_memory<uint32_t>(translate(context, addr, true), std::min<int32_t>(src, mem));
             break;
         }
         case Opcode::amomin_d: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint64_t mem = emu::load_memory<uint64_t>(addr);
+            uint64_t mem = load_memory<uint64_t>(translate(context, addr, true));
             write_rd(mem);
-            emu::store_memory<uint64_t>(addr, std::min<int64_t>(src, mem));
+            emu::store_memory<uint64_t>(translate(context, addr, true), std::min<int64_t>(src, mem));
             break;
         }
         case Opcode::amomax_w: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint32_t mem = emu::load_memory<uint32_t>(addr);
+            uint32_t mem = load_memory<uint32_t>(translate(context, addr, true));
             write_rd(sign_ext(mem));
-            emu::store_memory<uint32_t>(addr, std::max<int32_t>(src, mem));
+            emu::store_memory<uint32_t>(translate(context, addr, true), std::max<int32_t>(src, mem));
             break;
         }
         case Opcode::amomax_d: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint64_t mem = emu::load_memory<uint64_t>(addr);
+            uint64_t mem = load_memory<uint64_t>(translate(context, addr, true));
             write_rd(mem);
-            emu::store_memory<uint64_t>(addr, std::max<int64_t>(src, mem));
+            emu::store_memory<uint64_t>(translate(context, addr, true), std::max<int64_t>(src, mem));
             break;
         }
         case Opcode::amominu_w: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint32_t mem = emu::load_memory<uint32_t>(addr);
+            uint32_t mem = load_memory<uint32_t>(translate(context, addr, true));
             write_rd(sign_ext(mem));
-            emu::store_memory<uint32_t>(addr, std::min<uint32_t>(src, mem));
+            emu::store_memory<uint32_t>(translate(context, addr, true), std::min<uint32_t>(src, mem));
             break;
         }
         case Opcode::amominu_d: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint64_t mem = emu::load_memory<uint64_t>(addr);
+            uint64_t mem = load_memory<uint64_t>(translate(context, addr, true));
             write_rd(mem);
-            emu::store_memory<uint64_t>(addr, std::min<uint64_t>(src, mem));
+            emu::store_memory<uint64_t>(translate(context, addr, true), std::min<uint64_t>(src, mem));
             break;
         }
         case Opcode::amomaxu_w: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint32_t mem = emu::load_memory<uint32_t>(addr);
+            uint32_t mem = load_memory<uint32_t>(translate(context, addr, true));
             write_rd(sign_ext(mem));
-            emu::store_memory<uint32_t>(addr, std::max<uint32_t>(src, mem));
+            emu::store_memory<uint32_t>(translate(context, addr, true), std::max<uint32_t>(src, mem));
             break;
         }
         case Opcode::amomaxu_d: {
             reg_t addr = read_rs1();
             reg_t src = read_rs2();
-            uint64_t mem = emu::load_memory<uint64_t>(addr);
+            uint64_t mem = load_memory<uint64_t>(translate(context, addr, true));
             write_rd(mem);
-            emu::store_memory<uint64_t>(addr, std::max<uint64_t>(src, mem));
+            emu::store_memory<uint64_t>(translate(context, addr, true), std::max<uint64_t>(src, mem));
             break;
         }
 
         /* F-extension */
         case Opcode::flw: {
-            uint32_t value = emu::load_memory<uint32_t>(read_rs1() + inst.imm());
+            uint32_t value = load_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), false));
             write_frd_s(util::read_as<softfp::Single>(&value));
             break;
         }
         case Opcode::fsw: {
             softfp::Single value = read_frs2_s();
-            emu::store_memory<uint32_t>(read_rs1() + inst.imm(), util::read_as<uint32_t>(&value));
+            emu::store_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), true), util::read_as<uint32_t>(&value));
             break;
         }
         case Opcode::fadd_s:
@@ -860,13 +976,13 @@ void step(Context *context, Instruction inst) {
 
         /* D-extension */
         case Opcode::fld: {
-            uint64_t value = emu::load_memory<uint64_t>(read_rs1() + inst.imm());
+            uint64_t value = load_memory<uint64_t>(translate(context, read_rs1() + inst.imm(), false));
             write_frd_d(util::read_as<softfp::Double>(&value));
             break;
         }
         case Opcode::fsd: {
             softfp::Double value = read_frs2_d();
-            emu::store_memory<uint64_t>(read_rs1() + inst.imm(), util::read_as<uint64_t>(&value));
+            emu::store_memory<uint64_t>(translate(context, read_rs1() + inst.imm(), true), util::read_as<uint64_t>(&value));
             break;
         }
         case Opcode::fadd_d:
@@ -1031,13 +1147,113 @@ void step(Context *context, Instruction inst) {
             write_frd_d(-softfp::Double::fused_multiply_add(read_frs1_d(), read_frs2_d(), read_frs3_d()));
             update_flags();
             break;
+        case Opcode::sret:
+            context->pc = context->sepc;
 
+            // Set privilege according to SPP
+            if (context->sstatus & 0x100)
+                context->prv = 1;
+            else
+                context->prv = 0;
+            
+            // Set SIE according to SPIE
+            if (context->sstatus & 0x20)
+                context->sstatus |= 0x2;
+            else
+                context->sstatus &=~ 0x2;
+
+            // Set SPIE to 1
+            context->sstatus |= 0x20;
+            // Set SPP to U
+            context->sstatus &= ~0x100;
+            break;
+        case Opcode::wfi:
+            break;
+        case Opcode::sfence_vma:
+            for (auto& l: context->line) {
+                l.tag = INT64_MAX;
+            }
+            context->executor->flush_cache();
+            break;
         case Opcode::illegal: {
-            auto bin = emu::load_memory<uint32_t>(context->pc - inst.length());
+            auto bin = load_memory<uint32_t>(context->pc - inst.length());
             std::cerr << "Illegal opcode " << std::hex << bin << std::endl;
             throw Trap { Cause::illegal_inst };
         }
     }
+}
+
+reg_t sbi_call(Context *context,
+    reg_t nr,
+    reg_t arg0, reg_t arg1, reg_t arg2, [[maybe_unused]] reg_t arg3, [[maybe_unused]] reg_t arg4, [[maybe_unused]] reg_t arg5
+) {
+    switch (nr) {
+        case 0: context->timecmp = arg0 * 100; /* std::cerr << "set_timer " << arg0 << std::endl; */ return 0;
+        case 1: console_putchar((uint8_t)arg0); return 0;
+        case 2: return console_getchar();
+        case 3: std::cerr << "Ignore clear_ipi" << std::endl; return 0;
+        case 4: std::cerr << "Ignore send_ipi" << std::endl; return 0;
+        case 5:
+        case 6:
+        case 7: for (auto& l: context->line) {
+                l.tag = INT64_MAX;
+            } context->executor->flush_cache(); return 0;
+        case 8: exit(0);
+        default: {
+            std::cerr << "Unknown SBI call " << nr << std::endl;
+            throw "oops";
+        }
+    }
+}
+extern "C" bool memory_probe_read(uintptr_t);
+extern "C" bool memory_probe_write(uintptr_t);
+
+#define CACHE_LINE_LOG2_SIZE 12
+
+reg_t translate(Context* context, reg_t addr, bool write) {
+    auto idx = addr >> CACHE_LINE_LOG2_SIZE;
+    auto& line = context->line[idx & 1023];
+    if (LIKELY(line.tag == idx)) {
+        if (!write || (line.paddr & 1)) {
+            return (line.paddr &~ 1) | (addr & ((1 << CACHE_LINE_LOG2_SIZE) - 1));
+        }
+    }
+    auto fault_type = write ? Cause::store_page_fault : Cause::load_page_fault;
+    reg_t ret;
+    if (!(context->satp >> 60)) {
+        if (write ? memory_probe_read(addr) : memory_probe_read(addr)) {
+            throw "access error";
+        }
+        return addr;
+    }
+    uint64_t ppn = context->satp & ((1ULL << 44) - 1);
+    uint64_t pte = emu::load_memory<uint64_t>(ppn * 4096 + ((addr >> 30) & 511) * 8);
+    if (!(pte & 1)) throw Trap { fault_type, addr };
+    ppn = pte >> 10;
+    if ((pte & 0xf) != 1) {
+        ret = (ppn << 12) | (addr & ((1<<30)-1));
+        goto check_perm;
+    }
+    pte = emu::load_memory<uint64_t>(ppn * 4096 + ((addr >> 21) & 511) * 8);
+    if (!(pte & 1)) throw Trap { fault_type, addr };
+    ppn = pte >> 10;
+    if ((pte & 0xf) != 1) {
+        ret = (ppn << 12) | (addr & ((1<<21)-1));
+        goto check_perm;
+    }
+    pte = emu::load_memory<uint64_t>(ppn * 4096 + ((addr >> 12) & 511) * 8);
+    if (!(pte & 1)) throw Trap { fault_type, addr };
+    ppn = pte >> 10;
+    ret = (ppn << 12) | (addr & 4095);
+check_perm:
+    if (!(pte & 0x40) || (write && (!(pte & 0x4) || !(pte & 0x80)))) throw Trap {fault_type, addr};
+    line.tag = idx;
+    line.paddr = ret &~ ((1 << CACHE_LINE_LOG2_SIZE) - 1);
+    if (ret < 0x80000000 && (write ? memory_probe_read(line.paddr) : memory_probe_read(line.paddr))) {
+        throw "access error";
+    }
+    if (write) line.paddr |= 1;
+    return ret;
 }
 
 }

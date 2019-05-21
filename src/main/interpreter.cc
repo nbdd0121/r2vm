@@ -11,10 +11,17 @@ Interpreter::~Interpreter() {}
 
 void Interpreter::step(riscv::Context& context) {
     emu::reg_t pc = context.pc;
-    riscv::Basic_block& basic_block = inst_cache_[pc];
+    emu::reg_t phys_pc = riscv::translate(&context, context.pc, false);
+    emu::reg_t phys_pc_next;
+    try {
+        phys_pc_next = riscv::translate(&context, (context.pc &~ 4095) + 4096, false);
+    } catch (...) {
+        phys_pc_next = 0;
+    }
+    riscv::Basic_block& basic_block = inst_cache_[phys_pc];
 
     if (UNLIKELY(basic_block.instructions.size() == 0)) {
-        riscv::Decoder decoder {pc};
+        riscv::Decoder decoder {phys_pc, phys_pc_next};
         basic_block = decoder.decode_basic_block();
 
         // Function step will assume the pc is pre-incremented, but this is clearly not the case for auipc. Therfore we
@@ -22,9 +29,9 @@ void Interpreter::step(riscv::Context& context) {
         for (size_t i = 0; i < basic_block.instructions.size() - 1; i++) {
             auto& inst = basic_block.instructions[i];
             if (inst.opcode() == riscv::Opcode::auipc) {
-                inst.imm(inst.imm() + (pc - basic_block.start_pc) + inst.length());
+                inst.imm(inst.imm() + (phys_pc - basic_block.start_pc) + inst.length());
             }
-            pc += inst.length();
+            phys_pc += inst.length();
         }
     }
 
@@ -45,7 +52,7 @@ void Interpreter::step(riscv::Context& context) {
         }
     }
 
-    context.pc = basic_block.end_pc;
+    context.pc = pc + basic_block.end_pc - basic_block.start_pc;
     context.instret += block_size + 1;
     riscv::Instruction inst = basic_block.instructions[block_size];
     try {

@@ -1,0 +1,73 @@
+/dts-v1/;
+
+/ {
+    model = "riscv-virtio,qemu";
+    compatible = "riscv-virtio";
+    #address-cells = <2>;
+    #size-cells = <2>;
+    chosen {
+        bootargs = "console=hvc0 root=/dev/vda rw";
+    };
+    cpus {
+        timebase-frequency = <1000000>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+        cpu@0 {
+            clock-frequency = <0>;
+            mmu-type = "riscv,sv39";
+            riscv,isa = "rv64imafdc";
+            compatible = "riscv";
+            status = "okay";
+            reg = <0>;
+            device_type = "cpu";
+            intc: interrupt-controller {
+                #interrupt-cells = <1>;
+                interrupt-controller;
+                compatible = "riscv,cpu-intc";
+            };
+        };
+        cpu@1 {
+            clock-frequency = <0>;
+            mmu-type = "riscv,sv39";
+            riscv,isa = "rv64imafdc";
+            compatible = "riscv";
+            status = "okay";
+            reg = <1>;
+            device_type = "cpu";
+            intc1: interrupt-controller {
+                #interrupt-cells = <1>;
+                interrupt-controller;
+                compatible = "riscv,cpu-intc";
+            };
+        };
+
+    };
+    soc {
+        ranges;
+        compatible = "simple-bus";
+        #address-cells = <2>;
+        #size-cells = <2>;
+		plic: plic@80100000 {
+			#interrupt-cells = <1>;
+			interrupt-controller;
+			compatible = "sifive,plic-1.0.0";
+			riscv,ndev = <31>;
+			reg = <0x0 0x80100000 0x0 0x400000>;
+			interrupts-extended = <&intc 9 &intc1 9>;
+		};
+        virtio@80000000 {
+            reg = <0x0 0x80000000 0x0 0x1000>;
+            compatible = "virtio,mmio";
+            interrupts-extended = <&plic 1>;
+        };
+        virtio@80001000 {
+            reg = <0x0 0x80001000 0x0 0x1000>;
+            compatible = "virtio,mmio";
+            interrupts-extended = <&plic 2>;
+        };
+    };
+    memory@200000 {
+        reg = <0x0 0x200000 0x0 0x3FE00000>;
+        device_type = "memory";
+    };
+};

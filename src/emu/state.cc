@@ -29,6 +29,6 @@ bool monitor_performance = false;
 
 bool no_direct_memory_access = false;
 
-bool user_only = true;
+bool user_only = false;
 
 }

@@ -11,6 +11,9 @@
 #include "util/assert.h"
 #include "util/safe_memory.h"
 
+extern "C" uint32_t mmio_read(uint64_t);
+extern "C" void mmio_write(uint64_t, uint32_t);
+
 namespace emu {
 
 static constexpr reg_t page_size = 0x1000;
@@ -28,11 +31,13 @@ int guest_munmap(reg_t address, reg_t size);
 
 template<typename T>
 inline T load_memory(reg_t address) {
+    if (address >= 0x80000000) return mmio_read(address - 0x80000000);
     return util::safe_read<T>(translate_address(address));
 }
 
 template<typename T>
 inline void store_memory(reg_t address, T value) {
+    if (address >= 0x80000000) return mmio_write(address - 0x80000000, value);
     util::safe_write<T>(translate_address(address), value);
 }
 
