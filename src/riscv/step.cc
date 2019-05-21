@@ -65,7 +65,7 @@ static inline softfp::Single read_single(freg_t& target) {
 
 static inline void set_rm_real(int rm) {
     if (rm >= 5) {
-        throw "Illegal rounding mode";
+        throw Trap { Cause::illegal_inst };
     }
     softfp::rounding_mode = static_cast<softfp::Rounding_mode>(rm);
 }

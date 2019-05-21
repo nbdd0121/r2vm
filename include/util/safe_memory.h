@@ -15,6 +15,9 @@ void safe_memcpy(void *dst, const void *src, size_t size);
 
 void safe_memset(void *memory, int byte, size_t size);
 
+extern "C" bool memory_probe_read(uintptr_t);
+extern "C" bool memory_probe_write(uintptr_t);
+
 } // util
 
 #endif

@@ -61,14 +61,16 @@ extern bool monitor_performance;
 // Whether direct memory access or call to helper should be generated for guest memory access.
 extern bool no_direct_memory_access;
 
-}
+// Simulate user-mode only
+extern bool user_only;
 
+}
 
 // Load elf, and setup auxillary vectors.
 reg_t load_elf(const char *filename, reg_t& sp);
 
 // Load a binary to specified location
-void load_bin(const char *filename, reg_t location);
+reg_t load_bin(const char *filename, reg_t location);
 
 }
 

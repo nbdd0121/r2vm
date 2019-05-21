@@ -16,6 +16,7 @@
 #include "main/signal.h"
 #include "riscv/basic_block.h"
 #include "riscv/context.h"
+#include "riscv/csr.h"
 #include "riscv/decoder.h"
 #include "riscv/disassembler.h"
 #include "riscv/instruction.h"
@@ -109,135 +110,141 @@ int main(int argc, const char **argv) {
     }
     const char *program_name = argv[arg_index];
 
-    // Set sp to be the highest possible address.
-    emu::reg_t sp = 0x7fff00000000;
-    emu::guest_mmap(sp - 0x800000, 0x800000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-
-    // This contains (guest) pointers to all argument strings annd environment variables.
-    std::vector<emu::reg_t> env_pointers;
-    std::vector<emu::reg_t> arg_pointers(argc - arg_index);
-
-    // Copy all environment variables into guest user space.
-    for (char** env = environ; *env; env++) {
-        size_t env_length = strlen(*env) + 1;
-
-        // Allocate memory from stack and copy to that region.
-        sp -= env_length;
-        emu::copy_from_host(sp, *env, env_length);
-        env_pointers.push_back(sp);
-    }
-
-    // Copy all arguments into guest user space.
-    for (int i = argc - 1; i >= arg_index; i--) {
-        size_t arg_length = strlen(argv[i]) + 1;
-
-        // Allocate memory from stack and copy to that region.
-        sp -= arg_length;
-        emu::copy_from_host(sp, argv[i], arg_length);
-        arg_pointers[i - arg_index] = sp;
-    }
-
-    // Align the stack to 8-byte boundary.
-    sp &= ~7;
-
-    auto push = [&sp](emu::reg_t value) {
-        sp -= sizeof(emu::reg_t);
-        emu::store_memory<emu::reg_t>(sp, value);
-    };
-
-    // Random data
-    {
-        std::default_random_engine rd;
-        push(rd());
-        push(rd());
-        push(rd());
-        push(rd());
-    }
-
-    emu::reg_t random_data = sp;
-
-    // Setup auxillary vectors.
-    push(0);
-    push(AT_NULL);
-
-    // Initialize context, and set up ELF-specific auxillary vectors.
     riscv::Context context;
     emu::state::exec_path = program_name;
-    context.pc = emu::load_elf(program_name, sp);
-
-    push(getuid());
-    push(AT_UID);
-    push(geteuid());
-    push(AT_EUID);
-    push(getgid());
-    push(AT_GID);
-    push(getegid());
-    push(AT_EGID);
-    push(0);
-    push(AT_HWCAP);
-    push(100);
-    push(AT_CLKTCK);
-    push(random_data);
-    push(AT_RANDOM);
-
-    // fill in environ, last is nullptr
-    push(0);
-    sp -= env_pointers.size() * sizeof(emu::reg_t);
-    emu::copy_from_host(sp, env_pointers.data(), env_pointers.size() * sizeof(emu::reg_t));
-
-    // fill in argv, last is nullptr
-    push(0);
-    sp -= arg_pointers.size() * sizeof(emu::reg_t);
-    emu::copy_from_host(sp, arg_pointers.data(), arg_pointers.size() * sizeof(emu::reg_t));
-
-    // set argc
-    push(arg_pointers.size());
-
-    for (int i = 1; i < 32; i++) {
+    for (int i = 0; i < 32; i++) {
         // Reset to some easily debuggable value.
         context.registers[i] = 0xCCCCCCCCCCCCCCCC;
         context.fp_registers[i] = 0xFFFFFFFFFFFFFFFF;
     }
-
     // x0 must always be 0
     context.registers[0] = 0;
-    // sp
-    context.registers[2] = sp;
-    // libc adds this value into exit hook, so we need to make sure it is zero.
-    context.registers[10] = 0;
     context.fcsr = 0;
     context.instret = 0;
     context.lr = 0;
 
-    try {
-        if (use_ir) {
-            Ir_dbt executor;
-            context.executor = &executor;
-            while (true) {
-                executor.step(context);
+    if (emu::state::user_only) {
+        // Set sp to be the highest possible address.
+        emu::reg_t sp = 0x7fff0000;
+        emu::guest_mmap(sp - 0x800000, 0x800000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+
+        // This contains (guest) pointers to all argument strings annd environment variables.
+        std::vector<emu::reg_t> env_pointers;
+        std::vector<emu::reg_t> arg_pointers(argc - arg_index);
+
+        // Copy all environment variables into guest user space.
+        for (char** env = environ; *env; env++) {
+            size_t env_length = strlen(*env) + 1;
+
+            // Allocate memory from stack and copy to that region.
+            sp -= env_length;
+            emu::copy_from_host(sp, *env, env_length);
+            env_pointers.push_back(sp);
+        }
+
+        // Copy all arguments into guest user space.
+        for (int i = argc - 1; i >= arg_index; i--) {
+            size_t arg_length = strlen(argv[i]) + 1;
+
+            // Allocate memory from stack and copy to that region.
+            sp -= arg_length;
+            emu::copy_from_host(sp, argv[i], arg_length);
+            arg_pointers[i - arg_index] = sp;
+        }
+
+        // Align the stack to 8-byte boundary.
+        sp &= ~7;
+
+        auto push = [&sp](emu::reg_t value) {
+            sp -= sizeof(emu::reg_t);
+            emu::store_memory<emu::reg_t>(sp, value);
+        };
+
+        // Random data
+        {
+            std::default_random_engine rd;
+            push(rd());
+            push(rd());
+            push(rd());
+            push(rd());
+        }
+
+        emu::reg_t random_data = sp;
+
+        // Setup auxillary vectors.
+        push(0);
+        push(AT_NULL);
+
+        // Initialize context, and set up ELF-specific auxillary vectors.
+        context.pc = emu::load_elf(program_name, sp);
+
+        push(getuid());
+        push(AT_UID);
+        push(geteuid());
+        push(AT_EUID);
+        push(getgid());
+        push(AT_GID);
+        push(getegid());
+        push(AT_EGID);
+        push(0);
+        push(AT_HWCAP);
+        push(100);
+        push(AT_CLKTCK);
+        push(random_data);
+        push(AT_RANDOM);
+
+        // fill in environ, last is nullptr
+        push(0);
+        sp -= env_pointers.size() * sizeof(emu::reg_t);
+        emu::copy_from_host(sp, env_pointers.data(), env_pointers.size() * sizeof(emu::reg_t));
+
+        // fill in argv, last is nullptr
+        push(0);
+        sp -= arg_pointers.size() * sizeof(emu::reg_t);
+        emu::copy_from_host(sp, arg_pointers.data(), arg_pointers.size() * sizeof(emu::reg_t));
+
+        // set argc
+        push(arg_pointers.size());
+
+        // sp
+        context.registers[2] = sp;
+        // libc adds this value into exit hook, so we need to make sure it is zero.
+        context.registers[10] = 0;
+    }
+
+    while (true) {
+        try {
+            if (use_ir) {
+                Ir_dbt executor;
+                context.executor = &executor;
+                while (true) {
+                    executor.step(context);
+                }
+            } else if (use_dbt) {
+                Dbt_runtime executor;
+                context.executor = &executor;
+                while (true) {
+                    executor.step(context);
+                }
+            } else {
+                Interpreter executor;
+                context.executor = &executor;
+                while (true) {
+                    executor.step(context);
+                }
             }
-        } else if (use_dbt) {
-            Dbt_runtime executor;
-            context.executor = &executor;
-            while (true) {
-                executor.step(context);
-            }
-        } else {
-            Interpreter executor;
-            context.executor = &executor;
-            while (true) {
-                executor.step(context);
+        } catch (riscv::Trap& trap) {
+            if (emu::state::user_only) {
+                util::print("unhandled trap {}\npc  = {:16x}  ra  = {:16x}\n", (uint8_t)trap.cause, context.pc, context.registers[1]);
+                for (int i = 2; i < 32; i += 2) {
+                    util::print(
+                        "{:-3} = {:16x}  {:-3} = {:16x}\n",
+                        riscv::Disassembler::register_name(i), context.registers[i],
+                        riscv::Disassembler::register_name(i + 1), context.registers[i + 1]
+                    );
+                }
+                return 1;
             }
         }
-    } catch (std::exception& ex) {
-        util::print("{}\npc  = {:16x}  ra  = {:16x}\n", ex.what(), context.pc, context.registers[1]);
-        for (int i = 2; i < 32; i += 2) {
-            util::print(
-                "{:-3} = {:16x}  {:-3} = {:16x}\n",
-                riscv::Disassembler::register_name(i), context.registers[i],
-                riscv::Disassembler::register_name(i + 1), context.registers[i + 1]
-            );
-        }
-        return 1;
     }
 }

@@ -91,7 +91,7 @@ public:
     // significand_width >= 2 + 2 ** (exponent_width - 1)
     static_assert(significand_width <= 2 + (Exponent(1) << (exponent_width - 1)), "Exponent is not large enough");
 
-    // This need to be able intermediatary calculation results.
+    // This need to be able to store intermediatary calculation results.
     // for addition: significand + hidden bit + carry bit + two more bits precision for rounding.
     // for subtract: significand + hidden bit + borrow bit + two more bits precision for rounding.
     //
