@@ -394,7 +394,7 @@ reg_t syscall(
         case riscv::abi::Syscall_number::close: {
             // Handle standard IO specially, pretending close is sucessful.
             sreg_t ret;
-            if (arg0 == 1 || arg0 == 2) {
+            if (arg0 <= 2) {
                 ret = 0;
             } else {
                 ret = return_errno(close(arg0));
