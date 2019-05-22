@@ -218,127 +218,19 @@ void step(Context *context, Instruction inst) {
 
         /* M-extension */
         case Opcode::mul:
-            write_rd(read_rs1() * read_rs2());
-            break;
-        case Opcode::mulh: {
-            util::int128_t a = static_cast<sreg_t>(read_rs1());
-            util::int128_t b = static_cast<sreg_t>(read_rs2());
-            write_rd((a * b) >> 64);
-            break;
-        }
-        case Opcode::mulhsu: {
-            sreg_t rs1 = read_rs1();
-            reg_t rs2 = read_rs2();
-
-            // First multiply as uint128_t. This will give compiler chance to optimize better.
-            util::uint128_t a = static_cast<reg_t>(rs1);
-            util::uint128_t b = rs2;
-            reg_t r = (a * b) >> 64;
-
-            // If rs1 < 0, then the high bits of a should be all one, but the actual bits in a is all zero. Therefore
-            // we need to compensate this error by adding multiplying 0xFFFFFFFF and b, which is effective -b.
-            if (rs1 < 0) r -= rs2;
-            write_rd(r);
-            break;
-        }
-        case Opcode::mulhu: {
-            util::uint128_t a = read_rs1();
-            util::uint128_t b = read_rs2();
-            write_rd((a * b) >> 64);
-            break;
-        }
-        case Opcode::div: {
-            int64_t operand1 = read_rs1();
-            int64_t operand2 = read_rs2();
-            if (operand2 == 0) {
-                write_rd(-1);
-            } else if (operand1 == std::numeric_limits<int64_t>::min() && operand2 == -1) {
-                write_rd(operand1);
-            } else {
-                write_rd(operand1 / operand2);
-            }
-            break;
-        }
-        case Opcode::divu: {
-            uint64_t operand1 = read_rs1();
-            uint64_t operand2 = read_rs2();
-            if (operand2 == 0) {
-                write_rd(-1);
-            } else {
-                write_rd(operand1 / operand2);
-            }
-            break;
-        }
-        case Opcode::rem: {
-            int64_t operand1 = read_rs1();
-            int64_t operand2 = read_rs2();
-            if (operand2 == 0) {
-                write_rd(operand1);
-            } else if (operand1 == std::numeric_limits<int64_t>::min() && operand2 == -1) {
-                write_rd(0);
-            } else {
-                write_rd(operand1 % operand2);
-            }
-            break;
-        }
-        case Opcode::remu: {
-            uint64_t operand1 = read_rs1();
-            uint64_t operand2 = read_rs2();
-            if (operand2 == 0) {
-                write_rd(operand1);
-            } else {
-                write_rd(operand1 % operand2);
-            }
-            break;
-        }
+        case Opcode::mulh:
+        case Opcode::mulhsu:
+        case Opcode::mulhu:
+        case Opcode::div:
+        case Opcode::divu:
+        case Opcode::rem:
+        case Opcode::remu:
         case Opcode::mulw:
-            write_rd(sign_ext(read_rs1() * read_rs2()));
-            break;
-        case Opcode::divw: {
-            int32_t operand1 = read_rs1();
-            int32_t operand2 = read_rs2();
-            if (operand2 == 0) {
-                write_rd(-1);
-            } else if (operand1 == std::numeric_limits<int32_t>::min() && operand2 == -1) {
-                write_rd(operand1);
-            } else {
-                write_rd(operand1 / operand2);
-            }
-            break;
-        }
-        case Opcode::divuw: {
-            uint32_t operand1 = read_rs1();
-            uint32_t operand2 = read_rs2();
-            if (operand2 == 0) {
-                write_rd(-1);
-            } else {
-                write_rd(sign_ext(operand1 / operand2));
-            }
-            break;
-        }
-        case Opcode::remw: {
-            int32_t operand1 = read_rs1();
-            int32_t operand2 = read_rs2();
-            if (operand2 == 0) {
-                write_rd(operand1);
-            } else if (operand1 == std::numeric_limits<int32_t>::min() && operand2 == -1) {
-                write_rd(0);
-            } else {
-                write_rd(operand1 % operand2);
-            }
-            break;
-        }
-        case Opcode::remuw: {
-            uint32_t operand1 = read_rs1();
-            uint32_t operand2 = read_rs2();
-            if (operand2 == 0) {
-                write_rd(sign_ext(operand1));
-            } else {
-                write_rd(sign_ext(operand1 % operand2));
-            }
-            break;
-        }
-        
+        case Opcode::divw:
+        case Opcode::divuw:
+        case Opcode::remw:
+        case Opcode::remuw: throw "moved to rust";
+
         /* A-extension */
         // Stub implementations. Single thread only.
         case Opcode::lr_w: {

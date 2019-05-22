@@ -88,6 +88,23 @@ pub enum Op {
     Csrrsi { rd: u8, imm: u8, csr: Csr },
     Csrrci { rd: u8, imm: u8, csr: Csr },
 
+    /* M extension */
+    /* Base Opcode = OP */
+    Mul { rd: u8, rs1: u8, rs2: u8 },
+    Mulh { rd: u8, rs1: u8, rs2: u8 },
+    Mulhsu { rd: u8, rs1: u8, rs2: u8 },
+    Mulhu { rd: u8, rs1: u8, rs2: u8 },
+    Div { rd: u8, rs1: u8, rs2: u8 },
+    Divu { rd: u8, rs1: u8, rs2: u8 },
+    Rem { rd: u8, rs1: u8, rs2: u8 },
+    Remu { rd: u8, rs1: u8, rs2: u8 },
+    /* Base Opcode = OP-32 */
+    Mulw { rd: u8, rs1: u8, rs2: u8 },
+    Divw { rd: u8, rs1: u8, rs2: u8 },
+    Divuw { rd: u8, rs1: u8, rs2: u8 },
+    Remw { rd: u8, rs1: u8, rs2: u8 },
+    Remuw { rd: u8, rs1: u8, rs2: u8 },
+
 
     /* Privileged */
     Sret,

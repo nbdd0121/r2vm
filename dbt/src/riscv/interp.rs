@@ -356,6 +356,83 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
             write_reg!(rd, result);
         }
 
+        /* M-extension */
+        Op::Mul { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_mul(read_reg!(rs2))),
+        Op::Mulh { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1) as i64 as i128;
+            let b = read_reg!(rs2) as i64 as i128;
+            write_reg!(rd, ((a * b) >> 64) as u64)
+        }
+        Op::Mulhsu { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1) as i64;
+            let b = read_reg!(rs2);
+
+            // First multiply as uint128_t. This will give compiler chance to optimize better.
+            let exta = a as u64 as u128;
+            let extb = b as u128;
+            let mut r = ((exta * extb) >> 64) as u64;
+
+            // If rs1 < 0, then the high bits of a should be all one, but the actual bits in exta
+            // is all zero. Therefore we need to compensate this error by adding multiplying
+            // 0xFFFFFFFF and b, which is effective -b.
+            if a < 0 { r = r.wrapping_sub(b) }
+            write_reg!(rd, r)
+        }
+        Op::Mulhu { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1) as u128;
+            let b = read_reg!(rs2) as u128;
+            write_reg!(rd, ((a * b) >> 64) as u64)
+        }
+        Op::Div { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1) as i64;
+            let b = read_reg!(rs2) as i64;
+            let r = if b == 0 { -1 } else { a.wrapping_div(b) };
+            write_reg!(rd, r as u64);
+        }
+        Op::Divu { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1);
+            let b = read_reg!(rs2);
+            let r = if b == 0 { (-1i64) as u64 } else { a / b };
+            write_reg!(rd, r);
+        }
+        Op::Rem { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1) as i64;
+            let b = read_reg!(rs2) as i64;
+            let r = if b == 0 { a } else { a.wrapping_rem(b) };
+            write_reg!(rd, r as u64);
+        }
+        Op::Remu { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1);
+            let b = read_reg!(rs2);
+            let r = if b == 0 { a } else { a % b };
+            write_reg!(rd, r);
+        }
+        Op::Mulw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_mul(read_reg!(rs2) as i32)) as u64),
+        Op::Divw { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1) as i32;
+            let b = read_reg!(rs2) as i32;
+            let r = if b == 0 { -1 } else { a.wrapping_div(b) };
+            write_reg!(rd, r as u64);
+        }
+        Op::Divuw { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1) as u32;
+            let b = read_reg!(rs2) as u32;
+            let r = if b == 0 { (-1i32) as u32 } else { a / b };
+            write_reg!(rd, r as i32 as u64);
+        }
+        Op::Remw { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1) as i32;
+            let b = read_reg!(rs2) as i32;
+            let r = if b == 0 { a } else { a.wrapping_rem(b) };
+            write_reg!(rd, r as u64);
+        }
+        Op::Remuw { rd, rs1, rs2 } => {
+            let a = read_reg!(rs1) as u32;
+            let b = read_reg!(rs2) as u32;
+            let r = if b == 0 { a } else { a % b };
+            write_reg!(rd, r as i32 as u64);
+        }
+
         /* Privileged */
         Op::Sret => {
             ctx.pc = ctx.sepc;

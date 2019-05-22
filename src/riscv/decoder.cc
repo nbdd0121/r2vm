@@ -400,51 +400,11 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
             }
 
             /* Base Opcode OP */
-            case 0b0110011: {
-                int function7 = Funct7_field::extract(bits);
-
-                // M-extension
-                if (function7 == 0b0000001) {
-                    switch (function) {
-                        case 0b000: opcode = Opcode::mul; break;
-                        case 0b001: opcode = Opcode::mulh; break;
-                        case 0b010: opcode = Opcode::mulhsu; break;
-                        case 0b011: opcode = Opcode::mulhu; break;
-                        case 0b100: opcode = Opcode::div; break;
-                        case 0b101: opcode = Opcode::divu; break;
-                        case 0b110: opcode = Opcode::rem; break;
-                        case 0b111: opcode = Opcode::remu; break;
-                        // full case
-                    }
-                    ret.opcode(opcode);
-                    return ret;
-                }
-                throw "moved to rust";
-            }
-
+            case 0b0110011:
             /* Base Opcode LUI */
-            case 0b0110111: throw "moved to rust";
-
+            case 0b0110111:
             /* Base Opcode OP-32 */
-            case 0b0111011: {
-                int function7 = Funct7_field::extract(bits);
-
-                // M-extension
-                if (function7 == 0b0000001) {
-                    switch (function) {
-                        case 0b000: opcode = Opcode::mulw; break;
-                        case 0b100: opcode = Opcode::divw; break;
-                        case 0b101: opcode = Opcode::divuw; break;
-                        case 0b110: opcode = Opcode::remw; break;
-                        case 0b111: opcode = Opcode::remuw; break;
-                        default: goto illegal;
-                    }
-                    ret.opcode(opcode);
-                    return ret;
-                }
-
-                throw "moved to rust";
-            }
+            case 0b0111011: throw "moved to rust";
 
             /* Base Opcode MADD */
             case 0b1000011: {
