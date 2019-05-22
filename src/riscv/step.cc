@@ -155,20 +155,12 @@ void step(Context *context, Instruction inst) {
         case Opcode::ori:
         case Opcode::andi:
         /* AUIPC */
-        case Opcode::auipc: throw "moved to rust";
+        case Opcode::auipc:
         /* OP-IMM-32 */
         case Opcode::addiw:
-            write_rd(sign_ext(read_rs1() + inst.imm()));
-            break;
         case Opcode::slliw:
-            write_rd(sign_ext(read_rs1() << inst.imm()));
-            break;
         case Opcode::srliw:
-            write_rd(sign_ext(static_cast<uint32_t>(read_rs1()) >> inst.imm()));
-            break;
-        case Opcode::sraiw:
-            write_rd(sign_ext(static_cast<int32_t>(read_rs1()) >> inst.imm()));
-            break;
+        case Opcode::sraiw: throw "moved to rust";
         /* STORE */
         case Opcode::sb:
             emu::store_memory<uint8_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
@@ -214,9 +206,7 @@ void step(Context *context, Instruction inst) {
             write_rd(read_rs1() & read_rs2());
             break;
         /* LUI */
-        case Opcode::lui:
-            write_rd(inst.imm());
-            break;
+        case Opcode::lui: throw "moved to rust";
         /* OP-32 */
         case Opcode::addw:
             write_rd(sign_ext(read_rs1() + read_rs2()));

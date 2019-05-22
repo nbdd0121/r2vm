@@ -220,9 +220,6 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
     match *op {
         Op::Legacy(ref op) => return unsafe{legacy_step(ctx, op)},
         Op::Illegal => return 2,
-        /* MISC-MEM */
-        Op::Fence => (),
-        Op::FenceI => (),
         /* OP-IMM */
         Op::Addi { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1).wrapping_add(imm as u64)),
         Op::Slli { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) << imm),
@@ -233,6 +230,16 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
         Op::Srai { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i64) >> imm) as u64),
         Op::Ori { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) | (imm as u64)),
         Op::Andi { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) & (imm as u64)),
+        /* MISC-MEM */
+        Op::Fence => (),
+        Op::FenceI => (),
+        /* OP-IMM-32 */
+        Op::Addiw { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64),
+        Op::Slliw { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
+        Op::Srliw { rd, rs1, imm }=> write_reg!(rd, (((read_reg!(rs1) as u32) >> imm) as i32) as u64),
+        Op::Sraiw { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i32) >> imm) as u64),
+        /* LUI */
+        Op::Lui { rd, imm } => write_reg!(rd, imm as u64),
         /* AUIPC */
         Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64)),
         /* BRANCH */

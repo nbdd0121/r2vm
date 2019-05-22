@@ -34,6 +34,13 @@ pub enum Op {
     Andi { rd: u8, rs1: u8, imm: i32 },
     /* Base Opcode = AUIPC */
     Auipc { rd: u8, imm: i32 },
+    /* Base Opcode = OP-IMM-32 */
+    Addiw { rd: u8, rs1: u8, imm: i32 },
+    Slliw { rd: u8, rs1: u8, imm: i32 },
+    Srliw { rd: u8, rs1: u8, imm: i32 },
+    Sraiw { rd: u8, rs1: u8, imm: i32 },
+    /* Base Opcode = LUI */
+    Lui { rd: u8, imm: i32 },
     /* Base Opcode = BRANCH */
     Beq { rs1: u8, rs2: u8, imm: i32 },
     Bne { rs1: u8, rs2: u8, imm: i32 },

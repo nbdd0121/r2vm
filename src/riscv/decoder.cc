@@ -27,7 +27,6 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
         using C_rs1s_field = util::Bitfield<uint32_t, 9, 7>;
         using C_rs2s_field = C_rds_field;
 
-        using Ci_imm_field = util::Bitfield<int64_t, 12, 12, 6, 2>;
         using Ci_lwsp_imm_field = util::Bitfield<uint32_t, 3, 2, 12, 12, 6, 4, -1, 2>;
         using Ci_ldsp_imm_field = util::Bitfield<uint32_t, 4, 2, 12, 12, 6, 5, -1, 3>;
         using Ci_addi16sp_imm_field = util::Bitfield<int64_t, 12, 12, 4, 3, 5, 5, 2, 2, 6, 6, -1, 4>;
@@ -124,13 +123,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                             // Reserved
                             goto illegal_compressed;
                         }
-                        // C.ADDIW
-                        // translate to addiw rd, rd, imm
-                        ret.opcode(Opcode::addiw);
-                        ret.rd(rd);
-                        ret.rs1(rd);
-                        ret.imm(Ci_imm_field::extract(bits));
-                        return ret;
+                        throw "moved to rust";
                     }
                     case 0b010: throw "moved to rust";
                     case 0b011: {
@@ -143,13 +136,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                             }
                             throw "moved to rust";
                         } else {
-                            // rd = x0 is HINT
-                            // C.LUI
-                            // translate to lui rd, imm
-                            ret.opcode(Opcode::lui);
-                            ret.rd(rd);
-                            ret.imm(Ci_imm_field::extract(bits) << 12);
-                            return ret;
+                            throw "moved to rust";
                         }
                     }
                     case 0b100: {
@@ -347,7 +334,6 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
 
         using I_imm_field = util::Bitfield<int64_t, 31, 20>;
         using S_imm_field = util::Bitfield<int64_t, 31, 25, 11, 7>;
-        using U_imm_field = util::Bitfield<int64_t, 31, 12, -1, 12>;
 
         // Almost all functions use funct3
         int function = Funct3_field::extract(bits);
@@ -395,34 +381,9 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
             /* Base Opcode OP-IMM */
             case 0b0010011:
             /* Base Opcode AUIPC */
-            case 0b0010111: throw "moved to rust";
-
+            case 0b0010111:
             /* Base Opcode OP-IMM-32 */
-            case 0b0011011: {
-                reg_t imm = I_imm_field::extract(bits);
-                switch (function) {
-                    case 0b000: opcode = Opcode::addiw; break;
-                    case 0b001: {
-                        if (imm >= 32) goto illegal;
-                        opcode = Opcode::slliw;
-                        break;
-                    }
-                    case 0b101: {
-                        if (imm & 0x400) {
-                            opcode = Opcode::sraiw;
-                            imm &=~ 0x400;
-                        } else {
-                            opcode = Opcode::srliw;
-                        }
-                        if (imm >= 32) goto illegal;
-                        break;
-                    }
-                    goto illegal;
-                }
-                ret.opcode(opcode);
-                ret.imm(imm);
-                return ret;
-            }
+            case 0b0011011: throw "moved to rust";
 
             /* Base Opcode STORE */
             case 0b0100011: {
@@ -557,11 +518,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
             }
 
             /* Base Opcode LUI */
-            case 0b0110111: {
-                ret.opcode(Opcode::lui);
-                ret.imm(U_imm_field::extract(bits));
-                return ret;
-            }
+            case 0b0110111: throw "moved to rust";
 
             /* Base Opcode OP-32 */
             case 0b0111011: {

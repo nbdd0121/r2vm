@@ -165,7 +165,14 @@ pub fn decode_compressed(bits: u16) -> Op {
                     Op::Addi { rd, rs1: rd, imm: ci_imm(bits) }
                 }
                 0b001 => {
-                    Op::Illegal
+                    let rd = c_rd(bits);
+                    if rd == 0 {
+                        // Reserved
+                        return Op::Illegal
+                    }
+                    // C.ADDIW
+                    // translate to addiw rd, rd, imm
+                    Op::Addiw { rd, rs1: rd, imm: ci_imm(bits) }
                 }
                 0b010 => {
                     // rd = x0 is HINT
@@ -188,7 +195,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                         // rd = x0 is HINT
                         // C.LUI
                         // translate to lui rd, imm
-                        return Op::Illegal;
+                        Op::Lui { rd, imm: ci_imm(bits) << 12 }
                     }
                 }
                 0b100 => {
@@ -342,11 +349,34 @@ pub fn decode(bits: u32) -> Op {
             }
         }
 
+        /* OP-IMM-32 */
+        0b0011011 => {
+            let imm = i_imm(bits);
+            match function {
+                0b000 => Op::Addiw { rd, rs1, imm },
+                0b001 =>
+                    if imm >= 32 {
+                        Op::Illegal
+                    } else {
+                        Op::Slliw { rd, rs1, imm }
+                    }
+                0b101 =>
+                    if imm &! 0x400 >= 32 {
+                        Op::Illegal
+                    } else if (imm & 0x400) != 0 {
+                        Op::Sraiw { rd, rs1, imm: imm &! 0x400 }
+                    } else {
+                        Op::Srliw { rd, rs1, imm }
+                    }
+                _ => Op::Illegal,
+            }
+        }
+
+        /* LUI */
+        0b0110111 => Op::Lui { rd, imm: u_imm(bits) },
+
         /* AUIPC */
-        0b0010111 => Op::Auipc {
-            rd: rd,
-            imm: u_imm(bits),
-        },
+        0b0010111 => Op::Auipc { rd, imm: u_imm(bits) },
 
         /* BRANCH */
         0b1100011 => {
