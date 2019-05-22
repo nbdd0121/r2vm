@@ -15,18 +15,6 @@ OBJS = \
 	emu/mmu.o \
 	emu/state.o \
 	emu/syscall.o \
-	ir/block_analysis.o \
-	ir/dominance.o \
-	ir/dot_printer.o \
-	ir/load_store_elimination.o \
-	ir/local_value_numbering.o \
-	ir/lowering.o \
-	ir/node.o \
-	ir/visit.o \
-	ir/local_load_store_elimination.o \
-	ir/scheduler.o \
-	main/dbt.o \
-	main/ir_dbt.o \
 	main/main.o \
 	main/signal.o \
 	riscv/decoder.o \
@@ -35,16 +23,11 @@ OBJS = \
 	riscv/step.o \
 	softfp/float.o \
 	util/assert.o \
-	util/code_buffer.o \
 	util/format.o \
 	util/safe_memory.o \
 	util/safe_memory_probe.o \
-	x86/code_generator.o \
 	x86/decoder.o \
-	x86/disassembler.o \
-	x86/encoder.o \
-	x86/lowering.o \
-	x86/register_allocator.o
+	x86/disassembler.o
 
 default: all
 

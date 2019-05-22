@@ -10,8 +10,6 @@
 
 #include "emu/mmu.h"
 #include "emu/state.h"
-#include "main/dbt.h"
-#include "main/ir_dbt.h"
 #include "main/signal.h"
 #include "riscv/basic_block.h"
 #include "riscv/context.h"
@@ -253,55 +251,5 @@ int main(int argc, const char **argv) {
     if (!use_ir && !use_dbt) {
         rust_emu_start(context);
         return 1;
-    }
-
-    while (true) {
-        try {
-            if (use_ir) {
-                Ir_dbt executor;
-                while (true) {
-                    executor.step(context);
-                }
-            } else if (use_dbt) {
-                Dbt_runtime executor;
-                while (true) {
-                    executor.step(context);
-                }
-            }
-        } catch (riscv::Trap& trap) {
-            if (emu::state::user_only) {
-                util::print("unhandled trap {}\npc  = {:16x}  ra  = {:16x}\n", (uint8_t)trap.cause, context.pc, context.registers[1]);
-                for (int i = 2; i < 32; i += 2) {
-                    util::print(
-                        "{:-3} = {:16x}  {:-3} = {:16x}\n",
-                        riscv::Disassembler::register_name(i), context.registers[i],
-                        riscv::Disassembler::register_name(i + 1), context.registers[i + 1]
-                    );
-                }
-                return 1;
-            }
-            context.sepc = context.pc;
-            context.stval = trap.tval;
-            context.scause = static_cast<uint8_t>(trap.cause);
-            // printf("context.scause = %lx\n", context.scause);
-            context.scause = ((context.scause & 0x80) << (64 - 8)) | (context.scause & 0x1f);
-            // Clear or set SPP bit
-            if (context.prv)
-                context.sstatus |= 0x100;
-            else
-                context.sstatus &=~ 0x100;
-            // Clear of set SPIE bit
-            if (context.sstatus & 0x2)
-                context.sstatus |= 0x20;
-            else
-                context.sstatus &=~ 0x20;
-            // Clear SIE
-            context.sstatus &= ~0x2;
-            context.pending = 0;
-            // Switch to S-mode
-            context.prv = 1;
-            ASSERT((context.stvec & 3) == 0);
-            context.pc = context.stvec;
-        }
     }
 }
