@@ -24,6 +24,17 @@ pub enum Op {
     FenceI,
     /* Base Opcode = AUIPC */
     Auipc { rd: u8, imm: i32 },
+    /* Base Opcode = BRANCH */
+    Beq { rs1: u8, rs2: u8, imm: i32 },
+    Bne { rs1: u8, rs2: u8, imm: i32 },
+    Blt { rs1: u8, rs2: u8, imm: i32 },
+    Bge { rs1: u8, rs2: u8, imm: i32 },
+    Bltu { rs1: u8, rs2: u8, imm: i32 },
+    Bgeu { rs1: u8, rs2: u8, imm: i32 },
+    /* Base Opcode = JALR */
+    Jalr { rd: u8, rs1: u8, imm: i32 },
+    /* Base Opcode = JAL */
+    Jal { rd: u8, imm: i32 },
     /* Base Opcode = SYSTEM */
     Ecall,
     Ebreak,
@@ -48,6 +59,15 @@ impl Op {
     pub fn can_change_control_flow(&self) -> bool {
         match self {
             Op::Legacy(op) => unsafe { legacy_can_change_control_flow(op) },
+            // Branch and jump instructions will definitely disrupt the control flow.
+            Op::Beq {..} |
+            Op::Bne {..} |
+            Op::Blt {..} |
+            Op::Bge {..} |
+            Op::Bltu {..} |
+            Op::Bgeu {..} |
+            Op::Jalr {..} |
+            Op::Jal {..} |
             // Return from ecall also changes control flow.
             Op::Sret |
             // They always trigger faults

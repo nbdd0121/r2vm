@@ -549,11 +549,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
             }
 
             /* Base Opcode AUIPC */
-            case 0b0010111: {
-                ret.opcode(Opcode::auipc);
-                ret.imm(U_imm_field::extract(bits));
-                return ret;
-            }
+            case 0b0010111: throw "moved to rust";
 
             /* Base Opcode OP-IMM-32 */
             case 0b0011011: {
@@ -940,67 +936,14 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                 return ret;
             }
 
-             /* Base Opcode BRANCH */
-            case 0b1100011: {
-                switch (function) {
-                    case 0b000: opcode = Opcode::beq; break;
-                    case 0b001: opcode = Opcode::bne; break;
-                    case 0b100: opcode = Opcode::blt; break;
-                    case 0b101: opcode = Opcode::bge; break;
-                    case 0b110: opcode = Opcode::bltu; break;
-                    case 0b111: opcode = Opcode::bgeu; break;
-                    default: goto illegal;
-                }
-                ret.opcode(opcode);
-                ret.imm(B_imm_field::extract(bits));
-                return ret;
-            }
-
+            /* Base Opcode BRANCH */
+            case 0b1100011:
             /* Base Opcode JALR */
-            case 0b1100111: {
-                if (function != 0b000) goto illegal;
-                ret.opcode(Opcode::jalr);
-                ret.imm(I_imm_field::extract(bits));
-                return ret;
-            }
-
+            case 0b1100111:
             /* Base Opcode JAL */
-            case 0b1101111: {
-                ret.opcode(Opcode::jal);
-                ret.imm(J_imm_field::extract(bits));
-                return ret;
-            }
-
+            case 0b1101111:
             /* Base Opcode SYSTEM */
-            case 0b1110011: {
-                switch (function) {
-                    case 0b000:
-                        switch (bits) {
-                            case 0x73: ret.opcode(Opcode::ecall); return ret;
-                            case 0x100073: ret.opcode(Opcode::ebreak); return ret;
-                            case 0x10200073: ret.opcode(Opcode::sret); return ret;
-                            case 0x10500073: ret.opcode(Opcode::wfi); return ret;
-                        }
-                        if (ret.rd() == 0 && Funct7_field::extract(bits) == 0b0001001) {
-                            ret.opcode(Opcode::sfence_vma);
-                            return ret;
-                        }
-                        goto illegal;
-                    case 0b001: opcode = Opcode::csrrw; break;
-                    case 0b010: opcode = Opcode::csrrs; break;
-                    case 0b011: opcode = Opcode::csrrc; break;
-                    case 0b101: opcode = Opcode::csrrwi; break;
-                    case 0b110: opcode = Opcode::csrrsi; break;
-                    case 0b111: opcode = Opcode::csrrci; break;
-                    default: goto illegal;
-                }
-                // CSR instructions
-                // In both I and non-I cases we put immediate in RS1, so we don't have to deal with that specially.
-                // csr fields are similar to I-type but unsigned.
-                ret.opcode(opcode);
-                ret.imm(Csr_field::extract(bits));
-                return ret;
-            }
+            case 0b1110011: throw "moved to rust";
 
             default: goto illegal;
         }

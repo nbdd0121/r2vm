@@ -197,19 +197,24 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
     }
 }
 
-fn step(ctx: &mut Context, op: &Op) -> Trap {
+fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
     macro_rules! read_reg {
-        ($rs: expr) => ({
+        ($rs: expr) => {{
             let rs = $rs as usize;
             ctx.registers[rs]
-        })
+        }}
     }
     macro_rules! write_reg {
-        ($rd: expr, $expression:expr) => ({
+        ($rd: expr, $expression:expr) => {{
             let rd = $rd as usize;
             let value = $expression;
             if rd != 0 { ctx.registers[rd] = value }
-        })
+        }}
+    }
+    macro_rules! len {
+        () => {
+            if compressed { 2 } else { 4 }
+        }
     }
 
     match *op {
@@ -219,7 +224,50 @@ fn step(ctx: &mut Context, op: &Op) -> Trap {
         Op::Fence => (),
         Op::FenceI => (),
         /* AUIPC */
-        Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc - 4 + imm as u64),
+        Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64)),
+        /* BRANCH */
+        // Same as auipc, PC-relative instructions are relative to the origin pc instead of the incremented one.
+        Op::Beq { rs1, rs2, imm } => {
+            if read_reg!(rs1) == read_reg!(rs2) {
+                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+            }
+        }
+        Op::Bne { rs1, rs2, imm } => {
+            if read_reg!(rs1) != read_reg!(rs2) {
+                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+            }
+        }
+        Op::Blt { rs1, rs2, imm } => {
+            if (read_reg!(rs1) as i64) < (read_reg!(rs2) as i64) {
+                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+            }
+        }
+        Op::Bge { rs1, rs2, imm } => {
+            if (read_reg!(rs1) as i64) >= (read_reg!(rs2) as i64) {
+                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+            }
+        }
+        Op::Bltu { rs1, rs2, imm } => {
+            if read_reg!(rs1) < read_reg!(rs2) {
+                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+            }
+        }
+        Op::Bgeu { rs1, rs2, imm } => {
+            if read_reg!(rs1) >= read_reg!(rs2) {
+                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+            }
+        }
+        /* JALR */
+        Op::Jalr { rd, rs1, imm } => {
+            let new_pc = (read_reg!(rs1).wrapping_add(imm as u64)) &! 1;
+            write_reg!(rd, ctx.pc);
+            ctx.pc = new_pc;
+        }
+        /* JAL */
+        Op::Jal { rd, imm } => {
+            write_reg!(rd, ctx.pc);
+            ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+        }
         /* SYSTEM */
         Op::Ecall =>
             if ctx.prv == 0 {
@@ -338,8 +386,8 @@ fn run_block(ctx: &mut Context) -> u64 {
     ctx.instret += vec.len() as u64;
 
     for i in 0..vec.len() {
-        let inst = &vec[i].0;
-        let ex = step(ctx, inst);
+        let (ref inst, c) = vec[i];
+        let ex = step(ctx, inst, c);
         if ex != 0 {
             // Adjust pc and instret by iterating through remaining instructions.
             for j in i..vec.len() {

@@ -16,6 +16,7 @@ name = "dbt"
 crate-type = ["staticlib"]
 
 [profile.dev]
+opt-level = "z"
 panic = "abort"
 
 [profile.release]

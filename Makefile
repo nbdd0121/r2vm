@@ -19,7 +19,6 @@ OBJS = \
 	main/signal.o \
 	riscv/decoder.o \
 	riscv/disassembler.o \
-	riscv/frontend.o \
 	riscv/step.o \
 	softfp/float.o \
 	util/assert.o \
@@ -62,6 +61,10 @@ bin/release/util/safe_memory.o: src/util/safe_memory.cc
 	$(CXX) -c -MMD -MP $(CXX_FLAGS) -fno-lto -fnon-call-exceptions $< -o $@
 
 bin/%.o: src/%.cc bin/feature.o
+	@mkdir -p $(dir $@)
+	$(CXX) -c -MMD -MP $(CXX_FLAGS) $< -o $@
+
+bin/%.o: src/%.s
 	@mkdir -p $(dir $@)
 	$(CXX) -c -MMD -MP $(CXX_FLAGS) $< -o $@
 
