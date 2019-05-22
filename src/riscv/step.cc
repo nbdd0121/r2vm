@@ -176,35 +176,15 @@ void step(Context *context, Instruction inst) {
             break;
         /* OP */
         case Opcode::add:
-            write_rd(read_rs1() + read_rs2());
-            break;
         case Opcode::sub:
-            write_rd(read_rs1() - read_rs2());
-            break;
         case Opcode::sll:
-            write_rd(read_rs1() << (read_rs2() & 63));
-            break;
         case Opcode::slt:
-            write_rd(static_cast<int64_t>(read_rs1()) < static_cast<int64_t>(read_rs2()));
-            break;
         case Opcode::sltu:
-            write_rd(read_rs1() < read_rs2());
-            break;
         case Opcode::i_xor:
-            write_rd(read_rs1() ^ read_rs2());
-            break;
         case Opcode::srl:
-            write_rd(read_rs1() >> (read_rs2() & 63));
-            break;
         case Opcode::sra:
-            write_rd(static_cast<int64_t>(read_rs1()) >> (read_rs2() & 63));
-            break;
         case Opcode::i_or:
-            write_rd(read_rs1() | read_rs2());
-            break;
         case Opcode::i_and:
-            write_rd(read_rs1() & read_rs2());
-            break;
         /* LUI */
         case Opcode::lui: throw "moved to rust";
         /* OP-32 */

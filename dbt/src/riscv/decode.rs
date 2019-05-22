@@ -218,7 +218,22 @@ pub fn decode_compressed(bits: u16) -> Op {
                             // translate to andi rs1', rs1', imm
                             Op::Andi { rd: rs1, rs1, imm: ci_imm(bits) }
                         }
-                        0b11 => {
+                        0b11 => if (bits & 0x1000) == 0 {
+                            // C.SUB
+                            // C.XOR
+                            // C.OR
+                            // C.AND
+                            // translates to [OP] rs1', rs1', rs2'
+                            let rs2 = c_rs2s(bits);
+                            match (bits >> 5) & 0b11 {
+                                0b00 => Op::Sub { rd: rs1, rs1, rs2 },
+                                0b01 => Op::Xor { rd: rs1, rs1, rs2 },
+                                0b10 => Op::Or { rd: rs1, rs1, rs2 },
+                                0b11 => Op::And { rd: rs1, rs1, rs2 },
+                                // full case
+                                _ => unsafe { std::hint::unreachable_unchecked() },
+                            }
+                        } else {
                             Op::Illegal
                         }
                         // full case
@@ -270,7 +285,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                             // rd = 0 is HINT
                             // C.MV
                             // translate to add rd, x0, rs2
-                            Op::Illegal
+                            Op::Add { rd: c_rd(bits), rs1: 0, rs2 }
                         }
                     } else {
                         let rs1 = c_rs1(bits);
@@ -285,7 +300,8 @@ pub fn decode_compressed(bits: u16) -> Op {
                             // rd = 0 is HINT
                             // C.ADD
                             // translate to add rd, rd, rs2
-                            return Op::Illegal
+                            let rd = c_rd(bits);
+                            Op::Add { rd, rs1: rd, rs2 }
                         }
                     }
                 }
@@ -369,6 +385,33 @@ pub fn decode(bits: u32) -> Op {
                         Op::Srliw { rd, rs1, imm }
                     }
                 _ => Op::Illegal,
+            }
+        }
+
+        /* OP */
+        0b0110011 => {
+            match funct7(bits) {
+                // M-extension
+                0b0000001 => {
+                    return Op::Legacy(unsafe { legacy_decode(bits) })
+                }
+                0b0000000 => match function {
+                    0b000 => Op::Add { rd, rs1, rs2 },
+                    0b001 => Op::Sll { rd, rs1, rs2 },
+                    0b010 => Op::Slt { rd, rs1, rs2 },
+                    0b011 => Op::Sltu { rd, rs1, rs2 },
+                    0b100 => Op::Xor { rd, rs1, rs2 },
+                    0b101 => Op::Srl { rd, rs1, rs2 },
+                    0b110 => Op::Or { rd, rs1, rs2 },
+                    0b111 => Op::And { rd, rs1, rs2 },
+                    _ => unsafe { std::hint::unreachable_unchecked() },
+                }
+                0b0100000 => match function {
+                    0b000 => Op::Sub { rd, rs1, rs2 },
+                    0b101 => Op::Sra { rd, rs1, rs2 },
+                    _ => Op::Illegal
+                }
+                _ => Op::Illegal
             }
         }
 

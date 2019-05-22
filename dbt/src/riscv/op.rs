@@ -39,6 +39,17 @@ pub enum Op {
     Slliw { rd: u8, rs1: u8, imm: i32 },
     Srliw { rd: u8, rs1: u8, imm: i32 },
     Sraiw { rd: u8, rs1: u8, imm: i32 },
+    /* Base Opcode = OP */
+    Add { rd: u8, rs1: u8, rs2: u8 },
+    Sub { rd: u8, rs1: u8, rs2: u8 },
+    Sll { rd: u8, rs1: u8, rs2: u8 },
+    Slt { rd: u8, rs1: u8, rs2: u8 },
+    Sltu { rd: u8, rs1: u8, rs2: u8 },
+    Xor { rd: u8, rs1: u8, rs2: u8 },
+    Srl { rd: u8, rs1: u8, rs2: u8 },
+    Sra { rd: u8, rs1: u8, rs2: u8 },
+    Or { rd: u8, rs1: u8, rs2: u8 },
+    And { rd: u8, rs1: u8, rs2: u8 },
     /* Base Opcode = LUI */
     Lui { rd: u8, imm: i32 },
     /* Base Opcode = BRANCH */

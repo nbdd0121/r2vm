@@ -147,24 +147,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                             case 0b10: throw "moved to rust";
                             case 0b11: {
                                 if ((bits & 0x1000) == 0) {
-                                    // C.SUB
-                                    // C.XOR
-                                    // C.OR
-                                    // C.AND
-                                    // translates to [OP] rs1', rs1', rs2'
-                                    switch (util::Bitfield<uint32_t, 6, 5>::extract(bits)) {
-                                        case 0b00: opcode = Opcode::sub; break;
-                                        case 0b01: opcode = Opcode::i_xor; break;
-                                        case 0b10: opcode = Opcode::i_or; break;
-                                        case 0b11: opcode = Opcode::i_and; break;
-                                        // full case
-                                        default: UNREACHABLE();
-                                    }
-                                    ret.opcode(opcode);
-                                    ret.rd(rs1);
-                                    ret.rs1(rs1);
-                                    ret.rs2(C_rs2s_field::extract(bits) + 8);
-                                    return ret;
+                                    throw "moved to rust";
                                 } else {
                                     switch (util::Bitfield<uint32_t, 6, 5>::extract(bits)) {
                                         case 0b00: {
@@ -254,32 +237,10 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                                 }
                                 throw "moved to rust";
                             } else {
-                                // rd = 0 is HINT
-                                // C.MV
-                                // translate to add rd, x0, rs2
-                                ret.opcode(Opcode::add);
-                                ret.rd(C_rd_field::extract(bits));
-                                ret.rs1(0);
-                                ret.rs2(rs2);
-                                return ret;
+                                throw "moved to rust";
                             }
                         } else {
-                            int rs1 = C_rs1_field::extract(bits);
-                            if (rs1 == 0) {
-                                throw "moved to rust";
-                            } else if (rs2 == 0) {
-                                throw "moved to rust";
-                            } else {
-                                // rd = 0 is HINT
-                                // C.ADD
-                                // translate to add rd, rd, rs2
-                                int rd = C_rd_field::extract(bits);
-                                ret.opcode(Opcode::add);
-                                ret.rd(rd);
-                                ret.rs1(rd);
-                                ret.rs2(rs2);
-                                return ret;
-                            }
+                            throw "moved to rust";
                         }
                     }
                     case 0b101: {
@@ -475,46 +436,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                     ret.opcode(opcode);
                     return ret;
                 }
-
-                switch (function) {
-                    case 0b000:
-                        if (function7 == 0b0000000) opcode = Opcode::add;
-                        else if (function7 == 0b0100000) opcode = Opcode::sub;
-                        else goto illegal;
-                        break;
-                    case 0b001:
-                        if (function7 == 0b0000000) opcode = Opcode::sll;
-                        else goto illegal;
-                        break;
-                    case 0b010:
-                        if (function7 == 0b0000000) opcode = Opcode::slt;
-                        else goto illegal;
-                        break;
-                    case 0b011:
-                        if (function7 == 0b0000000) opcode = Opcode::sltu;
-                        else goto illegal;
-                        break;
-                    case 0b100:
-                        if (function7 == 0b0000000) opcode = Opcode::i_xor;
-                        else goto illegal;
-                        break;
-                    case 0b101:
-                        if (function7 == 0b0000000) opcode = Opcode::srl;
-                        else if (function7 == 0b0100000) opcode = Opcode::sra;
-                        else goto illegal;
-                        break;
-                    case 0b110:
-                        if (function7 == 0b0000000) opcode = Opcode::i_or;
-                        else goto illegal;
-                        break;
-                    case 0b111:
-                        if (function7 == 0b0000000) opcode = Opcode::i_and;
-                        else goto illegal;
-                        break;
-                    // full case
-                }
-                ret.opcode(opcode);
-                return ret;
+                throw "moved to rust";
             }
 
             /* Base Opcode LUI */

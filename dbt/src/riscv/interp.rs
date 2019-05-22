@@ -238,6 +238,17 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
         Op::Slliw { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
         Op::Srliw { rd, rs1, imm }=> write_reg!(rd, (((read_reg!(rs1) as u32) >> imm) as i32) as u64),
         Op::Sraiw { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i32) >> imm) as u64),
+        /* OP */
+        Op::Add { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_add(read_reg!(rs2))),
+        Op::Sub { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_sub(read_reg!(rs2))),
+        Op::Sll { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) << (read_reg!(rs2) & 63)),
+        Op::Slt { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i64) < (read_reg!(rs2) as i64)) as u64),
+        Op::Sltu { rd, rs1, rs2 } => write_reg!(rd, (read_reg!(rs1) < read_reg!(rs2)) as u64),
+        Op::Xor { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) ^ read_reg!(rs2)),
+        Op::Srl { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) >> (read_reg!(rs2) & 63)),
+        Op::Sra { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i64) >> (read_reg!(rs2) & 63)) as u64),
+        Op::Or { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) | read_reg!(rs2)),
+        Op::And { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) & read_reg!(rs2)),
         /* LUI */
         Op::Lui { rd, imm } => write_reg!(rd, imm as u64),
         /* AUIPC */
