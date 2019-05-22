@@ -11,7 +11,6 @@
 
 #include "emu/mmu.h"
 #include "emu/state.h"
-#include "util/scope_exit.h"
 
 #define EM_RISCV 243
 

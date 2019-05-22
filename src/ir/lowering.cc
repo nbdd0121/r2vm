@@ -3,7 +3,6 @@
 #include "ir/builder.h"
 #include "ir/pass.h"
 #include "ir/visit.h"
-#include "util/functional.h"
 
 namespace ir::pass {
 

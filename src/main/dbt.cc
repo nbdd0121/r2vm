@@ -11,7 +11,6 @@
 #include "util/assert.h"
 #include "util/code_buffer.h"
 #include "util/format.h"
-#include "util/functional.h"
 #include "util/memory.h"
 #include "x86/builder.h"
 #include "x86/disassembler.h"
