@@ -1183,6 +1183,16 @@ void step(Context *context, Instruction inst) {
     }
 }
 
+extern "C" uint64_t legacy_step(riscv::Context* ctx, riscv::Instruction* inst)  {
+    try {
+        step(ctx, *inst);
+        return 0;
+    } catch (riscv::Trap& trap){
+        ctx->stval = trap.tval;
+        return (uint64_t)trap.cause;
+    }
+}
+
 reg_t sbi_call(Context *context,
     reg_t nr,
     reg_t arg0, reg_t arg1, reg_t arg2, [[maybe_unused]] reg_t arg3, [[maybe_unused]] reg_t arg4, [[maybe_unused]] reg_t arg5

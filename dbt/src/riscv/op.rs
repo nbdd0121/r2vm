@@ -19,6 +19,8 @@ pub struct LegacyOp {
 pub enum Op {
     Legacy(LegacyOp),
     Illegal,
+    /* Base Opcode = AUIPC */
+    Auipc { rd: u8, imm: i32 },
 }
 
 extern {

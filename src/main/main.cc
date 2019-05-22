@@ -11,7 +11,6 @@
 #include "emu/mmu.h"
 #include "emu/state.h"
 #include "main/dbt.h"
-#include "main/interpreter.h"
 #include "main/ir_dbt.h"
 #include "main/signal.h"
 #include "riscv/basic_block.h"
@@ -58,6 +57,7 @@ extern "C" void interrupt() {
 }
 
 extern "C" void rust_init();
+extern "C" void rust_emu_start(riscv::Context&);
 
 int main(int argc, const char **argv) {
 
@@ -250,6 +250,11 @@ int main(int argc, const char **argv) {
         context.prv = 1;
     }
 
+    if (!use_ir && !use_dbt) {
+        rust_emu_start(context);
+        return 1;
+    }
+
     while (true) {
         try {
             if (use_ir) {
@@ -264,22 +269,6 @@ int main(int argc, const char **argv) {
                 while (true) {
                     executor.step(context);
                 }
-            } else {
-                Interpreter executor;
-                context.executor = &executor;
-                while (true) {
-                    executor.step(context);
-                }
-                do {
-                    executor.step(context);
-                    if (context.instret >= context.timecmp) {
-                        context.sip |= 32;
-                        context.pending = context.sstatus & 0x2 ? context.sip & context.sie : 0;
-                    }
-                } while (context.pending == 0);
-                int pending = util::log2_floor(context.pending);
-                context.sip &= ~(1<<pending);
-                throw riscv::Trap { (riscv::Cause)(0x80 + pending) };
             }
         } catch (riscv::Trap& trap) {
             if (emu::state::user_only) {

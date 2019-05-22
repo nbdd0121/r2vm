@@ -11,7 +11,7 @@
 
 namespace riscv {
 
-Instruction Decoder::decode(uint32_t bits) {
+extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
     Instruction ret;
     Opcode opcode = Opcode::illegal;
 
@@ -1015,8 +1015,11 @@ Instruction Decoder::decode(uint32_t bits) {
     return ret;
 }
 
-// Determine whether an instruction can change control flow (excluding exceptional scenario).
-bool Decoder::can_change_control_flow(Instruction inst) {
+Instruction Decoder::decode(uint32_t bits) {
+    return legacy_decode(bits);
+}
+
+extern "C" bool legacy_can_change_control_flow(Instruction& inst) {
     switch (inst.opcode()) {
         // Branch and jump instructions will definitely disrupt the control flow.
         case Opcode::beq:
@@ -1058,6 +1061,11 @@ bool Decoder::can_change_control_flow(Instruction inst) {
         default:
             return false;
     }
+}
+
+// Determine whether an instruction can change control flow (excluding exceptional scenario).
+bool Decoder::can_change_control_flow(Instruction inst) {
+    return legacy_can_change_control_flow(inst);
 }
 
 Instruction Decoder::decode_instruction() {

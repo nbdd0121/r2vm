@@ -26,7 +26,6 @@ OBJS = \
 	ir/local_load_store_elimination.o \
 	ir/scheduler.o \
 	main/dbt.o \
-	main/interpreter.o \
 	main/ir_dbt.o \
 	main/main.o \
 	main/signal.o \
