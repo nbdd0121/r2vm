@@ -1205,10 +1205,10 @@ reg_t sbi_call(Context *context,
         }
     }
 }
-extern "C" bool memory_probe_read(uintptr_t);
-extern "C" bool memory_probe_write(uintptr_t);
 
 #define CACHE_LINE_LOG2_SIZE 12
+
+extern "C" reg_t rs_translate(Context* context, reg_t addr, bool write, reg_t& out);
 
 reg_t translate(Context* context, reg_t addr, bool write) {
     auto idx = addr >> CACHE_LINE_LOG2_SIZE;
@@ -1218,42 +1218,13 @@ reg_t translate(Context* context, reg_t addr, bool write) {
             return (line.paddr &~ 1) | (addr & ((1 << CACHE_LINE_LOG2_SIZE) - 1));
         }
     }
-    auto fault_type = write ? Cause::store_page_fault : Cause::load_page_fault;
-    reg_t ret;
-    if (!(context->satp >> 60)) {
-        if (write ? memory_probe_read(addr) : memory_probe_read(addr)) {
-            throw "access error";
-        }
-        return addr;
-    }
-    uint64_t ppn = context->satp & ((1ULL << 44) - 1);
-    uint64_t pte = emu::load_memory<uint64_t>(ppn * 4096 + ((addr >> 30) & 511) * 8);
-    if (!(pte & 1)) throw Trap { fault_type, addr };
-    ppn = pte >> 10;
-    if ((pte & 0xf) != 1) {
-        ret = (ppn << 12) | (addr & ((1<<30)-1));
-        goto check_perm;
-    }
-    pte = emu::load_memory<uint64_t>(ppn * 4096 + ((addr >> 21) & 511) * 8);
-    if (!(pte & 1)) throw Trap { fault_type, addr };
-    ppn = pte >> 10;
-    if ((pte & 0xf) != 1) {
-        ret = (ppn << 12) | (addr & ((1<<21)-1));
-        goto check_perm;
-    }
-    pte = emu::load_memory<uint64_t>(ppn * 4096 + ((addr >> 12) & 511) * 8);
-    if (!(pte & 1)) throw Trap { fault_type, addr };
-    ppn = pte >> 10;
-    ret = (ppn << 12) | (addr & 4095);
-check_perm:
-    if (!(pte & 0x40) || (write && (!(pte & 0x4) || !(pte & 0x80)))) throw Trap {fault_type, addr};
+    reg_t out;
+    reg_t ex = rs_translate(context, addr, write, out);
+    if (ex) throw Trap { (Cause)ex, addr };
     line.tag = idx;
-    line.paddr = ret &~ ((1 << CACHE_LINE_LOG2_SIZE) - 1);
-    if (ret < 0x80000000 && (write ? memory_probe_read(line.paddr) : memory_probe_read(line.paddr))) {
-        throw "access error";
-    }
+    line.paddr = out &~ ((1 << CACHE_LINE_LOG2_SIZE) - 1);
     if (write) line.paddr |= 1;
-    return ret;
+    return out;
 }
 
 }
