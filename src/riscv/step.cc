@@ -189,20 +189,10 @@ void step(Context *context, Instruction inst) {
         case Opcode::lui: throw "moved to rust";
         /* OP-32 */
         case Opcode::addw:
-            write_rd(sign_ext(read_rs1() + read_rs2()));
-            break;
         case Opcode::subw:
-            write_rd(sign_ext(read_rs1() - read_rs2()));
-            break;
         case Opcode::sllw:
-            write_rd(sign_ext(read_rs1() << (read_rs2() & 31)));
-            break;
         case Opcode::srlw:
-            write_rd(sign_ext(static_cast<uint32_t>(read_rs1()) >> (read_rs2() & 31)));
-            break;
-        case Opcode::sraw:
-            write_rd(sign_ext(static_cast<int32_t>(read_rs1()) >> (read_rs2() & 31)));
-            break;
+        case Opcode::sraw: throw "moved to rust";
         /* BRANCH */
         // Same as auipc, PC-relative instructions are relative to the origin pc instead of the incremented one.
         case Opcode::beq:

@@ -140,7 +140,6 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                         }
                     }
                     case 0b100: {
-                        int rs1 = C_rs1s_field::extract(bits) + 8;
                         switch (util::Bitfield<uint32_t, 11, 10>::extract(bits)) {
                             case 0b00:
                             case 0b01:
@@ -150,24 +149,8 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                                     throw "moved to rust";
                                 } else {
                                     switch (util::Bitfield<uint32_t, 6, 5>::extract(bits)) {
-                                        case 0b00: {
-                                            // C.SUBW
-                                            // translates to subw rs1', rs1', rs2'
-                                            ret.opcode(Opcode::subw);
-                                            ret.rd(rs1);
-                                            ret.rs1(rs1);
-                                            ret.rs2(C_rs2s_field::extract(bits) + 8);
-                                            return ret;
-                                        }
-                                        case 0b01: {
-                                            // C.ADDW
-                                            // translates to addw rs1', rs1', rs2'
-                                            ret.opcode(Opcode::addw);
-                                            ret.rd(rs1);
-                                            ret.rs1(rs1);
-                                            ret.rs2(C_rs2s_field::extract(bits) + 8);
-                                            return ret;
-                                        }
+                                        case 0b00:
+                                        case 0b01: throw "moved to rust";
                                         default:
                                             // Reserved
                                             goto illegal_compressed;
@@ -460,25 +443,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                     return ret;
                 }
 
-                switch (function) {
-                    case 0b000:
-                        if (function7 == 0b0000000) opcode = Opcode::addw;
-                        else if (function7 == 0b0100000) opcode = Opcode::subw;
-                        else goto illegal;
-                        break;
-                    case 0b001:
-                        if (function7 == 0b0000000) opcode = Opcode::sllw;
-                        else goto illegal;
-                        break;
-                    case 0b101:
-                        if (function7 == 0b0000000) opcode = Opcode::srlw;
-                        else if (function7 == 0b0100000) opcode = Opcode::sraw;
-                        else goto illegal;
-                        break;
-                    default: goto illegal;
-                }
-                ret.opcode(opcode);
-                return ret;
+                throw "moved to rust";
             }
 
             /* Base Opcode MADD */

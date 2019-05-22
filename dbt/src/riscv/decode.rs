@@ -234,7 +234,14 @@ pub fn decode_compressed(bits: u16) -> Op {
                                 _ => unsafe { std::hint::unreachable_unchecked() },
                             }
                         } else {
-                            Op::Illegal
+                            // C.SUBW
+                            // C.ADDW
+                            let rs2 = c_rs2s(bits);
+                            match (bits >> 5) & 0b11 {
+                                0b00 => Op::Subw { rd: rs1, rs1, rs2 },
+                                0b01 => Op::Addw { rd: rs1, rs1, rs2 },
+                                _ => Op::Illegal,
+                            }
                         }
                         // full case
                         _ => unsafe { std::hint::unreachable_unchecked() },
@@ -417,6 +424,28 @@ pub fn decode(bits: u32) -> Op {
 
         /* LUI */
         0b0110111 => Op::Lui { rd, imm: u_imm(bits) },
+
+        /* OP-32 */
+        0b0110011 => {
+            match funct7(bits) {
+                // M-extension
+                0b0000001 => {
+                    return Op::Legacy(unsafe { legacy_decode(bits) })
+                }
+                0b0000000 => match function {
+                    0b000 => Op::Addw { rd, rs1, rs2 },
+                    0b001 => Op::Sllw { rd, rs1, rs2 },
+                    0b101 => Op::Srlw { rd, rs1, rs2 },
+                    _ => Op::Illegal,
+                }
+                0b0100000 => match function {
+                    0b000 => Op::Subw { rd, rs1, rs2 },
+                    0b101 => Op::Sraw { rd, rs1, rs2 },
+                    _ => Op::Illegal,
+                }
+                _ => Op::Illegal
+            }
+        }
 
         /* AUIPC */
         0b0010111 => Op::Auipc { rd, imm: u_imm(bits) },

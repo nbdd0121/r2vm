@@ -19,6 +19,8 @@ pub struct LegacyOp {
 pub enum Op {
     Legacy(LegacyOp),
     Illegal,
+    /* RV64I */
+    /* Base Opcode = LOAD-FP */
     /* Base Opcode = MISC-MEM */
     Fence,
     FenceI,
@@ -39,6 +41,8 @@ pub enum Op {
     Slliw { rd: u8, rs1: u8, imm: i32 },
     Srliw { rd: u8, rs1: u8, imm: i32 },
     Sraiw { rd: u8, rs1: u8, imm: i32 },
+    /* Base Opcode = STORE-FP */
+    /* Base Opcode = AMO */
     /* Base Opcode = OP */
     Add { rd: u8, rs1: u8, rs2: u8 },
     Sub { rd: u8, rs1: u8, rs2: u8 },
@@ -52,6 +56,17 @@ pub enum Op {
     And { rd: u8, rs1: u8, rs2: u8 },
     /* Base Opcode = LUI */
     Lui { rd: u8, imm: i32 },
+    /* Base Opcode = OP-32 */
+    Addw { rd: u8, rs1: u8, rs2: u8},
+    Subw { rd: u8, rs1: u8, rs2: u8},
+    Sllw { rd: u8, rs1: u8, rs2: u8},
+    Srlw { rd: u8, rs1: u8, rs2: u8},
+    Sraw { rd: u8, rs1: u8, rs2: u8},
+    /* Base Opcode = MADD */
+    /* Base Opcode = MSUB */
+    /* Base Opcode = NMSUB */
+    /* Base Opcode = NMADD */
+    /* Base Opcode = OP-FP */
     /* Base Opcode = BRANCH */
     Beq { rs1: u8, rs2: u8, imm: i32 },
     Bne { rs1: u8, rs2: u8, imm: i32 },
@@ -72,6 +87,7 @@ pub enum Op {
     Csrrwi { rd: u8, imm: u8, csr: Csr },
     Csrrsi { rd: u8, imm: u8, csr: Csr },
     Csrrci { rd: u8, imm: u8, csr: Csr },
+
 
     /* Privileged */
     Sret,

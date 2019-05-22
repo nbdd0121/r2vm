@@ -251,6 +251,11 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
         Op::And { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) & read_reg!(rs2)),
         /* LUI */
         Op::Lui { rd, imm } => write_reg!(rd, imm as u64),
+        Op::Addw { rd, rs1, rs2 }=> write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(read_reg!(rs2) as i32)) as u64),
+        Op::Subw { rd, rs1, rs2 }=> write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_sub(read_reg!(rs2) as i32)) as u64),
+        Op::Sllw { rd, rs1, rs2 }=> write_reg!(rd, ((read_reg!(rs1) as i32) << (read_reg!(rs2) & 31)) as u64),
+        Op::Srlw { rd, rs1, rs2 }=> write_reg!(rd, (((read_reg!(rs1) as u32) >> (read_reg!(rs2) & 31)) as i32) as u64),
+        Op::Sraw { rd, rs1, rs2 }=> write_reg!(rd, ((read_reg!(rs1) as i32) >> (read_reg!(rs2) & 31)) as u64),
         /* AUIPC */
         Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64)),
         /* BRANCH */
