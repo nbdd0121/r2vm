@@ -257,47 +257,15 @@ void step(Context *context, Instruction inst) {
         /* BRANCH */
         // Same as auipc, PC-relative instructions are relative to the origin pc instead of the incremented one.
         case Opcode::beq:
-            if (read_rs1() == read_rs2()) {
-                context->pc += -inst.length() + inst.imm();
-            }
-            break;
         case Opcode::bne:
-            if (read_rs1() != read_rs2()) {
-                context->pc += -inst.length() + inst.imm();
-            }
-            break;
         case Opcode::blt:
-            if (static_cast<int64_t>(read_rs1()) < static_cast<int64_t>(read_rs2())) {
-                context->pc += -inst.length() + inst.imm();
-            }
-            break;
         case Opcode::bge:
-            if (static_cast<int64_t>(read_rs1()) >= static_cast<int64_t>(read_rs2())) {
-                context->pc += -inst.length() + inst.imm();
-            }
-            break;
         case Opcode::bltu:
-            if (read_rs1() < read_rs2()) {
-                context->pc += -inst.length() + inst.imm();
-            }
-            break;
         case Opcode::bgeu:
-            if (read_rs1() >= read_rs2()) {
-                context->pc += -inst.length() + inst.imm();
-            }
-            break;
         /* JALR */
-        case Opcode::jalr: {
-            uint64_t new_pc = (read_rs1() + inst.imm()) &~ 1;
-            write_rd(context->pc);
-            context->pc = new_pc;
-            break;
-        }
+        case Opcode::jalr:
         /* JAL */
         case Opcode::jal:
-            write_rd(context->pc);
-            context->pc += -inst.length() + inst.imm();
-            break;
         /* SYSTEM */
         /* Environment operations */
         case Opcode::ecall:

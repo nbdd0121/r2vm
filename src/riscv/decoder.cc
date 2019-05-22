@@ -38,8 +38,6 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
         using Cl_ld_imm_field = util::Bitfield<uint32_t, 6, 5, 12, 10, -1, 3>;
         using Cs_sw_imm_field = Cl_lw_imm_field;
         using Cs_sd_imm_field = Cl_ld_imm_field;
-        using Cb_imm_field = util::Bitfield<int64_t, 12, 12, 6, 5, 2, 2, 11, 10, 4, 3, -1, 1>;
-        using Cj_imm_field = util::Bitfield<int64_t, 12, 12, 8, 8, 10, 9, 6, 6, 7, 7, 2, 2, 11, 11, 5, 3, -1, 1>;
 
         int function = C_funct3_field::extract(bits);
 
@@ -268,32 +266,9 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                             default: UNREACHABLE();
                         }
                     }
-                    case 0b101: {
-                        // C.J
-                        // translate to jal x0, imm
-                        ret.opcode(Opcode::jal);
-                        ret.rd(0);
-                        ret.imm(Cj_imm_field::extract(bits));
-                        return ret;
-                    }
-                    case 0b110: {
-                        // C.BEQZ
-                        // translate to beq rs1', x0, imm
-                        ret.opcode(Opcode::beq);
-                        ret.rs2(0);
-                        ret.rs1(C_rs1s_field::extract(bits) + 8);
-                        ret.imm(Cb_imm_field::extract(bits));
-                        return ret;
-                    }
-                    case 0b111: {
-                        // C.BNEZ
-                        // translate to bne rs1', x0, imm
-                        ret.opcode(Opcode::bne);
-                        ret.rs2(0);
-                        ret.rs1(C_rs1s_field::extract(bits) + 8);
-                        ret.imm(Cb_imm_field::extract(bits));
-                        return ret;
-                    }
+                    case 0b101:
+                    case 0b110:
+                    case 0b111: throw "moved to rust";
                     // full case
                     default: UNREACHABLE();
                 }
@@ -359,13 +334,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                                     // Reserved
                                     goto illegal_compressed;
                                 }
-                                // C.JR
-                                // translate to jalr x0, rs1, 0
-                                ret.opcode(Opcode::jalr);
-                                ret.rd(0);
-                                ret.rs1(rs1);
-                                ret.imm(0);
-                                return ret;
+                                throw "moved to rust";
                             } else {
                                 // rd = 0 is HINT
                                 // C.MV
@@ -379,17 +348,9 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                         } else {
                             int rs1 = C_rs1_field::extract(bits);
                             if (rs1 == 0) {
-                                // C.EBREAK
-                                ret.opcode(Opcode::ebreak);
-                                return ret;
+                                throw "moved to rust";
                             } else if (rs2 == 0) {
-                                // C.JALR
-                                // translate to jalr x1, rs1, 0
-                                ret.opcode(Opcode::jalr);
-                                ret.rd(1);
-                                ret.rs1(rs1);
-                                ret.imm(0);
-                                return ret;
+                                throw "moved to rust";
                             } else {
                                 // rd = 0 is HINT
                                 // C.ADD
@@ -452,13 +413,10 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
         using Rs1_field = util::Bitfield<uint32_t, 19, 15>;
         using Funct3_field = util::Bitfield<uint32_t, 14, 12>;
         using Rd_field = util::Bitfield<uint32_t, 11, 7>;
-        using Csr_field = util::Bitfield<uint32_t, 31, 20>;
 
         using I_imm_field = util::Bitfield<int64_t, 31, 20>;
         using S_imm_field = util::Bitfield<int64_t, 31, 25, 11, 7>;
-        using B_imm_field = util::Bitfield<int64_t, 31, 31, 7, 7, 30, 25, 11, 8, -1, 1>;
         using U_imm_field = util::Bitfield<int64_t, 31, 12, -1, 12>;
-        using J_imm_field = util::Bitfield<int64_t, 31, 31, 19, 12, 20, 20, 30, 21, -1, 1>;
 
         // Almost all functions use funct3
         int function = Funct3_field::extract(bits);

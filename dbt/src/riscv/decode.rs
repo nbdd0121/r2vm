@@ -41,15 +41,15 @@ fn i_imm(bits: u32) -> i32 {
 }
 
 fn s_imm(bits: u32) -> i32 {
-    (((bits & 0b11111110_00000000_00000000_00000000) as i32) >> 20) |
-    (((bits & 0b00000000_00000000_00001111_10000000) as i32) >> 7)
+    ((bits & 0b11111110_00000000_00000000_00000000) as i32) >> 20 |
+    ((bits & 0b00000000_00000000_00001111_10000000) as i32) >> 7
 }
 
 fn b_imm(bits: u32) -> i32 {
-    (((bits & 0b10000000_00000000_00000000_00000000) as i32) >> 19) |
-    (((bits & 0b00000000_00000000_00000000_10000000) as i32) << 4) |
-    (((bits & 0b01111110_00000000_00000000_00000000) as i32) >> 20) |
-    (((bits & 0b00000000_00000000_00001111_00000000) as i32) >> 7)
+    ((bits & 0b10000000_00000000_00000000_00000000) as i32) >> 19 |
+    ((bits & 0b00000000_00000000_00000000_10000000) as i32) << 4 |
+    ((bits & 0b01111110_00000000_00000000_00000000) as i32) >> 20 |
+    ((bits & 0b00000000_00000000_00001111_00000000) as i32) >> 7
 }
 
 fn u_imm(bits: u32) -> i32 {
@@ -57,20 +57,134 @@ fn u_imm(bits: u32) -> i32 {
 }
 
 fn j_imm(instr: u32) -> i32 {
-    (((instr & 0b10000000_00000000_00000000_00000000) as i32) >> 11) |
-    (((instr & 0b00000000_00001111_11110000_00000000) as i32) >> 0) |
-    (((instr & 0b00000000_00010000_00000000_00000000) as i32) >> 9) |
-    (((instr & 0b01111111_11100000_00000000_00000000) as i32) >> 20)
+    ((instr & 0b10000000_00000000_00000000_00000000) as i32) >> 11 |
+    ((instr & 0b00000000_00001111_11110000_00000000) as i32) >> 0 |
+    ((instr & 0b00000000_00010000_00000000_00000000) as i32) >> 9 |
+    ((instr & 0b01111111_11100000_00000000_00000000) as i32) >> 20
 }
 
 //
 // #endregion
 
-pub fn decode(bits: u32) -> Op {
-    // Compressed ops
-    if bits & 3 != 3 {
-        return Op::Legacy(unsafe { legacy_decode(bits) })
+// #region: decoding helpers for compressed 16-bit instructions
+//
+
+fn c_funct3(bits: u16) -> u32 {
+    ((bits >> 13) & 0b111) as u32
+}
+
+fn c_rd(bits: u16) -> u8 {
+    ((bits >> 7) & 0b11111) as u8
+}
+
+fn c_rs1(bits: u16) -> u8 { c_rd(bits) }
+
+fn c_rs2(bits: u16) -> u8 {
+    ((bits >> 2) & 0b11111) as u8
+}
+
+fn c_rs1s(bits: u16) -> u8 {
+    ((bits >> 7) & 0b111) as u8 + 8
+}
+
+fn cb_imm(bits: u16) -> i32 {
+    ((bits & 0b00010000_00000000) as i32) << (31 - 12) >> (31 - 8) |
+    ((bits & 0b00000000_01100000) as i32) << 1 |
+    ((bits & 0b00000000_00000100) as i32) << 3 |
+    ((bits & 0b00001100_00000000) as i32) >> 7 |
+    ((bits & 0b00000000_00011000) as i32) >> 2
+}
+
+fn cj_imm(bits: u16) -> i32 {
+    ((bits & 0b00010000_00000000) as i32) << (31 - 12) >> (31 - 11) |
+    ((bits & 0b00000001_00000000) as i32) << 2 |
+    ((bits & 0b00000110_00000000) as i32) >> 1 |
+    ((bits & 0b00000000_01000000) as i32) << 1 |
+    ((bits & 0b00000000_10000000) as i32) >> 1 |
+    ((bits & 0b00000000_00000100) as i32) << 3 |
+    ((bits & 0b00001000_00000000) as i32) >> 7 |
+    ((bits & 0b00000000_00111000) as i32) >> 2
+}
+
+//
+// #endregion
+
+pub fn decode_compressed(bits: u16) -> Op {
+    let function = c_funct3(bits);
+
+    match bits & 0b11 {
+        0b00 => {
+            match function {
+                _ => Op::Illegal,
+            }
+        }
+        0b01 => {
+            match function {
+                0b101 => {
+                    // C.J
+                    // translate to jal x0, imm
+                    Op::Jal { rd: 0, imm: cj_imm(bits) }
+                }
+                0b110 => {
+                    // C.BEQZ
+                    // translate to beq rs1', x0, imm
+                    Op::Beq { rs1: c_rs1s(bits), rs2: 0, imm: cb_imm(bits) }
+                }
+                0b111 => {
+                    // C.BNEZ
+                    // translate to bne rs1', x0, imm
+                    Op::Bne { rs1: c_rs1s(bits), rs2: 0, imm: cb_imm(bits) }
+                }
+                _ => Op::Illegal,
+            }
+        }
+        0b10 => {
+            match function {
+                0b100 => {
+                    let rs2 = c_rs2(bits);
+                    if (bits & 0x1000) == 0 {
+                        if rs2 == 0 {
+                            let rs1 = c_rs1(bits);
+                            if rs1 == 0 {
+                                // Reserved
+                                return Op::Illegal
+                            }
+                            // C.JR
+                            // translate to jalr x0, rs1, 0
+                            Op::Jalr { rd: 0, rs1, imm: 0 }
+                        } else {
+                            // rd = 0 is HINT
+                            // C.MV
+                            // translate to add rd, x0, rs2
+                            Op::Illegal
+                        }
+                    } else {
+                        let rs1 = c_rs1(bits);
+                        if rs1 == 0 {
+                            // C.EBREAK
+                            Op::Ebreak
+                        } else if rs2 == 0 {
+                            // C.JALR
+                            // translate to jalr x1, rs1, 0
+                            Op::Jalr { rd: 1, rs1, imm: 0 }
+                        } else {
+                            // rd = 0 is HINT
+                            // C.ADD
+                            // translate to add rd, rd, rs2
+                            return Op::Illegal
+                        }
+                    }
+                }
+                _ => Op::Illegal
+            }
+        }
+        _ => unreachable!(),
     }
+}
+
+pub fn decode(bits: u32) -> Op {
+    // We shouldn't see .ompressed ops here
+    assert!(bits & 3 == 3);
 
     // Longer ops, treat them as illegal ops
     if bits & 0x1f == 0x1f { return Op::Illegal }
@@ -158,8 +272,14 @@ pub fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
             bits |= (unsafe { crate::emu::read_memory::<u16>(*pc) as u32 }) << 16;
         }
         *pc += 2;
+        (decode(bits), false)
+    } else {
+        let op = decode_compressed(bits as u16);
+        if let Op::Illegal = op {
+            return (Op::Legacy(unsafe { legacy_decode(bits) }), true)
+        }
+        (op, true)
     }
-    (decode(bits), bits & 3 != 3)
 }
 
 pub fn decode_block(mut pc: u64, pc_next: u64) -> (Vec<(Op, bool)>, u64, u64) {
