@@ -143,40 +143,19 @@ void step(Context *context, Instruction inst) {
             break;
         /* MISC-MEM */
         case Opcode::fence:
-        case Opcode::fence_i: throw "moved to rust";
+        case Opcode::fence_i:
         /* OP-IMM */
         case Opcode::addi:
-            write_rd(read_rs1() + inst.imm());
-            break;
         case Opcode::slli:
-            write_rd(read_rs1() << inst.imm());
-            break;
         case Opcode::slti:
-            write_rd(static_cast<int64_t>(read_rs1()) < static_cast<int64_t>(inst.imm()));
-            break;
         case Opcode::sltiu:
-            write_rd(read_rs1() < inst.imm());
-            break;
         case Opcode::xori:
-            write_rd(read_rs1() ^ inst.imm());
-            break;
         case Opcode::srli:
-            write_rd(read_rs1() >> inst.imm());
-            break;
         case Opcode::srai:
-            write_rd(static_cast<int64_t>(read_rs1()) >> inst.imm());
-            break;
         case Opcode::ori:
-            write_rd(read_rs1() | inst.imm());
-            break;
         case Opcode::andi:
-            write_rd(read_rs1() & inst.imm());
-            break;
         /* AUIPC */
-        case Opcode::auipc:
-            // PC-relative instructions are relative to the origin pc instead of the incremented one.
-            write_rd(context->pc - inst.length() + inst.imm());
-            break;
+        case Opcode::auipc: throw "moved to rust";
         /* OP-IMM-32 */
         case Opcode::addiw:
             write_rd(sign_ext(read_rs1() + inst.imm()));

@@ -223,6 +223,16 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
         /* MISC-MEM */
         Op::Fence => (),
         Op::FenceI => (),
+        /* OP-IMM */
+        Op::Addi { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1).wrapping_add(imm as u64)),
+        Op::Slli { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) << imm),
+        Op::Slti { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i64) < (imm as i64)) as u64),
+        Op::Sltiu { rd, rs1, imm }=> write_reg!(rd, (read_reg!(rs1) < (imm as u64)) as u64),
+        Op::Xori { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) ^ (imm as u64)),
+        Op::Srli { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) >> imm),
+        Op::Srai { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i64) >> imm) as u64),
+        Op::Ori { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) | (imm as u64)),
+        Op::Andi { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) & (imm as u64)),
         /* AUIPC */
         Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64)),
         /* BRANCH */

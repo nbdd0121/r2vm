@@ -22,6 +22,16 @@ pub enum Op {
     /* Base Opcode = MISC-MEM */
     Fence,
     FenceI,
+    /* Base Opcode = OP-IMM */
+    Addi { rd: u8, rs1: u8, imm: i32 },
+    Slli { rd: u8, rs1: u8, imm: i32 },
+    Slti { rd: u8, rs1: u8, imm: i32 },
+    Sltiu { rd: u8, rs1: u8, imm: i32 },
+    Xori { rd: u8, rs1: u8, imm: i32 },
+    Srli { rd: u8, rs1: u8, imm: i32 },
+    Srai { rd: u8, rs1: u8, imm: i32 },
+    Ori { rd: u8, rs1: u8, imm: i32 },
+    Andi { rd: u8, rs1: u8, imm: i32 },
     /* Base Opcode = AUIPC */
     Auipc { rd: u8, imm: i32 },
     /* Base Opcode = BRANCH */
@@ -51,14 +61,10 @@ pub enum Op {
     SfenceVma { rs1: u8, rs2: u8 },
 }
 
-extern {
-    fn legacy_can_change_control_flow(op: &LegacyOp) -> bool;
-}
-
 impl Op {
     pub fn can_change_control_flow(&self) -> bool {
         match self {
-            Op::Legacy(op) => unsafe { legacy_can_change_control_flow(op) },
+            Op::Legacy(op) => op.opcode == 0,
             // Branch and jump instructions will definitely disrupt the control flow.
             Op::Beq {..} |
             Op::Bne {..} |

@@ -52,13 +52,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                             // Illegal instruction. At this point ret is all zero, so return directly.
                             return ret;
                         }
-                        // C.ADDI4SPN
-                        // translate to addi rd', x2, imm
-                        ret.opcode(Opcode::addi);
-                        ret.rd(C_rds_field::extract(bits) + 8);
-                        ret.rs1(2);
-                        ret.imm(imm);
-                        return ret;
+                        throw "moved to rust";
                     }
                     case 0b001: {
                         // C.FLD
@@ -123,18 +117,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
             }
             case 0b01: {
                 switch (function) {
-                    case 0b000: {
-                        // rd = x0 is HINT
-                        // r0 = 0 is C.NOP
-                        // C.ADDI
-                        // translate to addi rd, rd, imm
-                        int rd = C_rd_field::extract(bits);
-                        ret.opcode(Opcode::addi);
-                        ret.rd(rd);
-                        ret.rs1(rd);
-                        ret.imm(Ci_imm_field::extract(bits));
-                        return ret;
-                    }
+                    case 0b000: throw "moved to rust";
                     case 0b001: {
                         int rd = C_rd_field::extract(bits);
                         if (rd == 0) {
@@ -149,16 +132,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                         ret.imm(Ci_imm_field::extract(bits));
                         return ret;
                     }
-                    case 0b010: {
-                        // rd = x0 is HINT
-                        // C.LI
-                        // translate to addi rd, x0, imm
-                        ret.opcode(Opcode::addi);
-                        ret.rd(C_rd_field::extract(bits));
-                        ret.rs1(0);
-                        ret.imm(Ci_imm_field::extract(bits));
-                        return ret;
-                    }
+                    case 0b010: throw "moved to rust";
                     case 0b011: {
                         int rd = C_rd_field::extract(bits);
                         if (rd == 2) {
@@ -167,13 +141,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                                 // Reserved
                                 goto illegal_compressed;
                             }
-                            // C.ADDI16SP
-                            // translate to addi x2, x2, imm
-                            ret.opcode(Opcode::addi);
-                            ret.rd(2);
-                            ret.rs1(2);
-                            ret.imm(imm);
-                            return ret;
+                            throw "moved to rust";
                         } else {
                             // rd = x0 is HINT
                             // C.LUI
@@ -187,35 +155,9 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
                     case 0b100: {
                         int rs1 = C_rs1s_field::extract(bits) + 8;
                         switch (util::Bitfield<uint32_t, 11, 10>::extract(bits)) {
-                            case 0b00: {
-                                // imm = 0 is HINT
-                                // C.SRLI
-                                // translate to srli rs1', rs1', imm
-                                ret.opcode(Opcode::srli);
-                                ret.rd(rs1);
-                                ret.rs1(rs1);
-                                ret.imm(Ci_imm_field::extract(bits) & 63);
-                                return ret;
-                            }
-                            case 0b01: {
-                                // imm = 0 is HINT
-                                // C.SRAI
-                                // translate to srai rs1', rs1', imm
-                                ret.opcode(Opcode::srai);
-                                ret.rs1(rs1);
-                                ret.rd(rs1);
-                                ret.imm(Ci_imm_field::extract(bits) & 63);
-                                return ret;
-                            }
-                            case 0b10: {
-                                // C.ANDI
-                                // translate to andi rs1', rs1', imm
-                                ret.opcode(Opcode::andi);
-                                ret.rs1(rs1);
-                                ret.rd(rs1);
-                                ret.imm(Ci_imm_field::extract(bits));
-                                return ret;
-                            }
+                            case 0b00:
+                            case 0b01:
+                            case 0b10: throw "moved to rust";
                             case 0b11: {
                                 if ((bits & 0x1000) == 0) {
                                     // C.SUB
@@ -275,18 +217,7 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
             }
             case 0b10: {
                 switch (function) {
-                    case 0b000: {
-                        // imm = 0 is HINT
-                        // rd = 0 is HINT
-                        // C.SLLI
-                        // translates to slli rd, rd, imm
-                        int rd = C_rd_field::extract(bits);
-                        ret.opcode(Opcode::slli);
-                        ret.rd(rd);
-                        ret.rs1(rd);
-                        ret.imm(Ci_imm_field::extract(bits) & 63);
-                        return ret;
-                    }
+                    case 0b000: throw "moved to rust";
                     case 0b001: {
                         // C.FLDSP
                         // translate to fld rd, x2, imm
@@ -460,52 +391,9 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
             }
 
             /* Base Opcode MISC-MEM */
-            case 0b0001111: {
-                switch (function) {
-                    case 0b000: {
-                        reg_t imm = I_imm_field::extract(bits);
-                        ret.opcode(Opcode::fence);
-                        ret.imm(imm & 0xFF);
-                        return ret;
-                    }
-                    case 0b001: {
-                        ret.opcode(Opcode::fence_i);
-                        return ret;
-                    }
-                    default: goto illegal;
-                }
-            }
-
+            case 0b0001111:
             /* Base Opcode OP-IMM */
-            case 0b0010011: {
-                reg_t imm = I_imm_field::extract(bits);
-                switch (function) {
-                    case 0b000: opcode = Opcode::addi; break;
-                    case 0b001:
-                        if (imm >= 64) goto illegal;
-                        opcode = Opcode::slli;
-                        break;
-                    case 0b010: opcode = Opcode::slti; break;
-                    case 0b011: opcode = Opcode::sltiu; break;
-                    case 0b100: opcode = Opcode::xori; break;
-                    case 0b101:
-                        if (imm & 0x400) {
-                            opcode = Opcode::srai;
-                            imm &=~ 0x400;
-                        } else {
-                            opcode = Opcode::srli;
-                        }
-                        if (imm >= 64) goto illegal;
-                        break;
-                    case 0b110: opcode = Opcode::ori; break;
-                    case 0b111: opcode = Opcode::andi; break;
-                    // full case
-                }
-                ret.opcode(opcode);
-                ret.imm(imm);
-                return ret;
-            }
-
+            case 0b0010011:
             /* Base Opcode AUIPC */
             case 0b0010111: throw "moved to rust";
 
@@ -920,53 +808,9 @@ Instruction Decoder::decode(uint32_t bits) {
     return legacy_decode(bits);
 }
 
-extern "C" bool legacy_can_change_control_flow(Instruction& inst) {
-    switch (inst.opcode()) {
-        // Branch and jump instructions will definitely disrupt the control flow.
-        case Opcode::beq:
-        case Opcode::bne:
-        case Opcode::blt:
-        case Opcode::bge:
-        case Opcode::bltu:
-        case Opcode::bgeu:
-        case Opcode::jalr:
-        case Opcode::jal:
-        // Return from ecall also changes control flow.
-        case Opcode::sret:
-        // ecall and illegal logically does not interrupt control flow, but as they trigger fault, the control flow
-        // will eventually be redirected to the signal handler.
-        case Opcode::ebreak:
-        case Opcode::illegal:
-        // fence.i might cause instruction cache to be invalidated. If the code executing is invalidated, then we need
-        // to stop executing, so it is safer to treat it as special instruction at the moment.
-        // sfence.vma has similar effects.
-        case Opcode::fence_i:
-        case Opcode::sfence_vma:
-        // ecall usually does not change control flow, but due to existence of syscall such as exit(), it is safer to
-        // treat it as specially at the moment, and maybe considering optimizing later.
-        case Opcode::ecall:
-            return true;
-        // A common way of using basic blocks is to `batch' instret and pc increment. So if CSR to be accessed is
-        // instret, consider it as special.
-        case Opcode::csrrw:
-        case Opcode::csrrs:
-        case Opcode::csrrc:
-        case Opcode::csrrwi:
-        case Opcode::csrrsi:
-        case Opcode::csrrci: {
-            Csr csr = static_cast<Csr>(inst.imm());
-            // Workaround Linux's setup code which assumes setting SATP changes addressing mode
-            // immediately.
-            return csr == Csr::instret || csr == Csr::instreth || csr == Csr::satp;
-        }
-        default:
-            return false;
-    }
-}
-
 // Determine whether an instruction can change control flow (excluding exceptional scenario).
 bool Decoder::can_change_control_flow(Instruction inst) {
-    return legacy_can_change_control_flow(inst);
+    return inst.opcode() == Opcode::illegal;
 }
 
 Instruction Decoder::decode_instruction() {
