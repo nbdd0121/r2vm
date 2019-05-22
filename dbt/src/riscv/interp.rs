@@ -135,36 +135,45 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
 
 type Trap = u64;
 
-#[no_mangle]
-extern "C" fn rs_translate(ctx: &mut Context, addr: u64, write: bool, out: &mut u64) -> Trap {
+fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
     let fault_type = if write { 15 } else { 13 };
     if (ctx.satp >> 60) == 0 {
-        *out = addr;
-        return 0;
+        return Ok(addr);
     }
     let mut ppn = ctx.satp & ((1u64 << 44) - 1);
     let mut pte: u64 = unsafe { crate::emu::read_memory(ppn * 4096 + ((addr >> 30) & 511) * 8) };
-    if (pte & 1) == 0 { return fault_type; }
+    if (pte & 1) == 0 { return Err(fault_type); }
     let ret = loop {
         ppn = pte >> 10;
         if (pte & 0xf) != 1 {
             break (ppn << 12) | (addr & ((1<<30)-1));
         }
         pte = unsafe { crate::emu::read_memory(ppn * 4096 + ((addr >> 21) & 511) * 8) };
-        if (pte & 1) == 0 { return fault_type; }
+        if (pte & 1) == 0 { return Err(fault_type); }
         ppn = pte >> 10;
         if (pte & 0xf) != 1 {
             break (ppn << 12) | (addr & ((1<<21)-1));
         }
         pte = unsafe { crate::emu::read_memory(ppn * 4096 + ((addr >> 12) & 511) * 8) };
-        if (pte & 1) == 0 { return fault_type; }
+        if (pte & 1) == 0 { return Err(fault_type); }
 
         ppn = pte >> 10;
         break (ppn << 12) | (addr & 4095);
     };
-    if (pte & 0x40) == 0 || (write && ((pte & 0x4) == 0 || (pte & 0x80) == 0)) { return fault_type; }
-    *out = ret;
-    return 0;
+    if (pte & 0x40) == 0 || (write && ((pte & 0x4) == 0 || (pte & 0x80) == 0)) { return Err(fault_type); }
+    return Ok(ret);
+}
+
+#[no_mangle]
+extern "C" fn rs_translate(ctx: &mut Context, addr: u64, write: bool, out: &mut u64) -> Trap {
+    match translate(ctx, addr, write) {
+        Ok(ret) => {
+            *out = ret;
+            0
+        }
+        Err(trap) => trap,
+    }
+}
 }
 
 extern {
@@ -197,7 +206,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
     }
 }
 
-fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
+fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), Trap> {
     macro_rules! read_reg {
         ($rs: expr) => {{
             let rs = $rs as usize;
@@ -218,8 +227,11 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
     }
 
     match *op {
-        Op::Legacy(ref op) => return unsafe{legacy_step(ctx, op)},
-        Op::Illegal => return 2,
+        Op::Legacy(ref op) => {
+            let ex = unsafe{legacy_step(ctx, op)};
+            if ex != 0 { return Err(ex) }
+        }
+        Op::Illegal => return Err(2),
         /* OP-IMM */
         Op::Addi { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1).wrapping_add(imm as u64)),
         Op::Slli { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) << imm),
@@ -315,7 +327,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
                 //         context->registers[15]
                 //     );
                 // } else {
-                    return 8;
+                    return Err(8);
                 // }
             } else {
                 ctx.registers[10] = sbi_call(
@@ -324,7 +336,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
                     ctx.registers[10],
                 )
             }
-        Op::Ebreak => return 3,
+        Op::Ebreak => return Err(3),
         Op::Csrrw { rd, rs1, csr } => {
             let result = if rd != 0 { read_csr(ctx, csr) } else { 0 };
             write_csr(ctx, csr, read_reg!(rs1));
@@ -463,20 +475,23 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Trap {
             }
         }
     }
-    0
+    Ok(())
 }
 
-fn run_block(ctx: &mut Context) -> u64 {
+fn run_block(ctx: &mut Context) -> Result<(), Trap> {
     let pc = ctx.pc;
-    let mut phys_pc = 0;
-    let ex = rs_translate(ctx, pc, false, &mut phys_pc);
-    if ex != 0 {
-        ctx.stval = pc;
-        return ex
-    }
-    let mut phys_pc_next = 0;
+    let mut phys_pc = match translate(ctx, pc, false) {
+        Ok(pc) => pc,
+        Err(ex) => {
+            ctx.stval = pc;
+            return Err(ex);
+        }
+    };
     // Ignore error in this case
-    rs_translate(ctx, (pc &! 4095) + 4096, false, &mut phys_pc_next);
+    let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
+        Ok(pc) => pc,
+        Err(_) => 0,
+    };
 
     let (vec, start, end) = icache().entry(phys_pc).or_insert_with(|| {
         let (mut vec, start, end) = super::decode::decode_block(phys_pc, phys_pc_next);
@@ -497,25 +512,29 @@ fn run_block(ctx: &mut Context) -> u64 {
 
     for i in 0..vec.len() {
         let (ref inst, c) = vec[i];
-        let ex = step(ctx, inst, c);
-        if ex != 0 {
-            // Adjust pc and instret by iterating through remaining instructions.
-            for j in i..vec.len() {
-                ctx.pc -= if vec[j].1 { 2 } else { 4 };
+        match step(ctx, inst, c) {
+            Ok(()) => (),
+            Err(ex) => {
+                // Adjust pc and instret by iterating through remaining instructions.
+                for j in i..vec.len() {
+                    ctx.pc -= if vec[j].1 { 2 } else { 4 };
+                }
+                ctx.instret -= (vec.len() - i) as u64;
+                return Err(ex);
             }
-            ctx.instret -= (vec.len() - i) as u64;
-            return ex;
         }
     }
-    0
+    Ok(())
 }
 
 #[no_mangle]
 extern "C" fn rust_emu_start(ctx: &mut Context) {
     loop {
         let ex = loop {
-            let ex = run_block(ctx);
-            if ex != 0 { break ex }
+            match run_block(ctx) {
+                Ok(()) => (),
+                Err(ex) => break ex,
+            }
             if ctx.instret >= ctx.timecmp {
                 ctx.sip |= 32;
                 ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
