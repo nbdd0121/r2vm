@@ -259,13 +259,11 @@ int main(int argc, const char **argv) {
         try {
             if (use_ir) {
                 Ir_dbt executor;
-                context.executor = &executor;
                 while (true) {
                     executor.step(context);
                 }
             } else if (use_dbt) {
                 Dbt_runtime executor;
-                context.executor = &executor;
                 while (true) {
                     executor.step(context);
                 }

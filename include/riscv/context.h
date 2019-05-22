@@ -45,18 +45,11 @@ struct Context {
     reg_t pending;
 
     cache_line line[1024];
-
-    // The execution engine that is currently operating on this context.
-    Executor *executor;
 };
 
 class Instruction;
 reg_t translate(Context *context, reg_t pc, bool write);
 void step(Context *context, Instruction inst);
-reg_t sbi_call(Context *context,
-    reg_t nr,
-    reg_t arg0, reg_t arg1, reg_t arg2, [[maybe_unused]] reg_t arg3, [[maybe_unused]] reg_t arg4, [[maybe_unused]] reg_t arg5
-);
 
 } // riscv
 

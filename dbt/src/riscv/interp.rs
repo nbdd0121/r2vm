@@ -40,6 +40,99 @@ struct Context {
     line: [CacheLine; 1024],
 }
 
+/// Perform a CSR read on a context. Note that this operation performs no checks before accessing
+/// them.
+/// The caller should ensure:
+/// * The current privilege level has enough permission to access the CSR. CSR is nicely partition
+///   into regions, so privilege check can be easily done.
+/// * U-mode code does not access floating point CSRs with FS == Off.
+/// * The CSR is a valid CSR.
+fn read_csr(ctx: &mut Context, csr: Csr) -> u64 {
+    match csr {
+        Csr::Fflags => ctx.fcsr & 0b11111,
+        Csr::Frm => (ctx.fcsr >> 5) & 0b111,
+        Csr::Fcsr => ctx.fcsr,
+        // Pretend that we're 100MHz
+        Csr::Time => ctx.instret / 100,
+        // We assume the instret is incremented already
+        Csr::Instret => ctx.instret - 1,
+        Csr::Sstatus => ctx.sstatus,
+        Csr::Sie => ctx.sie,
+        Csr::Stvec => ctx.stvec,
+        Csr::Scounteren => 0,
+        Csr::Sscratch => ctx.sscratch,
+        Csr::Sepc => ctx.sepc,
+        Csr::Scause => ctx.scause,
+        Csr::Stval => ctx.stval,
+        Csr::Sip => ctx.sip,
+        Csr::Satp => ctx.satp,
+        _ => {
+           unreachable!("read illegal csr {}", csr as i32);
+        }
+    }
+}
+
+fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
+    match csr {
+        Csr::Fflags => {
+            ctx.fcsr = (ctx.fcsr &! 0b11111) | (value & 0b11111);
+            // Set SSTATUS.{FS, SD}
+            ctx.sstatus |= 0x8000000000006000
+        }
+        Csr::Frm => {
+            ctx.fcsr = (ctx.fcsr &! (0b111 << 5)) | ((value & 0b111) << 5);
+            ctx.sstatus |= 0x8000000000006000
+        }
+        Csr::Fcsr => {
+            ctx.fcsr = value;
+            ctx.sstatus |= 0x8000000000006000
+        }
+        Csr::Instret => ctx.instret = value,
+        Csr::Sstatus => {
+            // Mask-out non-writable bits
+            let mut value = value & 0xC6122;
+            // SSTATUS.FS = dirty, also set SD
+            if (value & 0x6000) == 0x6000 { value |= 0x8000000000000000 }
+            // Hard-wire UXL to 0b10, i.e. 64-bit.
+            value |= 0x200000000;
+            ctx.sstatus = value;
+            // Update ctx.pending. Important!
+            ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 }
+        }
+        Csr::Sie => {
+            ctx.sie = value;
+            ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 }
+        }
+        Csr::Stvec => {
+            // We support MODE 0 only at the moment
+            if (value & 2) != 0 { return }
+            ctx.stvec = value;
+        }
+        Csr::Scounteren => (),
+        Csr::Sscratch => ctx.sscratch = value,
+        Csr::Sepc => ctx.sepc = value &! 1,
+        Csr::Scause => ctx.scause = value,
+        Csr::Stval => ctx.stval = value,
+        // Csr::Sip => ctx.sip = value,
+        Csr::Satp => {
+            match value >> 60 {
+                // No paging
+                0 => ctx.satp = 0,
+                // ASID not yet supported
+                8 => ctx.satp = value &! (0xffffu64 << 44),
+                // We only support SV39 at the moment.
+                _ => (),
+            }
+            for line in ctx.line.iter_mut() {
+                line.tag = u64::max_value();
+            }
+        }
+        _ => {
+           unreachable!("write illegal csr {}", csr as i32);
+        }
+    }
+}
+
 type Trap = u64;
 
 #[no_mangle]
@@ -78,7 +171,39 @@ extern {
     fn legacy_step(ctx: &mut Context, op: &LegacyOp) -> Trap;
 }
 
+fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
+    match nr {
+        0 => {
+            ctx.timecmp = arg0 * 100;
+            0
+        }
+        1 => {
+            crate::io::console::console_putchar(arg0 as u8);
+            0
+        }
+        2 => crate::io::console::console_getchar() as u64,
+        3 => panic!("Ignore clear_ipi"),
+        4 => panic!("Ignore send_ipi"),
+        5 | 6 | 7 => {
+            for l in ctx.line.iter_mut() {
+                l.tag = i64::max_value() as u64;
+            }
+            0
+        }
+        8 => std::process::exit(0),
+        _ => {
+            panic!("unknown sbi call {}", nr);
+        }
+    }
+}
+
 fn step(ctx: &mut Context, op: &Op) -> Trap {
+    macro_rules! read_reg {
+        ($rs: expr) => ({
+            let rs = $rs as usize;
+            ctx.registers[rs]
+        })
+    }
     macro_rules! write_reg {
         ($rd: expr, $expression:expr) => ({
             let rd = $rd as usize;
@@ -87,11 +212,99 @@ fn step(ctx: &mut Context, op: &Op) -> Trap {
         })
     }
 
-    match op {
-        Op::Legacy(op) => return unsafe{legacy_step(ctx, op)},
+    match *op {
+        Op::Legacy(ref op) => return unsafe{legacy_step(ctx, op)},
         Op::Illegal => return 2,
+        /* MISC-MEM */
+        Op::Fence => (),
+        Op::FenceI => (),
         /* AUIPC */
-        &Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc - 4 + imm as u64),
+        Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc - 4 + imm as u64),
+        /* SYSTEM */
+        Op::Ecall =>
+            if ctx.prv == 0 {
+                // if (emu::state::user_only) {
+                //     context->registers[10] = emu::syscall(
+                //         static_cast<abi::Syscall_number>(context->registers[17]),
+                //         context->registers[10],
+                //         context->registers[11],
+                //         context->registers[12],
+                //         context->registers[13],
+                //         context->registers[14],
+                //         context->registers[15]
+                //     );
+                // } else {
+                    return 8;
+                // }
+            } else {
+                ctx.registers[10] = sbi_call(
+                    ctx,
+                    ctx.registers[17],
+                    ctx.registers[10],
+                )
+            }
+        Op::Ebreak => return 3,
+        Op::Csrrw { rd, rs1, csr } => {
+            let result = if rd != 0 { read_csr(ctx, csr) } else { 0 };
+            write_csr(ctx, csr, read_reg!(rs1));
+            write_reg!(rd, result);
+        }
+        Op::Csrrs { rd, rs1, csr } => {
+            let result = read_csr(ctx, csr);
+            if rs1 != 0 { write_csr(ctx, csr, result | read_reg!(rs1)) }
+            write_reg!(rd, result);
+        }
+        Op::Csrrc { rd, rs1, csr } => {
+            let result = read_csr(ctx, csr);
+            if rs1 != 0 { write_csr(ctx, csr, result &! read_reg!(rs1)) }
+            write_reg!(rd, result);
+        }
+        Op::Csrrwi { rd, imm, csr } => {
+            let result = if rd != 0 { read_csr(ctx, csr) } else { 0 };
+            write_csr(ctx, csr, imm as u64);
+            write_reg!(rd, result);
+        }
+        Op::Csrrsi { rd, imm, csr } => {
+            let result = read_csr(ctx, csr);
+            if imm != 0 { write_csr(ctx, csr, result | imm as u64) }
+            write_reg!(rd, result);
+        }
+        Op::Csrrci { rd, imm, csr } => {
+            let result = read_csr(ctx, csr);
+            if imm != 0 { write_csr(ctx, csr, result &! imm as u64) }
+            write_reg!(rd, result);
+        }
+
+        /* Privileged */
+        Op::Sret => {
+            ctx.pc = ctx.sepc;
+
+            // Set privilege according to SPP
+            if (ctx.sstatus & 0x100) != 0 {
+                ctx.prv = 1;
+            } else {
+                ctx.prv = 0;
+            }
+
+            // Set SIE according to SPIE
+            if (ctx.sstatus & 0x20) != 0 {
+                ctx.sstatus |= 0x2;
+            } else {
+                ctx.sstatus &=! 0x2;
+            }
+
+            // Set SPIE to 1
+            ctx.sstatus |= 0x20;
+            // Set SPP to U
+            ctx.sstatus &=! 0x100;
+        }
+        Op::Wfi => (),
+        Op::SfenceVma {..} => {
+            for l in ctx.line.iter_mut() {
+                l.tag = i64::max_value() as u64;
+            }
+        }
+    }
     0
 }
 

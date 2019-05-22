@@ -58,15 +58,13 @@ pub fn console_init() {
     unsafe { RX = Some(rx) };
 }
 
-#[no_mangle]
-extern "C" fn console_putchar(char: u8) {
+pub fn console_putchar(char: u8) {
     let mut out = std::io::stdout();
     out.write(std::slice::from_ref(&char)).unwrap();
     out.flush().unwrap();
 }
 
-#[no_mangle]
-extern "C" fn console_getchar() -> i64 {
+pub fn console_getchar() -> i64 {
     // TODO: Remove unsafe
     match unsafe { RX.as_mut() }.unwrap().try_recv() {
         Ok(key) => key as i64,

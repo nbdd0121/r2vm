@@ -19,8 +19,25 @@ pub struct LegacyOp {
 pub enum Op {
     Legacy(LegacyOp),
     Illegal,
+    /* Base Opcode = MISC-MEM */
+    Fence,
+    FenceI,
     /* Base Opcode = AUIPC */
     Auipc { rd: u8, imm: i32 },
+    /* Base Opcode = SYSTEM */
+    Ecall,
+    Ebreak,
+    Csrrw { rd: u8, rs1: u8, csr: Csr },
+    Csrrs { rd: u8, rs1: u8, csr: Csr },
+    Csrrc { rd: u8, rs1: u8, csr: Csr },
+    Csrrwi { rd: u8, imm: u8, csr: Csr },
+    Csrrsi { rd: u8, imm: u8, csr: Csr },
+    Csrrci { rd: u8, imm: u8, csr: Csr },
+
+    /* Privileged */
+    Sret,
+    Wfi,
+    SfenceVma { rs1: u8, rs2: u8 },
 }
 
 extern {
@@ -31,7 +48,33 @@ impl Op {
     pub fn can_change_control_flow(&self) -> bool {
         match self {
             Op::Legacy(op) => unsafe { legacy_can_change_control_flow(op) },
-            Op::Illegal => true,
+            // Return from ecall also changes control flow.
+            Op::Sret |
+            // They always trigger faults
+            Op::Ecall |
+            Op::Ebreak |
+            Op::Illegal |
+            // fence.i might cause instruction cache to be invalidated. If the code executing is invalidated, then we need
+            // to stop executing, so it is safer to treat it as special instruction at the moment.
+            // sfence.vma has similar effects.
+            Op::FenceI |
+            Op::SfenceVma {..} => true,
+            // Some CSRs need special treatment
+            Op::Csrrw { csr, .. } |
+            Op::Csrrs { csr, .. } |
+            Op::Csrrc { csr, .. } |
+            Op::Csrrwi { csr, .. } |
+            Op::Csrrsi { csr, .. } |
+            Op::Csrrci { csr, .. } => match csr {
+                // A common way of using basic blocks is to `batch' instret and pc increment. So if CSR to be accessed is
+                // instret, consider it as special.
+                Csr::Instret |
+                Csr::Instreth |
+                // SATP shouldn't belong here, but somehow Linux assumes setting SATP changes
+                // addressing mode immediately...
+                Csr::Satp => true,
+                _ => false,
+            }
             _ => false,
         }
     }

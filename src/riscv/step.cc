@@ -9,10 +9,6 @@
 #include "softfp/float.h"
 #include "util/memory.h"
 
-extern "C" void console_putchar(uint8_t);
-extern "C" int64_t console_getchar();
-// extern"C" emu::reg_t read_csr(riscv::Context *context, int csr);
-
 namespace riscv::abi { 
     enum class Syscall_number;
 }
@@ -115,130 +111,6 @@ static inline void set_rm_real(int rm) {
         context->fcsr |= static_cast<int>(softfp::exception_flags); \
     } while (0);
 
-reg_t read_csr(Context *context, int csr) {
-    switch (static_cast<Csr>(csr)) {
-        case Csr::fflags:
-            return context->fcsr & 0b11111;
-        case Csr::frm:
-            return (context->fcsr >> 5) & 0b111;
-        case Csr::fcsr:
-            return context->fcsr;
-        case Csr::time:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            // Pretend that we're 100MHz
-            return context->instret / 100;
-        case Csr::instret:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            // Assume that instret is incremented already.
-            return context->instret - 1;
-        case Csr::sstatus:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return context->sstatus;
-        case Csr::sie:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return context->sie;
-        case Csr::stvec:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return context->stvec;
-        case Csr::scounteren:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return 0;
-        case Csr::sscratch:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return context->sscratch;
-        case Csr::sepc:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return context->sepc;
-        case Csr::scause:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return context->scause;
-        case Csr::stval:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return context->stval;
-        case Csr::sip:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return context->sip;
-        case Csr::satp:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            return context->satp;
-        default:
-            std::cerr << "READ CSR " << std::hex << csr << std::endl;
-            throw Trap { Cause::illegal_inst };
-    }
-}
-
-void write_csr(Context *context, int csr, reg_t value) {
-    switch (static_cast<Csr>(csr)) {
-        case Csr::fflags:
-            context->fcsr = (context->fcsr &~ 0b11111) | (value & 0b11111);
-            break;
-        case Csr::frm:
-            context->fcsr = (context->fcsr &~ (0b111 << 5)) | ((value & 0b111) << 5);
-            break;
-        case Csr::fcsr:
-            context->fcsr = value & ((1 << 8) - 1);
-            break;
-        case Csr::instret:
-            context->instret = value;
-            break;
-        case Csr::sstatus: {
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            // Mask-out non-writable bits
-            value &= 0xC6122;
-            // SSTATUS.FS = dirty, also set SD
-            if ((value & 0x6000) == 0x6000) value |= 0x8000000000000000;
-            // Hard-wire UXL to 0b10, i.e. 64-bit.
-            value |= 0x200000000;
-            context->sstatus = value;
-            // printf("sstatus = %lx\n", value);
-            context->pending = context->sstatus & 0x2 ? context->sip & context->sie : 0;
-            break;
-        }
-        case Csr::sie:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            context->sie = value;
-            context->pending = context->sstatus & 0x2 ? context->sip & context->sie : 0;
-            break;
-        case Csr::stvec:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            // Currently MODE can only be 0 or 1.
-            if ((value & 2)) break;
-            context->stvec = value;
-            break;
-        case Csr::scounteren:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            break;
-        case Csr::sscratch:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            context->sscratch = value;
-            break;
-        case Csr::sepc:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            context->sepc = value &~ 1;
-            break;
-        // scause = 0x142,
-        // stval = 0x143,
-        // sip = 0x144,
-        case Csr::satp:
-            if (context->prv == 0) throw Trap { Cause::illegal_inst };
-            switch (value >> 60) {
-                // No paging
-                case 0: context->satp = 0; break;
-                // ASID not yet supported
-                case 8: context->satp = value &~ (0xffffull << 44); break;
-                // We only support SV39 at the moment.
-                default: break;
-            }
-            for (auto& l: context->line) {
-                l.tag = INT64_MAX;
-            }
-            break;
-        default:
-            std::cerr << "WRITE CSR " << std::hex << csr << std::endl;
-            throw Trap { Cause::illegal_inst };
-    }
-}
-
 // Instruction pointers are assumed to move *past* the instruction already.
 void step(Context *context, Instruction inst) {
 
@@ -271,10 +143,7 @@ void step(Context *context, Instruction inst) {
             break;
         /* MISC-MEM */
         case Opcode::fence:
-            break;
-        case Opcode::fence_i:
-            context->executor->flush_cache();
-            break;
+        case Opcode::fence_i: throw "moved to rust";
         /* OP-IMM */
         case Opcode::addi:
             write_rd(read_rs1() + inst.imm());
@@ -432,80 +301,13 @@ void step(Context *context, Instruction inst) {
         /* SYSTEM */
         /* Environment operations */
         case Opcode::ecall:
-            // Environment-call-from-U
-            if (context->prv == 0) {
-                if (emu::state::user_only) {
-                    context->registers[10] = emu::syscall(
-                        static_cast<abi::Syscall_number>(context->registers[17]),
-                        context->registers[10],
-                        context->registers[11],
-                        context->registers[12],
-                        context->registers[13],
-                        context->registers[14],
-                        context->registers[15]
-                    );
-                } else {
-                    throw Trap { Cause::ecall_from_u };
-                }
-            } else {
-                // This is a SBI-call
-                context->registers[10] = sbi_call(
-                    context,
-                    context->registers[17],
-                    context->registers[10],
-                    context->registers[11],
-                    context->registers[12],
-                    context->registers[13],
-                    context->registers[14],
-                    context->registers[15]
-                );
-            }
-            break;
         case Opcode::ebreak:
-            throw Trap { Cause::breakpoint };
-        /* CSR operations */
-        case Opcode::csrrw: {
-            int csr = inst.imm();
-            uint64_t result = 0;
-            if (inst.rd() != 0) result = read_csr(context, csr);
-            write_csr(context, csr, read_rs1());
-            write_rd(result);
-            break;
-        }
-        case Opcode::csrrs: {
-            int csr = inst.imm();
-            uint64_t result = read_csr(context, csr);
-            write_rd(result);
-            if (inst.rs1() != 0) write_csr(context, csr, result | read_rs1());
-            break;
-        }
-        case Opcode::csrrc: {
-            int csr = inst.imm();
-            uint64_t result = read_csr(context, csr);
-            write_rd(result);
-            if (inst.rs1() != 0) write_csr(context, csr, result &~ read_rs1());
-            break;
-        }
-        case Opcode::csrrwi: {
-            int csr = inst.imm();
-            if (inst.rd() != 0) write_rd(read_csr(context, csr));
-            write_csr(context, csr, inst.rs1());
-            break;
-        }
-        case Opcode::csrrsi: {
-            int csr = inst.imm();
-            uint64_t result = read_csr(context, csr);
-            write_rd(result);
-            if (inst.rs1() != 0) write_csr(context, csr, result | inst.rs1());
-            break;
-        }
-        case Opcode::csrrci: {
-            int csr = inst.imm();
-            uint64_t result = read_csr(context, csr);
-            write_rd(result);
-            if (inst.rs1() != 0) write_csr(context, csr, result &~ inst.rs1());
-            break;
-        }
+        case Opcode::csrrw:
+        case Opcode::csrrs:
+        case Opcode::csrrc:
+        case Opcode::csrrwi:
+        case Opcode::csrrsi:
+        case Opcode::csrrci: throw "moved to rust";
 
         /* M-extension */
         case Opcode::mul:
@@ -1148,33 +950,8 @@ void step(Context *context, Instruction inst) {
             update_flags();
             break;
         case Opcode::sret:
-            context->pc = context->sepc;
-
-            // Set privilege according to SPP
-            if (context->sstatus & 0x100)
-                context->prv = 1;
-            else
-                context->prv = 0;
-            
-            // Set SIE according to SPIE
-            if (context->sstatus & 0x20)
-                context->sstatus |= 0x2;
-            else
-                context->sstatus &=~ 0x2;
-
-            // Set SPIE to 1
-            context->sstatus |= 0x20;
-            // Set SPP to U
-            context->sstatus &= ~0x100;
-            break;
         case Opcode::wfi:
-            break;
-        case Opcode::sfence_vma:
-            for (auto& l: context->line) {
-                l.tag = INT64_MAX;
-            }
-            context->executor->flush_cache();
-            break;
+        case Opcode::sfence_vma: throw "moved to rust";
         case Opcode::illegal: {
             auto bin = load_memory<uint32_t>(context->pc - inst.length());
             std::cerr << "Illegal opcode " << std::hex << bin << std::endl;
@@ -1190,29 +967,6 @@ extern "C" uint64_t legacy_step(riscv::Context* ctx, riscv::Instruction* inst)  
     } catch (riscv::Trap& trap){
         ctx->stval = trap.tval;
         return (uint64_t)trap.cause;
-    }
-}
-
-reg_t sbi_call(Context *context,
-    reg_t nr,
-    reg_t arg0, reg_t arg1, reg_t arg2, [[maybe_unused]] reg_t arg3, [[maybe_unused]] reg_t arg4, [[maybe_unused]] reg_t arg5
-) {
-    switch (nr) {
-        case 0: context->timecmp = arg0 * 100; /* std::cerr << "set_timer " << arg0 << std::endl; */ return 0;
-        case 1: console_putchar((uint8_t)arg0); return 0;
-        case 2: return console_getchar();
-        case 3: std::cerr << "Ignore clear_ipi" << std::endl; return 0;
-        case 4: std::cerr << "Ignore send_ipi" << std::endl; return 0;
-        case 5:
-        case 6:
-        case 7: for (auto& l: context->line) {
-                l.tag = INT64_MAX;
-            } context->executor->flush_cache(); return 0;
-        case 8: exit(0);
-        default: {
-            std::cerr << "Unknown SBI call " << nr << std::endl;
-            throw "oops";
-        }
     }
 }
 
