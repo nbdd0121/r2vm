@@ -2,16 +2,14 @@
 #include "emu/state.h"
 #include "riscv/basic_block.h"
 #include "riscv/csr.h"
-#include "riscv/decoder.h"
-#include "riscv/disassembler.h"
 #include "riscv/opcode.h"
 #include "riscv/instruction.h"
 #include "util/assert.h"
 #include "util/format.h"
 
-namespace riscv {
+using namespace riscv;
 
-extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
+extern "C" Instruction legacy_decode(uint32_t bits) {
     Instruction ret;
     Opcode opcode = Opcode::illegal;
 
@@ -606,57 +604,4 @@ extern "C" riscv::Instruction legacy_decode(uint32_t bits) {
     // Long instructions are not supported yet. For now just treat it as a 2-bit illegal instruction.
     ret.length(2);
     return ret;
-}
-
-Instruction Decoder::decode(uint32_t bits) {
-    return legacy_decode(bits);
-}
-
-// Determine whether an instruction can change control flow (excluding exceptional scenario).
-bool Decoder::can_change_control_flow(Instruction inst) {
-    return inst.opcode() == Opcode::illegal;
-}
-
-Instruction Decoder::decode_instruction() {
-    uint32_t bits;
-    bits = emu::load_memory<uint16_t>(pc_);
-    if ((bits & 0b11) == 0b11) {
-        if ((pc_ & 4095) == 4094) {
-            bits |= (uint32_t)emu::load_memory<uint16_t>(pc_next_) << 16;
-        } else {
-            bits |= (uint32_t)emu::load_memory<uint16_t>(pc_ + 2) << 16;
-        }
-    }
-    Instruction inst = decode(bits);
-    if (emu::state::disassemble) {
-        Disassembler::print_instruction(pc_, bits, inst);
-    }
-    pc_ += inst.length();
-    return inst;
-}
-
-Basic_block Decoder::decode_basic_block() {
-    Basic_block block;
-
-    if (emu::state::disassemble) {
-        util::log("Decoding {:x}\n", pc_);
-    }
-
-    block.start_pc = pc_;
-
-    // Scan util a branching instruction is encountered
-    while (true) {
-        Instruction inst = decode_instruction();
-        block.instructions.push_back(inst);
-
-        // TODO: We should also consider breaking when this gets large.
-        if (can_change_control_flow(inst) || (pc_ &~ 4095) != (block.start_pc &~ 4095)) {
-            break;
-        }
-    }
-
-    block.end_pc = pc_;
-    return block;
-}
-
 }

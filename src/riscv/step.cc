@@ -142,25 +142,9 @@ void step(Context *context, Instruction inst) {
             write_rd(zero_ext(load_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), false))));
             break;
         /* MISC-MEM */
-        case Opcode::fence:
-        case Opcode::fence_i:
         /* OP-IMM */
-        case Opcode::addi:
-        case Opcode::slli:
-        case Opcode::slti:
-        case Opcode::sltiu:
-        case Opcode::xori:
-        case Opcode::srli:
-        case Opcode::srai:
-        case Opcode::ori:
-        case Opcode::andi:
         /* AUIPC */
-        case Opcode::auipc:
         /* OP-IMM-32 */
-        case Opcode::addiw:
-        case Opcode::slliw:
-        case Opcode::srliw:
-        case Opcode::sraiw: throw "moved to rust";
         /* STORE */
         case Opcode::sb:
             emu::store_memory<uint8_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
@@ -175,61 +159,14 @@ void step(Context *context, Instruction inst) {
             emu::store_memory<uint64_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
             break;
         /* OP */
-        case Opcode::add:
-        case Opcode::sub:
-        case Opcode::sll:
-        case Opcode::slt:
-        case Opcode::sltu:
-        case Opcode::i_xor:
-        case Opcode::srl:
-        case Opcode::sra:
-        case Opcode::i_or:
-        case Opcode::i_and:
         /* LUI */
-        case Opcode::lui: throw "moved to rust";
         /* OP-32 */
-        case Opcode::addw:
-        case Opcode::subw:
-        case Opcode::sllw:
-        case Opcode::srlw:
-        case Opcode::sraw: throw "moved to rust";
         /* BRANCH */
-        // Same as auipc, PC-relative instructions are relative to the origin pc instead of the incremented one.
-        case Opcode::beq:
-        case Opcode::bne:
-        case Opcode::blt:
-        case Opcode::bge:
-        case Opcode::bltu:
-        case Opcode::bgeu:
         /* JALR */
-        case Opcode::jalr:
         /* JAL */
-        case Opcode::jal:
         /* SYSTEM */
-        /* Environment operations */
-        case Opcode::ecall:
-        case Opcode::ebreak:
-        case Opcode::csrrw:
-        case Opcode::csrrs:
-        case Opcode::csrrc:
-        case Opcode::csrrwi:
-        case Opcode::csrrsi:
-        case Opcode::csrrci: throw "moved to rust";
 
         /* M-extension */
-        case Opcode::mul:
-        case Opcode::mulh:
-        case Opcode::mulhsu:
-        case Opcode::mulhu:
-        case Opcode::div:
-        case Opcode::divu:
-        case Opcode::rem:
-        case Opcode::remu:
-        case Opcode::mulw:
-        case Opcode::divw:
-        case Opcode::divuw:
-        case Opcode::remw:
-        case Opcode::remuw: throw "moved to rust";
 
         /* A-extension */
         // Stub implementations. Single thread only.
@@ -748,9 +685,6 @@ void step(Context *context, Instruction inst) {
             write_frd_d(-softfp::Double::fused_multiply_add(read_frs1_d(), read_frs2_d(), read_frs3_d()));
             update_flags();
             break;
-        case Opcode::sret:
-        case Opcode::wfi:
-        case Opcode::sfence_vma: throw "moved to rust";
         case Opcode::illegal: {
             auto bin = load_memory<uint32_t>(context->pc - inst.length());
             std::cerr << "Illegal opcode " << std::hex << bin << std::endl;

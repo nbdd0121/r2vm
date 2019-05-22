@@ -21,25 +21,9 @@ enum class Opcode {
     lwu,
     /* Base Opcode = LOAD-FP */
     /* Base Opcode = MISC-MEM */
-    fence,
-    fence_i,
     /* Base Opcode = OP-IMM */
-    addi,
-    slli,
-    slti,
-    sltiu,
-    xori,
-    srli,
-    srai,
-    ori,
-    andi,
     /* Base Opcode = AUIPC */
-    auipc,
     /* Base Opcode = OP-IMM-32 */
-    addiw,
-    slliw,
-    srliw,
-    sraiw,
     /* Base Opcode = STORE */
     sb,
     sh,
@@ -48,61 +32,21 @@ enum class Opcode {
     /* Base Opcode = STORE-FP */
     /* Base Opcode = AMO */
     /* Base Opcode = OP */
-    add,
-    sub,
-    sll,
-    slt,
-    sltu,
     // xor, or, and are C++ keywords. We add prefix i_ to disambiguate.
-    i_xor,
-    srl,
-    sra,
-    i_or,
-    i_and,
     /* Base Opcode = LUI */
-    lui,
     /* Base Opcode = OP-32 */
-    addw,
-    subw,
-    sllw,
-    srlw,
-    sraw,
     /* Base Opcode = MADD */
     /* Base Opcode = MSUB */
     /* Base Opcode = NMSUB */
     /* Base Opcode = NMADD */
     /* Base Opcode = OP-FP */
     /* Base Opcode = BRANCH */
-    beq,
-    bne,
-    blt,
-    bge,
-    bltu,
-    bgeu,
     /* Base Opcode = JALR */
-    jalr,
     /* Base Opcode = JAL */
-    jal,
     /* Base Opcode = SYSTEM */
-    ecall,
-    ebreak,
-    csrrw,
-    csrrs,
-    csrrc,
-    csrrwi,
-    csrrsi,
-    csrrci,
 
     /* M extension */
     /* Base Opcode = OP */
-    mul,
-    mulh,
-    mulhsu,
-    mulhu,
-    div,
-    divu,
-    rem,
-    remu,
     /* Base Opcode = OP-32 */
     mulw,
     divw,
@@ -214,11 +158,6 @@ enum class Opcode {
     fnmsub_d,
     /* Base Opcode = NMADD */
     fnmadd_d,
-
-    /* Privileged */
-    sret,
-    wfi,
-    sfence_vma,
 };
 
 } // riscv

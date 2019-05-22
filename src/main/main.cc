@@ -14,7 +14,6 @@
 #include "riscv/basic_block.h"
 #include "riscv/context.h"
 #include "riscv/csr.h"
-#include "riscv/decoder.h"
 #include "riscv/disassembler.h"
 #include "riscv/instruction.h"
 #include "riscv/opcode.h"
