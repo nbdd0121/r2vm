@@ -12,23 +12,12 @@ enum class Opcode {
     illegal,
     /* RV64I */
     /* Base Opcode = LOAD */
-    lb,
-    lh,
-    lw,
-    ld,
-    lbu,
-    lhu,
-    lwu,
     /* Base Opcode = LOAD-FP */
     /* Base Opcode = MISC-MEM */
     /* Base Opcode = OP-IMM */
     /* Base Opcode = AUIPC */
     /* Base Opcode = OP-IMM-32 */
     /* Base Opcode = STORE */
-    sb,
-    sh,
-    sw,
-    sd,
     /* Base Opcode = STORE-FP */
     /* Base Opcode = AMO */
     /* Base Opcode = OP */

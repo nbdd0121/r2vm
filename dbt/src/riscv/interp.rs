@@ -192,6 +192,54 @@ fn translate_cached(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Tr
     }
 }
 
+trait CastHelper: Copy + Into<u64> {
+    fn cast(v: u64) -> Self;
+}
+impl CastHelper for u64 {
+    fn cast(v: u64) -> u64 { v as u64 }
+}
+impl CastHelper for u32 {
+    fn cast(v: u64) -> u32 { v as u32 }
+}
+impl CastHelper for u16 {
+    fn cast(v: u64) -> u16 { v as u16 }
+}
+impl CastHelper for u8 {
+    fn cast(v: u64) -> u8 { v as u8 }
+}
+
+#[inline(never)]
+fn read_vaddr_slow(ctx: &mut Context, addr: u64, size: usize) -> Result<u64, Trap> {
+    let paddr = translate_cached(ctx, addr, false)?;
+    Ok(crate::emu::phys_read(paddr, size as u32))
+}
+
+#[inline(never)]
+fn write_vaddr_slow(ctx: &mut Context, addr: u64, value: u64, size: usize) -> Result<(), Trap> {
+    let paddr = translate_cached(ctx, addr, true)?;
+    Ok(crate::emu::phys_write(paddr, value, size as u32))
+}
+
+fn read_vaddr<T: CastHelper>(ctx: &mut Context, addr: u64) -> Result<T, Trap> {
+    let idx = addr >> CACHE_LINE_LOG2_SIZE;
+    let line = &ctx.line[(idx & 1023) as usize];
+    if (line.tag >> 1) != idx {
+        return Ok(CastHelper::cast(read_vaddr_slow(ctx, addr, std::mem::size_of::<T>())?))
+    }
+    let paddr = line.paddr ^ addr;
+    Ok(unsafe { crate::emu::read_memory_unsafe(paddr) })
+}
+
+fn write_vaddr<T: CastHelper>(ctx: &mut Context, addr: u64, value: T) -> Result<(), Trap> {
+    let idx = addr >> CACHE_LINE_LOG2_SIZE;
+    let line = &ctx.line[(idx & 1023) as usize];
+    if line.tag != (idx << 1) {
+        return Ok(write_vaddr_slow(ctx, addr, value.into(), std::mem::size_of::<T>())?)
+    }
+    let paddr = line.paddr ^ addr;
+    Ok(unsafe { crate::emu::write_memory_unsafe(paddr, value) })
+}
+
 #[no_mangle]
 extern "C" fn rs_translate(ctx: &mut Context, addr: u64, write: bool, out: &mut u64) -> Trap {
     match translate_cached(ctx, addr, write) {
@@ -277,6 +325,40 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), Trap> {
             if ex != 0 { return Err(ex) }
         }
         Op::Illegal => return Err(2),
+        /* LOAD */
+        Op::Lb { rd, rs1, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            write_reg!(rd, read_vaddr::<u8>(ctx, vaddr)? as i8 as u64);
+        }
+        Op::Lh { rd, rs1, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            if vaddr & 1 != 0 { return Err(4) }
+            write_reg!(rd, read_vaddr::<u16>(ctx, vaddr)? as i16 as u64);
+        }
+        Op::Lw { rd, rs1, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            if vaddr & 3 != 0 { return Err(4) }
+            write_reg!(rd, read_vaddr::<u32>(ctx, vaddr)? as i32 as u64);
+        }
+        Op::Ld { rd, rs1, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            if vaddr & 7 != 0 { return Err(4) }
+            write_reg!(rd, read_vaddr::<u64>(ctx, vaddr)?);
+        }
+        Op::Lbu { rd, rs1, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            write_reg!(rd, read_vaddr::<u8>(ctx, vaddr)? as u64);
+        }
+        Op::Lhu { rd, rs1, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            if vaddr & 1 != 0 { return Err(4) }
+            write_reg!(rd, read_vaddr::<u16>(ctx, vaddr)? as u64);
+        }
+        Op::Lwu { rd, rs1, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            if vaddr & 3 != 0 { return Err(4) }
+            write_reg!(rd, read_vaddr::<u32>(ctx, vaddr)? as u64);
+        }
         /* OP-IMM */
         Op::Addi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1).wrapping_add(imm as u64)),
         Op::Slli { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) << imm),
@@ -295,6 +377,23 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), Trap> {
         Op::Slliw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
         Op::Srliw { rd, rs1, imm } => write_reg!(rd, (((read_reg!(rs1) as u32) >> imm) as i32) as u64),
         Op::Sraiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) >> imm) as u64),
+        /* STORE */
+        Op::Sb { rs1, rs2, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            write_vaddr(ctx, vaddr, read_reg!(rs2) as u8)?
+        }
+        Op::Sh { rs1, rs2, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            write_vaddr(ctx, vaddr, read_reg!(rs2) as u16)?
+        }
+        Op::Sw { rs1, rs2, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            write_vaddr(ctx, vaddr, read_reg!(rs2) as u32)?
+        }
+        Op::Sd { rs1, rs2, imm } => {
+            let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
+            write_vaddr(ctx, vaddr, read_reg!(rs2) as u64)?
+        }
         /* OP */
         Op::Add { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_add(read_reg!(rs2))),
         Op::Sub { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_sub(read_reg!(rs2))),

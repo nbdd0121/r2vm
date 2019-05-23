@@ -20,6 +20,14 @@ pub enum Op {
     Legacy(LegacyOp),
     Illegal,
     /* RV64I */
+    /* Base Opcode = LOAD */
+    Lb { rd: u8, rs1: u8, imm: i32 },
+    Lh { rd: u8, rs1: u8, imm: i32 },
+    Lw { rd: u8, rs1: u8, imm: i32 },
+    Ld { rd: u8, rs1: u8, imm: i32 },
+    Lbu { rd: u8, rs1: u8, imm: i32 },
+    Lhu { rd: u8, rs1: u8, imm: i32 },
+    Lwu { rd: u8, rs1: u8, imm: i32 },
     /* Base Opcode = LOAD-FP */
     /* Base Opcode = MISC-MEM */
     Fence,
@@ -41,6 +49,11 @@ pub enum Op {
     Slliw { rd: u8, rs1: u8, imm: i32 },
     Srliw { rd: u8, rs1: u8, imm: i32 },
     Sraiw { rd: u8, rs1: u8, imm: i32 },
+    /* Base Opcode = STORE */
+    Sb { rs1: u8, rs2: u8, imm: i32 },
+    Sh { rs1: u8, rs2: u8, imm: i32 },
+    Sw { rs1: u8, rs2: u8, imm: i32 },
+    Sd { rs1: u8, rs2: u8, imm: i32 },
     /* Base Opcode = STORE-FP */
     /* Base Opcode = AMO */
     /* Base Opcode = OP */

@@ -24,13 +24,9 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
         using C_rs1s_field = util::Bitfield<uint32_t, 9, 7>;
         using C_rs2s_field = C_rds_field;
 
-        using Ci_lwsp_imm_field = util::Bitfield<uint32_t, 3, 2, 12, 12, 6, 4, -1, 2>;
         using Ci_ldsp_imm_field = util::Bitfield<uint32_t, 4, 2, 12, 12, 6, 5, -1, 3>;
-        using Css_swsp_imm_field = util::Bitfield<uint32_t, 8, 7, 12, 9, -1, 2>;
         using Css_sdsp_imm_field = util::Bitfield<uint32_t, 9, 7, 12, 10, -1, 3>;
-        using Cl_lw_imm_field = util::Bitfield<uint32_t, 5, 5, 12, 10, 6, 6, -1, 2>;
         using Cl_ld_imm_field = util::Bitfield<uint32_t, 6, 5, 12, 10, -1, 3>;
-        using Cs_sw_imm_field = Cl_lw_imm_field;
         using Cs_sd_imm_field = Cl_ld_imm_field;
 
         int function = C_funct3_field::extract(bits);
@@ -50,27 +46,9 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
                         ret.imm(Cl_ld_imm_field::extract(bits));
                         return ret;
                     }
-                    case 0b010: {
-                        // C.LW
-                        // translate to lw rd', rs1', offset
-                        ret.opcode(Opcode::lw);
-                        ret.rd(C_rds_field::extract(bits) + 8);
-                        ret.rs1(C_rs1s_field::extract(bits) + 8);
-                        ret.imm(Cl_lw_imm_field::extract(bits));
-                        return ret;
-                    }
-                    case 0b011: {
-                        // C.LD
-                        // translate to ld rd', rs1', offset
-                        ret.opcode(Opcode::ld);
-                        ret.rd(C_rds_field::extract(bits) + 8);
-                        ret.rs1(C_rs1s_field::extract(bits) + 8);
-                        ret.imm(Cl_ld_imm_field::extract(bits));
-                        return ret;
-                    }
-                    case 0b100:
-                        // Reserved
-                        goto illegal_compressed;
+                    case 0b010:
+                    case 0b011:
+                    case 0b100: throw "moved to rust";
                     case 0b101: {
                         // C.FSD
                         // translate to fsd rs2', rs1', offset
@@ -80,29 +58,13 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
                         ret.imm(Cs_sd_imm_field::extract(bits));
                         return ret;
                     }
-                    case 0b110: {
-                        // C.SW
-                        // translate to sw rs2', rs1', offset
-                        ret.opcode(Opcode::sw);
-                        ret.rs1(C_rs1s_field::extract(bits) + 8);
-                        ret.rs2(C_rs2s_field::extract(bits) + 8);
-                        ret.imm(Cs_sw_imm_field::extract(bits));
-                        return ret;
-                    }
-                    case 0b111: {
-                        // C.SD
-                        // translate to sd rs2', rs1', offset
-                        ret.opcode(Opcode::sd);
-                        ret.rs1(C_rs1s_field::extract(bits) + 8);
-                        ret.rs2(C_rs2s_field::extract(bits) + 8);
-                        ret.imm(Cs_sd_imm_field::extract(bits));
-                        return ret;
-                    }
+                    case 0b110:
+                    case 0b111: throw "moved to rust";
                     // full case
                     default: UNREACHABLE();
                 }
             }
-                                        case 0b01: throw "moved to rust";
+            case 0b01: throw "moved to rust";
             case 0b10: {
                 switch (function) {
                     case 0b000: throw "moved to rust";
@@ -116,34 +78,8 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
                         ret.imm(Ci_ldsp_imm_field::extract(bits));
                         return ret;
                     }
-                    case 0b010: {
-                        int rd = C_rd_field::extract(bits);
-                        if (rd == 0) {
-                            // Reserved
-                            goto illegal_compressed;
-                        }
-                        // C.LWSP
-                        // translate to lw rd, x2, imm
-                        ret.opcode(Opcode::lw);
-                        ret.rd(rd);
-                        ret.rs1(2);
-                        ret.imm(Ci_lwsp_imm_field::extract(bits));
-                        return ret;
-                    }
-                    case 0b011: {
-                        int rd = C_rd_field::extract(bits);
-                        if (rd == 0) {
-                            // Reserved
-                            goto illegal_compressed;
-                        }
-                        // C.LDSP
-                        // translate to ld rd, x2, imm
-                        ret.opcode(Opcode::ld);
-                        ret.rd(rd);
-                        ret.rs1(2);
-                        ret.imm(Ci_ldsp_imm_field::extract(bits));
-                        return ret;
-                    }
+                    case 0b010:
+                    case 0b011:
                     case 0b100: throw "moved to rust";
                     case 0b101: {
                         // C.FSDSP
@@ -154,24 +90,8 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
                         ret.imm(Css_sdsp_imm_field::extract(bits));
                         return ret;
                     }
-                    case 0b110: {
-                        // C.SWSP
-                        // translate to sw rs2, x2, imm
-                        ret.opcode(Opcode::sw);
-                        ret.rs1(2);
-                        ret.rs2(C_rs2_field::extract(bits));
-                        ret.imm(Css_swsp_imm_field::extract(bits));
-                        return ret;
-                    }
-                    case 0b111: {
-                        // C.SDSP
-                        // translate to sd rs2, x2, imm
-                        ret.opcode(Opcode::sd);
-                        ret.rs1(2);
-                        ret.rs2(C_rs2_field::extract(bits));
-                        ret.imm(Css_sdsp_imm_field::extract(bits));
-                        return ret;
-                    }
+                    case 0b110:
+                    case 0b111: throw "moved to rust";
                     // full case
                     default: UNREACHABLE();
                 }
@@ -180,10 +100,6 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
             // full case
             default: UNREACHABLE();
         }
-
-    illegal_compressed:
-        // All illegal instructions landed here. Since ret.opcode() is illegal by default, we can just return it.
-        return ret;
     }
 
     if ((bits & 0x1F) != 0x1F) {
@@ -210,21 +126,7 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
 
         switch (bits & 0b1111111) {
             /* Base Opcode LOAD */
-            case 0b0000011: {
-                switch (function) {
-                    case 0b000: opcode = Opcode::lb; break;
-                    case 0b001: opcode = Opcode::lh; break;
-                    case 0b010: opcode = Opcode::lw; break;
-                    case 0b011: opcode = Opcode::ld; break;
-                    case 0b100: opcode = Opcode::lbu; break;
-                    case 0b101: opcode = Opcode::lhu; break;
-                    case 0b110: opcode = Opcode::lwu; break;
-                    goto illegal;
-                }
-                ret.opcode(opcode);
-                ret.imm(I_imm_field::extract(bits));
-                return ret;
-            }
+            case 0b0000011: throw "moved to rust";
 
             /* Base Opcode LOAD-FP */
             case 0b0000111: {
@@ -246,21 +148,9 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
             /* Base Opcode AUIPC */
             case 0b0010111:
             /* Base Opcode OP-IMM-32 */
-            case 0b0011011: throw "moved to rust";
-
+            case 0b0011011:
             /* Base Opcode STORE */
-            case 0b0100011: {
-                switch (function) {
-                    case 0b000: opcode = Opcode::sb; break;
-                    case 0b001: opcode = Opcode::sh; break;
-                    case 0b010: opcode = Opcode::sw; break;
-                    case 0b011: opcode = Opcode::sd; break;
-                    goto illegal;
-                }
-                ret.opcode(opcode);
-                ret.imm(S_imm_field::extract(bits));
-                return ret;
-            }
+            case 0b0100011: throw "moved to rust";
 
             /* Base Opcode STORE-FP */
             case 0b0100111: {

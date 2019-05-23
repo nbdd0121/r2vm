@@ -120,44 +120,11 @@ void step(Context *context, Instruction inst) {
     // to signed when necessary.
     switch (inst.opcode()) {
         /* LOAD */
-        case Opcode::lb:
-            write_rd(sign_ext8(load_memory<uint8_t>(translate(context, read_rs1() + inst.imm(), false))));
-            break;
-        case Opcode::lh:
-            write_rd(sign_ext16(load_memory<uint16_t>(translate(context, read_rs1() + inst.imm(), false))));
-            break;
-        case Opcode::lw:
-            write_rd(sign_ext(load_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), false))));
-            break;
-        case Opcode::ld:
-            write_rd(load_memory<uint64_t>(translate(context, read_rs1() + inst.imm(), false)));
-            break;
-        case Opcode::lbu:
-            write_rd(zero_ext8(load_memory<uint8_t>(translate(context, read_rs1() + inst.imm(), false))));
-            break;
-        case Opcode::lhu:
-            write_rd(zero_ext16(load_memory<uint16_t>(translate(context, read_rs1() + inst.imm(), false))));
-            break;
-        case Opcode::lwu:
-            write_rd(zero_ext(load_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), false))));
-            break;
         /* MISC-MEM */
         /* OP-IMM */
         /* AUIPC */
         /* OP-IMM-32 */
         /* STORE */
-        case Opcode::sb:
-            emu::store_memory<uint8_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
-            break;
-        case Opcode::sh:
-            emu::store_memory<uint16_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
-            break;
-        case Opcode::sw:
-            emu::store_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
-            break;
-        case Opcode::sd:
-            emu::store_memory<uint64_t>(translate(context, read_rs1() + inst.imm(), true), read_rs2());
-            break;
         /* OP */
         /* LUI */
         /* OP-32 */

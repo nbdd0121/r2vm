@@ -98,6 +98,18 @@ fn ci_imm(bits: u16) -> i32 {
     ((bits & 0b00000000_01111100) as i32) >> 2
 }
 
+fn ci_lwsp_imm(bits: u16) -> i32 {
+    ((bits & 0b00000000_00001100) as i32) << 4 |
+    ((bits & 0b00010000_00000000) as i32) >> 7 |
+    ((bits & 0b00000000_01110000) as i32) >> 2
+}
+
+fn ci_ldsp_imm(bits: u16) -> i32 {
+    ((bits & 0b00000000_00011100) as i32) << 4 |
+    ((bits & 0b00010000_00000000) as i32) >> 7 |
+    ((bits & 0b00000000_01100000) as i32) >> 2
+}
+
 fn ci_addi16sp_imm(bits: u16) -> i32 {
     ((bits & 0b00010000_00000000) as i32) << (31 - 12) >> (31 - 9) |
     ((bits & 0b00000000_00011000) as i32) << 4 |
@@ -106,12 +118,37 @@ fn ci_addi16sp_imm(bits: u16) -> i32 {
     ((bits & 0b00000000_01000000) as i32) >> 2
 }
 
+fn css_swsp_imm(bits: u16) -> i32 {
+    ((bits & 0b00000001_10000000) as i32) >> 1 |
+    ((bits & 0b00011110_00000000) as i32) >> 7
+}
+
+fn css_sdsp_imm(bits: u16) -> i32 {
+    ((bits & 0b00000011_10000000) as i32) >> 1 |
+    ((bits & 0b00011100_00000000) as i32) >> 7
+}
+
 fn ciw_imm(bits: u16) -> i32 {
     ((bits & 0b00000111_10000000) as i32) >> 1 |
     ((bits & 0b00011000_00000000) as i32) >> 7 |
     ((bits & 0b00000000_00100000) as i32) >> 2 |
     ((bits & 0b00000000_01000000) as i32) >> 4
 }
+
+fn cl_lw_imm(bits: u16) -> i32 {
+    ((bits & 0b00000000_00100000) as i32) << 1 |
+    ((bits & 0b00011100_00000000) as i32) >> 7 |
+    ((bits & 0b00000000_01000000) as i32) >> 4
+}
+
+fn cl_ld_imm(bits: u16) -> i32 {
+    ((bits & 0b00000000_01100000) as i32) << 1 |
+    ((bits & 0b00011100_00000000) as i32) >> 7
+}
+
+fn cs_sw_imm(bits: u16) -> i32 { cl_lw_imm(bits) }
+
+fn cs_sd_imm(bits: u16) -> i32 { cl_ld_imm(bits) }
 
 fn cb_imm(bits: u16) -> i32 {
     ((bits & 0b00010000_00000000) as i32) << (31 - 12) >> (31 - 8) |
@@ -151,7 +188,42 @@ pub fn decode_compressed(bits: u16) -> Op {
                     // translate to addi rd', x2, imm
                     Op::Addi { rd: c_rds(bits), rs1: 2, imm }
                 }
-                _ => Op::Legacy(unsafe { legacy_decode(bits as u32) }),
+                0b001 => {
+                    // C.FLD
+                    // translate to fld rd', rs1', offset
+                    Op::Legacy(unsafe { legacy_decode(bits as u32) })
+            }
+                0b010 => {
+                    // C.LW
+                    // translate to lw rd', rs1', offset
+                    Op::Lw { rd: c_rds(bits), rs1: c_rs1s(bits), imm: cl_lw_imm(bits) }
+        }
+                0b011 => {
+                    // C.LD
+                    // translate to ld rd', rs1', offset
+                    Op::Ld { rd: c_rds(bits), rs1: c_rs1s(bits), imm: cl_ld_imm(bits) }
+                }
+                0b100 => {
+                    // Reserved
+                    Op::Illegal
+                }
+                0b101 => {
+                    // C.FSD
+                    // translate to fsd rs2', rs1', offset
+                    Op::Legacy(unsafe { legacy_decode(bits as u32) })
+                }
+                0b110 => {
+                    // C.SW
+                    // translate to sw rs2', rs1', offset
+                    Op::Sw { rs1: c_rs1s(bits), rs2: c_rs2s(bits), imm: cs_sw_imm(bits) }
+                }
+                0b111 => {
+                    // C.SD
+                    // translate to sd rs2', rs1', offset
+                    Op::Sd { rs1: c_rs1s(bits), rs2: c_rs2s(bits), imm: cs_sd_imm(bits) }
+                }
+                // full case
+                _ => unsafe { std::hint::unreachable_unchecked() },
             }
         }
         0b01 => {
@@ -276,6 +348,31 @@ pub fn decode_compressed(bits: u16) -> Op {
                     let rd = c_rd(bits);
                     Op::Slli { rd, rs1: rd, imm: ci_imm(bits) & 63 }
                 }
+                0b001 => {
+                    // C.FLDSP
+                    // translate to fld rd, x2, imm
+                    Op::Legacy(unsafe { legacy_decode(bits as u32) })
+                }
+                0b010 => {
+                    let rd = c_rd(bits);
+                    if rd == 0 {
+                        // Reserved
+                        return Op::Illegal
+                    }
+                    // C.LWSP
+                    // translate to lw rd, x2, imm
+                    Op::Lw { rd, rs1: 2, imm: ci_lwsp_imm(bits) }
+                }
+                0b011 => {
+                    let rd = c_rd(bits);
+                    if rd == 0 {
+                        // Reserved
+                        return Op::Illegal
+                    }
+                    // C.LDSP
+                    // translate to ld rd, x2, imm
+                    Op::Ld { rd, rs1: 2, imm: ci_ldsp_imm(bits) }
+                }
                 0b100 => {
                     let rs2 = c_rs2(bits);
                     if (bits & 0x1000) == 0 {
@@ -312,7 +409,23 @@ pub fn decode_compressed(bits: u16) -> Op {
                         }
                     }
                 }
-                _ => Op::Legacy(unsafe { legacy_decode(bits as u32) })
+                0b101 => {
+                    // C.FSDSP
+                    // translate to fsd rs2, x2, imm
+                    Op::Legacy(unsafe { legacy_decode(bits as u32) })
+                }
+                0b110 => {
+                    // C.SWSP
+                    // translate to sw rs2, x2, imm
+                    Op::Sw { rs1: 2, rs2: c_rs2(bits), imm: css_swsp_imm(bits) }
+                }
+                0b111 => {
+                    // C.SDSP
+                    // translate to sd rs2, x2, imm
+                    Op::Sd { rs1: 2, rs2: c_rs2(bits), imm: css_sdsp_imm(bits) }
+                }
+                // full case
+                _ => unsafe { std::hint::unreachable_unchecked() },
             }
         }
         _ => unreachable!(),
@@ -332,6 +445,21 @@ pub fn decode(bits: u32) -> Op {
     let rs2 = rs2(bits);
 
     match bits & 0b1111111 {
+        /* LOAD */
+        0b0000011 => {
+            let imm = i_imm(bits);
+            match function {
+                0b000 => Op::Lb { rd, rs1, imm },
+                0b001 => Op::Lh { rd, rs1, imm },
+                0b010 => Op::Lw { rd, rs1, imm },
+                0b011 => Op::Ld { rd, rs1, imm },
+                0b100 => Op::Lbu { rd, rs1, imm },
+                0b101 => Op::Lhu { rd, rs1, imm },
+                0b110 => Op::Lwu { rd, rs1, imm },
+                _ => Op::Illegal,
+            }
+        }
+
         /* OP-IMM */
         0b0010011 => {
             let imm = i_imm(bits);
@@ -392,6 +520,18 @@ pub fn decode(bits: u32) -> Op {
                     } else {
                         Op::Srliw { rd, rs1, imm }
                     }
+                _ => Op::Illegal,
+            }
+        }
+
+        /* STORE */
+        0b0100011 => {
+            let imm = s_imm(bits);
+            match function {
+                0b000 => Op::Sb { rs1, rs2, imm },
+                0b001 => Op::Sh { rs1, rs2, imm },
+                0b010 => Op::Sw { rs1, rs2, imm },
+                0b011 => Op::Sd { rs1, rs2, imm },
                 _ => Op::Illegal,
             }
         }
