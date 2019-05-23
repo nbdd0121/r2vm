@@ -2,6 +2,9 @@ use crate::io::IoMemory;
 use crate::io::plic::Plic;
 use crate::io::virtio::{Mmio, Block, Rng};
 
+mod syscall;
+pub use syscall::syscall;
+
 // The global PLIC
 pub static mut PLIC: Option<Plic> = None;
 

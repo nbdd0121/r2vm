@@ -7,7 +7,7 @@
 
 namespace riscv::abi {
 
-enum class Syscall_number {
+enum class Syscall_number: uint64_t {
     io_setup = 0,
     io_destroy = 1,
     io_submit = 2,

@@ -319,9 +319,10 @@ const char* translate_path(const char* pathname) {
 
 namespace emu {
 
+extern "C"
 reg_t syscall(
     riscv::abi::Syscall_number nr,
-    reg_t arg0, reg_t arg1, reg_t arg2, [[maybe_unused]] reg_t arg3, [[maybe_unused]] reg_t arg4, [[maybe_unused]] reg_t arg5
+    reg_t arg0, reg_t arg1, reg_t arg2, reg_t arg3, reg_t arg4, reg_t arg5
 ) {
     using Abi = riscv::abi::Abi;
 
