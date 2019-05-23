@@ -1,4 +1,5 @@
 use super::{Device, DeviceId, Queue};
+use super::super::block::Block as BlockDevice;
 
 #[allow(dead_code)]
 const VIRTIO_BLK_F_RO: usize = 5;
@@ -16,26 +17,18 @@ struct VirtioBlkReqHeader {
     sector: u64,
 }
 
-use std::fs::File;
-use std::io::{Seek, Read, Write};
-
 pub struct Block {
     status: u32,
     queue: Queue,
     config: [u8; 8],
-    file: File,
+    file: Box<dyn BlockDevice>,
 }
 
 impl Block {
-    pub fn new(path: impl AsRef<std::path::Path>) -> Block {
-        let file = std::fs::OpenOptions::new()
-                                        .read(true)
-                                        .write(true)
-                                        .open(path)
-                                        .unwrap();
-        let len = file.metadata().unwrap().len();
+    pub fn new(mut file: Box<dyn BlockDevice>) -> Block {
+        let len = file.len().unwrap();
         if len % 512 != 0 {
-            panic!("Size of the backing file of block device must be multiple of 512 bytes");
+            panic!("Size of block device must be multiple of 512 bytes");
         }
         Block {
             status: 0,
@@ -70,26 +63,22 @@ impl Device for Block {
 
             match header.r#type {
                 VIRTIO_BLK_T_IN => {
-                    self.file.seek(std::io::SeekFrom::Start(header.sector * 512)).unwrap();
-
                     let mut io_buffer = Vec::with_capacity(buffer.write_len());
                     unsafe { io_buffer.set_len(io_buffer.capacity() - 1) };
-                    self.file.read_exact(&mut io_buffer).unwrap();
+                    self.file.read_exact_at(&mut io_buffer, header.sector * 512).unwrap();
                     trace!(target: "VirtioBlk", "read {} bytes from sector {:x}", io_buffer.len(), header.sector);
 
                     io_buffer.push(0);
                     buffer.write(0, &io_buffer);
                 }
                 VIRTIO_BLK_T_OUT => {
-                    self.file.seek(std::io::SeekFrom::Start(header.sector * 512)).unwrap();
-
                     let mut io_buffer = Vec::with_capacity(buffer.read_len() - 16);
                     unsafe { io_buffer.set_len(io_buffer.capacity()) };
                     buffer.read(16, &mut io_buffer);
 
-                    self.file.write_all(&io_buffer).unwrap();
+                    self.file.write_all_at(&io_buffer, header.sector * 512).unwrap();
                     // We must make sure the data has been flushed into the disk before returning
-                    self.file.sync_data().unwrap();
+                    self.file.flush().unwrap();
                     trace!(target: "VirtioBlk", "write {} bytes from sector {:x}", io_buffer.len(), header.sector);
 
                     buffer.write(0, &[0]);

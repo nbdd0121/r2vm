@@ -9,9 +9,15 @@ static mut VIRTIO_BLK: Option<Mmio> = None;
 static mut VIRTIO_RNG: Option<Mmio> = None;
 
 pub fn init() {
+    let file = std::fs::OpenOptions::new()
+                                    .read(true)
+                                    .open("rootfs.img")
+                                    .unwrap();
+    let file = crate::io::block::Shadow::new(file);
     unsafe {
         PLIC = Some(Plic::new(2));
-        VIRTIO_BLK = Some(Mmio::new(Box::new(Block::new("rootfs.img"))));
+        VIRTIO_BLK = Some(Mmio::new(Box::new(Block::new(Box::new(file)))));
+        
         VIRTIO_RNG = Some(Mmio::new(Box::new(Rng::new_seeded())));
     }
 }
