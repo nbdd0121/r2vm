@@ -118,6 +118,17 @@ pub enum Op {
     Remw { rd: u8, rs1: u8, rs2: u8 },
     Remuw { rd: u8, rs1: u8, rs2: u8 },
 
+    /* F extension */
+    /* Base Opcode = LOAD-FP */
+    Flw { frd: u8, rs1: u8, imm: i32 },
+    /* Base Opcode = STORE-FP */
+    Fsw { rs1: u8, frs2: u8, imm: i32 },
+
+    /* D extension */
+    /* Base Opcode = LOAD-FP */
+    Fld { frd: u8, rs1: u8, imm: i32 },
+    /* Base Opcode = STORE-FP */
+    Fsd { rs1: u8, frs2: u8, imm: i32 },
 
     /* Privileged */
     Sret,

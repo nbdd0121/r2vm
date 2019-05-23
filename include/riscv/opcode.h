@@ -65,9 +65,7 @@ enum class Opcode {
 
     /* F extension */
     /* Base Opcode = LOAD-FP */
-    flw,
     /* Base Opcode = STORE-FP */
-    fsw,
     /* Base Opcode = OP-FP */
     fadd_s,
     fsub_s,
@@ -104,9 +102,7 @@ enum class Opcode {
 
     /* D extension */
     /* Base Opcode = LOAD-FP */
-    fld,
     /* Base Opcode = STORE-FP */
-    fsd,
     /* Base Opcode = OP-FP */
     fadd_d,
     fsub_d,

@@ -191,13 +191,13 @@ pub fn decode_compressed(bits: u16) -> Op {
                 0b001 => {
                     // C.FLD
                     // translate to fld rd', rs1', offset
-                    Op::Legacy(unsafe { legacy_decode(bits as u32) })
-            }
+                    Op::Fld { frd: c_rds(bits), rs1: c_rs1s(bits), imm: cl_ld_imm(bits) }
+                }
                 0b010 => {
                     // C.LW
                     // translate to lw rd', rs1', offset
                     Op::Lw { rd: c_rds(bits), rs1: c_rs1s(bits), imm: cl_lw_imm(bits) }
-        }
+                }
                 0b011 => {
                     // C.LD
                     // translate to ld rd', rs1', offset
@@ -210,7 +210,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                 0b101 => {
                     // C.FSD
                     // translate to fsd rs2', rs1', offset
-                    Op::Legacy(unsafe { legacy_decode(bits as u32) })
+                    Op::Fsd { rs1: c_rs1s(bits), frs2: c_rs2s(bits), imm: cs_sd_imm(bits) }
                 }
                 0b110 => {
                     // C.SW
@@ -351,7 +351,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                 0b001 => {
                     // C.FLDSP
                     // translate to fld rd, x2, imm
-                    Op::Legacy(unsafe { legacy_decode(bits as u32) })
+                    Op::Fld { frd: c_rd(bits), rs1: 2, imm: ci_ldsp_imm(bits) }
                 }
                 0b010 => {
                     let rd = c_rd(bits);
@@ -412,7 +412,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                 0b101 => {
                     // C.FSDSP
                     // translate to fsd rs2, x2, imm
-                    Op::Legacy(unsafe { legacy_decode(bits as u32) })
+                    Op::Fsd { rs1: 2, frs2: c_rs2(bits), imm: css_sdsp_imm(bits) }
                 }
                 0b110 => {
                     // C.SWSP
@@ -456,6 +456,16 @@ pub fn decode(bits: u32) -> Op {
                 0b100 => Op::Lbu { rd, rs1, imm },
                 0b101 => Op::Lhu { rd, rs1, imm },
                 0b110 => Op::Lwu { rd, rs1, imm },
+                _ => Op::Illegal,
+            }
+        }
+
+        /* LOAD-FP */
+        0b0000111 => {
+            let imm = i_imm(bits);
+            match function {
+                0b010 => Op::Flw { frd: rd, rs1, imm },
+                0b011 => Op::Fld { frd: rd, rs1, imm },
                 _ => Op::Illegal,
             }
         }
@@ -532,6 +542,16 @@ pub fn decode(bits: u32) -> Op {
                 0b001 => Op::Sh { rs1, rs2, imm },
                 0b010 => Op::Sw { rs1, rs2, imm },
                 0b011 => Op::Sd { rs1, rs2, imm },
+                _ => Op::Illegal,
+            }
+        }
+
+        /* STORE-FP */
+        0b0100111 => {
+            let imm = s_imm(bits);
+            match function {
+                0b010 => Op::Fsw { rs1, frs2: rs2, imm },
+                0b011 => Op::Fsd { rs1, frs2: rs2, imm },
                 _ => Op::Illegal,
             }
         }
@@ -656,18 +676,18 @@ pub fn decode(bits: u32) -> Op {
 }
 
 pub fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
-    let mut bits = unsafe { crate::emu::read_memory::<u16>(*pc) as u32 };
+    let bits = unsafe { crate::emu::read_memory::<u16>(*pc) };
     *pc += 2;
     if bits & 3 == 3 {
-        if *pc & 4095 == 0 {
-            bits |= (unsafe { crate::emu::read_memory::<u16>(pc_next) as u32 }) << 16;
+        let hi_bits = if *pc & 4095 == 0 {
+            unsafe { crate::emu::read_memory::<u16>(pc_next) }
         } else {
-            bits |= (unsafe { crate::emu::read_memory::<u16>(*pc) as u32 }) << 16;
-        }
+            unsafe { crate::emu::read_memory::<u16>(*pc) }
+        };
         *pc += 2;
-        (decode(bits), false)
+        (decode((hi_bits as u32) << 16 | bits as u32), false)
     } else {
-        (decode_compressed(bits as u16), true)
+        (decode_compressed(bits), true)
     }
 }
 

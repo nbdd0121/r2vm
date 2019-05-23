@@ -317,16 +317,6 @@ void step(Context *context, Instruction inst) {
         }
 
         /* F-extension */
-        case Opcode::flw: {
-            uint32_t value = load_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), false));
-            write_frd_s(util::read_as<softfp::Single>(&value));
-            break;
-        }
-        case Opcode::fsw: {
-            softfp::Single value = read_frs2_s();
-            emu::store_memory<uint32_t>(translate(context, read_rs1() + inst.imm(), true), util::read_as<uint32_t>(&value));
-            break;
-        }
         case Opcode::fadd_s:
             set_rm();
             clear_flags();
@@ -480,16 +470,6 @@ void step(Context *context, Instruction inst) {
             break;
 
         /* D-extension */
-        case Opcode::fld: {
-            uint64_t value = load_memory<uint64_t>(translate(context, read_rs1() + inst.imm(), false));
-            write_frd_d(util::read_as<softfp::Double>(&value));
-            break;
-        }
-        case Opcode::fsd: {
-            softfp::Double value = read_frs2_d();
-            emu::store_memory<uint64_t>(translate(context, read_rs1() + inst.imm(), true), util::read_as<uint64_t>(&value));
-            break;
-        }
         case Opcode::fadd_d:
             set_rm();
             clear_flags();
@@ -669,8 +649,6 @@ extern "C" uint64_t legacy_step(riscv::Context* ctx, riscv::Instruction* inst)  
         return (uint64_t)trap.cause;
     }
 }
-
-#define CACHE_LINE_LOG2_SIZE 12
 
 extern "C" reg_t rs_translate(Context* context, reg_t addr, bool write, reg_t& out);
 
