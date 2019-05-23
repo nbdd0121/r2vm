@@ -15,6 +15,15 @@
 #include "riscv/abi.h"
 #include "util/format.h"
 
+namespace emu::state {
+
+reg_t original_brk;
+reg_t brk;
+reg_t heap_start;
+reg_t heap_end;
+
+}
+
 namespace {
 
 // Formatter for escaped strings.
@@ -301,12 +310,12 @@ const char* is_proc_self(const char* pathname) {
 
 std::string path_buffer;
 const char* translate_path(const char* pathname) {
-    if (pathname[0] != '/' || emu::state::sysroot.empty()) return pathname;
+    if (pathname[0] != '/' || !*emu::state::get_flags().sysroot) return pathname;
 
     // The file exists in sysroot, then use it.
-    path_buffer = emu::state::sysroot + pathname;
+    path_buffer = std::string(emu::state::get_flags().sysroot) + pathname;
     if (access(path_buffer.c_str(), F_OK) == 0) {
-        if (emu::state::strace) {
+        if (emu::state::get_flags().strace) {
             util::log("Translate {} to {}\n", pathname, path_buffer);
         }
         return path_buffer.c_str();
@@ -331,7 +340,7 @@ reg_t syscall(
             char *buffer = reinterpret_cast<char*>(translate_address(arg0));
             size_t size = arg1;
             sreg_t ret = getcwd(buffer, size) ? 0 : -static_cast<sreg_t>(riscv::abi::Errno::einval);
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 if (ret == 0) {
                     util::log("getcwd({}, {}) = 0\n", escape(buffer), size);
                 } else {
@@ -346,7 +355,7 @@ reg_t syscall(
             auto pathname = reinterpret_cast<char*>(translate_address(arg1));
             sreg_t ret = return_errno(unlinkat(dirfd, translate_path(pathname), arg2));
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log(
                     "unlinkat({}, {}, {}) = {}\n", static_cast<sreg_t>(arg0), escape(pathname), arg2, ret
                 );
@@ -359,7 +368,7 @@ reg_t syscall(
             auto pathname = reinterpret_cast<char*>(translate_address(arg1));
             sreg_t ret = return_errno(faccessat(dirfd, translate_path(pathname), arg2, arg3));
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log(
                     "faccessat({}, {}, {}, {}) = {}\n", static_cast<sreg_t>(arg0), escape(pathname), arg2, arg3, ret
                 );
@@ -375,7 +384,7 @@ reg_t syscall(
             sreg_t ret;
             if (proc_self != nullptr) {
                 if (strcmp(proc_self, "exe") == 0) {
-                    ret = return_errno(openat(dirfd, state::exec_path.c_str(), flags, arg3));
+                    ret = return_errno(openat(dirfd, state::get_flags().exec_path, flags, arg3));
                 } else {
                     // Auto handle cmdline, stat, auxv, cmdline here!"
                     ret = return_errno(openat(dirfd, translate_path(pathname), flags, arg3));
@@ -384,7 +393,7 @@ reg_t syscall(
                 ret = return_errno(openat(dirfd, translate_path(pathname), flags, arg3));
             }
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log(
                     "openat({}, {}, {}, {}) = {}\n", static_cast<sreg_t>(arg0), escape(pathname), arg2, arg3, ret
                 );
@@ -401,7 +410,7 @@ reg_t syscall(
                 ret = return_errno(close(arg0));
             }
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("close({}) = {}\n", arg0, ret);
             }
 
@@ -409,7 +418,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::lseek: {
             sreg_t ret = return_errno(lseek(arg0, arg1, arg2));
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("lseek({}, {}, {}) = {}\n", arg0, arg1, arg2, ret);
             }
             return ret;
@@ -420,7 +429,7 @@ reg_t syscall(
             // Handle standard IO specially, since it is shared between emulator and guest program.
             sreg_t ret = return_errno(read(arg0, buffer, arg2));
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("read({}, {}, {}) = {}\n",
                     arg0,
                     escape(buffer, arg2),
@@ -436,7 +445,7 @@ reg_t syscall(
 
             sreg_t ret = return_errno(write(arg0, buffer, arg2));
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("write({}, {}, {}) = {}\n",
                     arg0,
                     escape(buffer, arg2),
@@ -459,7 +468,7 @@ reg_t syscall(
                 ret = return_errno(writev(arg0, reinterpret_cast<struct iovec*>(translate_address(arg1)), arg2));
             }
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("writev({}, {}, {}) = {}\n",
                     arg0,
                     arg1,
@@ -477,7 +486,7 @@ reg_t syscall(
             auto proc_self = is_proc_self(pathname);
             sreg_t ret;
             if (proc_self != nullptr && strcmp(proc_self, "exe") == 0) {
-                char* path = realpath(state::exec_path.c_str(), NULL);
+                char* path = realpath(state::get_flags().exec_path, NULL);
                 if (path != nullptr) {
                     strncpy(buffer, path, arg3);
                     ret = strlen(path);
@@ -489,7 +498,7 @@ reg_t syscall(
                 ret = return_errno(readlinkat(dirfd, translate_path(pathname), buffer, arg3));
             }
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 if (ret > 0) {
                     util::log(
                         "readlinkat({}, {}, {}, {}) = {}\n",
@@ -515,7 +524,7 @@ reg_t syscall(
                 convert_stat_from_host(guest_stat, &host_stat);
             }
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 if (ret == 0) {
                     util::log(
                         "fstatat({}, {}, {{st_mode={:#o}, st_size={}, ...}}) = 0\n",
@@ -538,7 +547,7 @@ reg_t syscall(
                 convert_stat_from_host(guest_stat, &host_stat);
             }
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 if (ret == 0) {
                     util::log("fstat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0\n", arg0, host_stat.st_mode, host_stat.st_size);
                 } else {
@@ -549,14 +558,14 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::exit: {
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("exit({}) = ?\n", arg0);
             }
 
             exit(arg0);
         }
         case riscv::abi::Syscall_number::exit_group: {
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("exit_group({}) = ?\n", arg0);
             }
 
@@ -575,7 +584,7 @@ reg_t syscall(
                 ret = return_errno(uname(reinterpret_cast<struct utsname*>(translate_address(arg0))));
             }
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("uname({:#x}) = {}\n", arg0, ret);
             }
 
@@ -593,7 +602,7 @@ reg_t syscall(
                 convert_timeval_from_host(guest_tv, &host_tv);
             }
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 if (ret == 0) {
                     util::log("gettimeofday({{{}, {}}}, NULL) = 0\n", host_tv.tv_sec, host_tv.tv_usec);
                 } else {
@@ -605,7 +614,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::getpid: {
             reg_t ret = getpid();
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("getpid() = {}\n", ret);
             }
 
@@ -613,7 +622,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::getppid: {
             reg_t ret = getppid();
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("getppid() = {}\n", ret);
             }
 
@@ -621,7 +630,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::getuid: {
             reg_t ret = getuid();
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("getuid() = {}\n", ret);
             }
 
@@ -629,7 +638,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::geteuid: {
             reg_t ret = geteuid();
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("geteuid() = {}\n", ret);
             }
 
@@ -637,7 +646,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::getgid: {
             reg_t ret = getgid();
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("getgid() = {}\n", ret);
             }
 
@@ -645,7 +654,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::getegid: {
             reg_t ret = getegid();
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("getegid() = {}\n", ret);
             }
 
@@ -682,14 +691,14 @@ reg_t syscall(
             }
 
             reg_t ret = state::brk;
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("brk({}) = {}\n", pointer(arg0), pointer(ret));
             }
             return ret;
         }
         case riscv::abi::Syscall_number::munmap: {
             reg_t ret = return_errno(guest_munmap(arg0, arg1));
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::error("munmap({:#x}, {}) = {}\n", arg0, arg1, ret);
             }
 
@@ -697,7 +706,7 @@ reg_t syscall(
         }
         // This is linux specific call, we will just return ENOSYS.
         case riscv::abi::Syscall_number::mremap: {
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::error("mremap({:#x}, {}, {}, {}, {:#x}) = -ENOSYS\n", arg0, arg1, arg2, arg3, arg4);
             }
             return -static_cast<sreg_t>(riscv::abi::Errno::enosys);;
@@ -706,7 +715,7 @@ reg_t syscall(
             int prot = convert_mmap_prot_from_host<Abi>(arg2);
             int flags = convert_mmap_flags_from_host<Abi>(arg3);
             reg_t ret = reinterpret_cast<reg_t>(guest_mmap(arg0, arg1, prot, flags, arg4, arg5));
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::error("mmap({:#x}, {}, {}, {}, {}, {}) = {:#x}\n", arg0, arg1, arg2, arg3, arg4, arg5, ret);
             }
 
@@ -715,7 +724,7 @@ reg_t syscall(
         case riscv::abi::Syscall_number::mprotect: {
             int prot = convert_mmap_prot_from_host<Abi>(arg2);
             sreg_t ret = return_errno(guest_mprotect(arg0, arg1, prot));
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::error("mprotect({:#x}, {}, {}) = {:#x}\n", arg0, arg1, arg2, ret);
             }
 
@@ -726,7 +735,7 @@ reg_t syscall(
             auto flags = convert_open_flags_to_host(arg1);
 
             sreg_t ret = return_errno(open(translate_path(pathname), flags, arg2));
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("open({}, {}, {}) = {}\n", escape(pathname), arg1, arg2, ret);
             }
 
@@ -735,7 +744,7 @@ reg_t syscall(
         case riscv::abi::Syscall_number::unlink: {
             auto pathname = reinterpret_cast<char*>(translate_address(arg0));
             sreg_t ret = return_errno(unlink(translate_path(pathname)));
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 util::log("unlink({}) = {}\n", escape(pathname), ret);
             }
             return ret;
@@ -752,7 +761,7 @@ reg_t syscall(
                 convert_stat_from_host(guest_stat, &host_stat);
             }
 
-            if (state::strace) {
+            if (state::get_flags().strace) {
                 if (ret == 0) {
                     util::log("stat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0\n", pathname, host_stat.st_mode, host_stat.st_size);
                 } else {

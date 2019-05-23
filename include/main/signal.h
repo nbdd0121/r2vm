@@ -8,6 +8,6 @@ struct Segv_exception: std::runtime_error {
     Segv_exception(int sig): std::runtime_error {"segmentation fault"}, sig {sig} {}
 };
 
-void setup_fault_handler();
+extern "C" void setup_fault_handler();
 
 #endif

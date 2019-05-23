@@ -1,6 +1,6 @@
 mod csr;
 mod op;
-mod interp;
+pub mod interp;
 mod disasm;
 mod decode;
 

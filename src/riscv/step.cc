@@ -8,14 +8,6 @@
 #include "softfp/float.h"
 #include "util/memory.h"
 
-namespace riscv::abi { 
-    enum class Syscall_number;
-}
-
-namespace emu {
-    reg_t syscall(riscv::abi::Syscall_number, reg_t, reg_t, reg_t, reg_t, reg_t, reg_t);
-}
-
 namespace riscv {
 
 // Helper functions for interpreter

@@ -2,45 +2,46 @@ use super::csr::Csr;
 use super::op::{LegacyOp, Op};
 
 #[repr(C)]
-struct CacheLine {
+#[derive(Clone, Copy)]
+pub struct CacheLine {
     /// Lowest bit is used to store whether this cache line is non-writable
     /// It actually stores (tag << 1) | non-writable
-    tag: u64,
+    pub tag: u64,
     /// It actually stores vaddr ^ paddr
-    paddr: u64,
+    pub paddr: u64,
 }
 
 #[repr(C)]
-struct Context {
-    registers: [u64; 32],
-    fp_registers: [u64; 32],
-    pc: u64,
-    instret: u64,
-    fcsr: u64,
+pub struct Context {
+    pub registers: [u64; 32],
+    pub fp_registers: [u64; 32],
+    pub pc: u64,
+    pub instret: u64,
+    pub fcsr: u64,
 
     // For load reservation
-    lr: u64,
+    pub lr: u64,
 
     // S-mode CSRs
-    sstatus: u64,
-    sie: u64,
-    stvec: u64,
-    sscratch: u64,
-    sepc: u64,
-    scause: u64,
-    stval: u64,
-    sip: u64,
-    satp: u64,
+    pub sstatus: u64,
+    pub sie: u64,
+    pub stvec: u64,
+    pub sscratch: u64,
+    pub sepc: u64,
+    pub scause: u64,
+    pub stval: u64,
+    pub sip: u64,
+    pub satp: u64,
 
-    timecmp: u64,
+    pub timecmp: u64,
 
     // Current privilege level
-    prv: u64,
+    pub prv: u64,
 
     // Pending exceptions: sstatus.sie ? sie & sip : 0
-    pending: u64,
+    pub pending: u64,
 
-    line: [CacheLine; 1024],
+    pub line: [CacheLine; 1024],
 }
 
 /// Perform a CSR read on a context. Note that this operation performs no checks before accessing
@@ -926,7 +927,7 @@ fn run_block(ctx: &mut Context) -> Result<(), ()> {
 }
 
 #[no_mangle]
-extern "C" fn rust_emu_start(ctx: &mut Context) {
+pub extern "C" fn rust_emu_start(ctx: &mut Context) {
     loop {
         loop {
             match run_block(ctx) {

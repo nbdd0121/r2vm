@@ -35,7 +35,7 @@ Bin_file::~Bin_file() {
 void Bin_file::load(const char *filename) {
 
     // Similar to sysroot lookup in syscall.cc, prioritize sysroot directory.
-    std::string sysroot_path = state::sysroot + filename;
+    std::string sysroot_path = std::string(state::get_flags().sysroot) + filename;
     if (filename[0] == '/' && access(sysroot_path.c_str(), F_OK) == 0) {
         fd = open(sysroot_path.c_str(), O_RDONLY);
 
