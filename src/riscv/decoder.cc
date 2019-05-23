@@ -1,7 +1,5 @@
 #include "emu/mmu.h"
 #include "emu/state.h"
-#include "riscv/basic_block.h"
-#include "riscv/csr.h"
 #include "riscv/opcode.h"
 #include "riscv/instruction.h"
 #include "util/assert.h"

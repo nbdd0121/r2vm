@@ -3,7 +3,6 @@
 #include "emu/mmu.h"
 #include "emu/state.h"
 #include "riscv/context.h"
-#include "riscv/csr.h"
 #include "riscv/instruction.h"
 #include "riscv/opcode.h"
 #include "softfp/float.h"
@@ -43,13 +42,6 @@ static inline softfp::Single read_single(freg_t& target) {
     return util::read_as<softfp::Single>(&target);
 }
 
-static inline void set_rm_real(int rm) {
-    if (rm >= 5) {
-        throw Trap { Cause::illegal_inst };
-    }
-    softfp::rounding_mode = static_cast<softfp::Rounding_mode>(rm);
-}
-
 #define read_rs1() context->registers[inst.rs1()]
 #define read_rs2() context->registers[inst.rs2()]
 #define write_rd(_value) do { \
@@ -74,7 +66,9 @@ static inline void set_rm_real(int rm) {
 #define read_frs3_d() read_double(context->fp_registers[inst.rs3()])
 
 #define set_rm() do { \
-        set_rm_real(inst.rm() == 0b111 ? (context->fcsr >> 5) : inst.rm()); \
+        int rm = inst.rm() == 0b111 ? (context->fcsr >> 5) : inst.rm(); \
+        if (rm >= 5) return 2; \
+        softfp::rounding_mode = static_cast<softfp::Rounding_mode>(rm); \
     } while (0);
 
 #define clear_flags() do {\
@@ -86,7 +80,7 @@ static inline void set_rm_real(int rm) {
     } while (0);
 
 // Instruction pointers are assumed to move *past* the instruction already.
-void step(Context *context, Instruction inst) {
+extern "C" uint64_t legacy_step(Context *context, Instruction inst) {
     switch (inst.opcode()) {
         /* F-extension */
         case Opcode::fadd_s:
@@ -404,19 +398,9 @@ void step(Context *context, Instruction inst) {
             write_frd_d(-softfp::Double::fused_multiply_add(read_frs1_d(), read_frs2_d(), read_frs3_d()));
             update_flags();
             break;
-        case Opcode::illegal:
-            throw Trap { Cause::illegal_inst };
+        case Opcode::illegal: return 2;
     }
-}
-
-extern "C" uint64_t legacy_step(riscv::Context* ctx, riscv::Instruction* inst)  {
-    try {
-        step(ctx, *inst);
-        return 0;
-    } catch (riscv::Trap& trap){
-        ctx->stval = trap.tval;
-        return (uint64_t)trap.cause;
-    }
+    return 0;
 }
 
 }

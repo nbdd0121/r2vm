@@ -11,9 +11,7 @@
 #include "emu/mmu.h"
 #include "emu/state.h"
 #include "main/signal.h"
-#include "riscv/basic_block.h"
 #include "riscv/context.h"
-#include "riscv/csr.h"
 #include "riscv/disassembler.h"
 #include "riscv/instruction.h"
 #include "riscv/opcode.h"
@@ -247,8 +245,5 @@ int main(int argc, const char **argv) {
         context.prv = 1;
     }
 
-    if (!use_ir && !use_dbt) {
         rust_emu_start(context);
-        return 1;
-    }
 }

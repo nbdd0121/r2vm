@@ -48,8 +48,6 @@ struct Context {
 };
 
 class Instruction;
-reg_t translate(Context *context, reg_t pc, bool write);
-void step(Context *context, Instruction inst);
 
 } // riscv
 

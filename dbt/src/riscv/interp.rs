@@ -272,7 +272,7 @@ fn icache() -> &'static mut FnvHashMap<u64, Block> {
 }
 
 extern {
-    fn legacy_step(ctx: &mut Context, op: &LegacyOp) -> Trap;
+    fn legacy_step(ctx: &mut Context, op: LegacyOp) -> Trap;
 }
 
 fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
@@ -362,7 +362,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
     }
 
     match *op {
-        Op::Legacy(ref op) => {
+        Op::Legacy(op) => {
             let ex = unsafe{legacy_step(ctx, op)};
             if ex != 0 { trap!(ex, 0) }
         }
