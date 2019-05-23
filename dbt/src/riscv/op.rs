@@ -118,6 +118,31 @@ pub enum Op {
     Remw { rd: u8, rs1: u8, rs2: u8 },
     Remuw { rd: u8, rs1: u8, rs2: u8 },
 
+    /* A extension */
+    /* Base Opcode = AMO */
+    LrW { rd: u8, rs1: u8 },
+    LrD { rd: u8, rs1: u8 },
+    ScW { rd: u8, rs1: u8, rs2: u8 },
+    ScD { rd: u8, rs1: u8, rs2: u8 },
+    AmoswapW { rd: u8, rs1: u8, rs2: u8 },
+    AmoswapD { rd: u8, rs1: u8, rs2: u8 },
+    AmoaddW { rd: u8, rs1: u8, rs2: u8 },
+    AmoaddD { rd: u8, rs1: u8, rs2: u8 },
+    AmoxorW { rd: u8, rs1: u8, rs2: u8 },
+    AmoxorD { rd: u8, rs1: u8, rs2: u8 },
+    AmoandW { rd: u8, rs1: u8, rs2: u8 },
+    AmoandD { rd: u8, rs1: u8, rs2: u8 },
+    AmoorW { rd: u8, rs1: u8, rs2: u8 },
+    AmoorD { rd: u8, rs1: u8, rs2: u8 },
+    AmominW { rd: u8, rs1: u8, rs2: u8 },
+    AmominD { rd: u8, rs1: u8, rs2: u8 },
+    AmomaxW { rd: u8, rs1: u8, rs2: u8 },
+    AmomaxD { rd: u8, rs1: u8, rs2: u8 },
+    AmominuW { rd: u8, rs1: u8, rs2: u8 },
+    AmominuD { rd: u8, rs1: u8, rs2: u8 },
+    AmomaxuW { rd: u8, rs1: u8, rs2: u8 },
+    AmomaxuD { rd: u8, rs1: u8, rs2: u8 },
+
     /* F extension */
     /* Base Opcode = LOAD-FP */
     Flw { frd: u8, rs1: u8, imm: i32 },

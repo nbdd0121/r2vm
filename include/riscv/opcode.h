@@ -10,58 +10,6 @@ namespace riscv {
 // * Increasing funct3 and then funct7, or their ordering in RISC-V spec
 enum class Opcode {
     illegal,
-    /* RV64I */
-    /* Base Opcode = LOAD */
-    /* Base Opcode = LOAD-FP */
-    /* Base Opcode = MISC-MEM */
-    /* Base Opcode = OP-IMM */
-    /* Base Opcode = AUIPC */
-    /* Base Opcode = OP-IMM-32 */
-    /* Base Opcode = STORE */
-    /* Base Opcode = STORE-FP */
-    /* Base Opcode = AMO */
-    /* Base Opcode = OP */
-    // xor, or, and are C++ keywords. We add prefix i_ to disambiguate.
-    /* Base Opcode = LUI */
-    /* Base Opcode = OP-32 */
-    /* Base Opcode = MADD */
-    /* Base Opcode = MSUB */
-    /* Base Opcode = NMSUB */
-    /* Base Opcode = NMADD */
-    /* Base Opcode = OP-FP */
-    /* Base Opcode = BRANCH */
-    /* Base Opcode = JALR */
-    /* Base Opcode = JAL */
-    /* Base Opcode = SYSTEM */
-
-    /* M extension */
-    /* Base Opcode = OP */
-    /* Base Opcode = OP-32 */
-
-    /* A extension */
-    /* Base Opcode = AMO */
-    lr_w,
-    lr_d,
-    sc_w,
-    sc_d,
-    amoswap_w,
-    amoswap_d,
-    amoadd_w,
-    amoadd_d,
-    amoxor_w,
-    amoxor_d,
-    amoand_w,
-    amoand_d,
-    amoor_w,
-    amoor_d,
-    amomin_w,
-    amomin_d,
-    amomax_w,
-    amomax_d,
-    amominu_w,
-    amominu_d,
-    amomaxu_w,
-    amomaxu_d,
 
     /* F extension */
     /* Base Opcode = LOAD-FP */

@@ -51,51 +51,9 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
             /* Base Opcode STORE */
             case 0b0100011:
             /* Base Opcode STORE-FP */
-            case 0b0100111: throw "moved to rust";
-
+            case 0b0100111:
             /* Base Opcode AMO */
-            case 0b0101111: {
-                /* A-Extension */
-                int function7 = Funct7_field::extract(bits);
-                if (function == 0b010) {
-                    switch (function7 >> 2) {
-                        case 0b00010: if (rs2 != 0) goto illegal; opcode = Opcode::lr_w; break;
-                        case 0b00011: opcode = Opcode::sc_w; break;
-                        case 0b00001: opcode = Opcode::amoswap_w; break;
-                        case 0b00000: opcode = Opcode::amoadd_w; break;
-                        case 0b00100: opcode = Opcode::amoxor_w; break;
-                        case 0b01100: opcode = Opcode::amoand_w; break;
-                        case 0b01000: opcode = Opcode::amoor_w; break;
-                        case 0b10000: opcode = Opcode::amomin_w; break;
-                        case 0b10100: opcode = Opcode::amomax_w; break;
-                        case 0b11000: opcode = Opcode::amominu_w; break;
-                        case 0b11100: opcode = Opcode::amomaxu_w; break;
-                        default: goto illegal;
-                    }
-                } else if (function == 0b011) {
-                    switch (function7 >> 2) {
-                        case 0b00010: if (rs2 != 0) goto illegal; opcode = Opcode::lr_d; break;
-                        case 0b00011: opcode = Opcode::sc_d; break;
-                        case 0b00001: opcode = Opcode::amoswap_d; break;
-                        case 0b00000: opcode = Opcode::amoadd_d; break;
-                        case 0b00100: opcode = Opcode::amoxor_d; break;
-                        case 0b01100: opcode = Opcode::amoand_d; break;
-                        case 0b01000: opcode = Opcode::amoor_d; break;
-                        case 0b10000: opcode = Opcode::amomin_d; break;
-                        case 0b10100: opcode = Opcode::amomax_d; break;
-                        case 0b11000: opcode = Opcode::amominu_d; break;
-                        case 0b11100: opcode = Opcode::amomaxu_d; break;
-                        default: goto illegal;
-                    }
-                } else {
-                    goto illegal;
-                }
-                ret.opcode(opcode);
-                // aq and rl
-                ret.imm(function7 & 3);
-                return ret;
-            }
-
+            case 0b0101111:
             /* Base Opcode OP */
             case 0b0110011:
             /* Base Opcode LUI */
