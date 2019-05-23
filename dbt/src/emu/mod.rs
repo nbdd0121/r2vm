@@ -3,6 +3,7 @@ use crate::io::plic::Plic;
 use crate::io::virtio::{Mmio, Block, Rng};
 
 mod syscall;
+mod safe_memory;
 pub use syscall::syscall;
 
 // The global PLIC
@@ -39,13 +40,13 @@ pub unsafe fn write_memory_unsafe<T: Copy>(addr: u64, value: T) {
 
 pub unsafe fn read_memory<T: Copy>(addr: u64) -> T {
     let ptr = addr as usize as *const T;
-    crate::util::safe_memory::probe_read(ptr).unwrap();
+    safe_memory::probe_read(ptr).unwrap();
     *ptr
 }
 
 pub unsafe fn write_memory<T: Copy>(addr: u64, value: T) {
     let ptr = addr as usize as *mut T;
-    crate::util::safe_memory::probe_write(ptr).unwrap();
+    safe_memory::probe_write(ptr).unwrap();
     *ptr = value;
 }
 

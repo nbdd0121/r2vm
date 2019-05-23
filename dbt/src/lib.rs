@@ -9,14 +9,6 @@ pub mod io;
 pub mod util;
 pub mod emu;
 
-#[no_mangle]
-pub extern "C" fn rust_init() {
-    pretty_env_logger::init();
-    io::console::console_init();
-    emu::init();
-}
-
-
 use std::ffi::{CStr, CString};
 use std::ptr;
 
@@ -148,6 +140,8 @@ extern "C" fn interrupt() {
 
 #[no_mangle]
 pub extern fn rs_main(argc: i32, argv: *const *const i8) {
+    // Until we removed most out reliance on C++, we still build Rust code as a library -
+    // so we need to parse args ourselves.
     let mut args_vec = Vec::with_capacity(argc as usize);
     unsafe {
         for i in 0..(argc as isize) {
@@ -155,11 +149,8 @@ pub extern fn rs_main(argc: i32, argv: *const *const i8) {
         }
     }
 
-    unsafe { setup_fault_handler() };
-    rust_init();
-
     // let mut args = env::args();
-    let mut args = args_vec.iter();
+    let mut args = args_vec.into_iter();
 
     // Ignore interpreter name
     let mut item = args.next();
@@ -168,7 +159,7 @@ pub extern fn rs_main(argc: i32, argv: *const *const i8) {
     let mut sysroot = String::from("/opt/riscv/sysroot");
 
     item = args.next();
-    while let Some(arg) = item {
+    while let Some(ref arg) = item {
         // We've parsed all arguments. This indicates the name of the executable.
         if !arg.starts_with('-') {
             break;
@@ -253,8 +244,18 @@ pub extern fn rs_main(argc: i32, argv: *const *const i8) {
     }
     std::mem::forget(csysroot);
 
+    // Top priority: set up page fault handlers so safe_memory features will work.
+    unsafe { setup_fault_handler() };
+    pretty_env_logger::init();
+
+    // These should only be initialised for full-system emulation
+    if !get_flags().user_only {
+        io::console::console_init();
+        emu::init();
+    }
+
     // TODO: Pass this to C++ code
-    let _args_left: Vec<&String> = args.collect();
+    let _args_left: Vec<String> = args.collect();
 
     // x0 must always be 0
     unsafe { CTX.registers[0] = 0 };

@@ -22,7 +22,6 @@ OBJS = \
 	util/assert.o \
 	util/format.o \
 	util/safe_memory.o \
-	util/safe_memory_probe.o \
 	x86/decoder.o \
 	x86/disassembler.o
 
