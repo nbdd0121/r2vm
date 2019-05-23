@@ -12,7 +12,7 @@ pub fn init() {
     unsafe {
         PLIC = Some(Plic::new(2));
         VIRTIO_BLK = Some(Mmio::new(Box::new(Block::new("rootfs.img"))));
-        VIRTIO_RNG = Some(Mmio::new(Box::new(Rng::new_os())));
+        VIRTIO_RNG = Some(Mmio::new(Box::new(Rng::new_seeded())));
     }
 }
 

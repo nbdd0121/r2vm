@@ -1,4 +1,5 @@
 use super::{Device, DeviceId, Queue};
+use rand::SeedableRng;
 
 /// A virtio entropy source device.
 pub struct Rng {
@@ -20,6 +21,12 @@ impl Rng {
     /// Create a virtio entropy source device, fulfilled by OS's entropy source.
     pub fn new_os() -> Rng {
         Self::new(Box::new(rand::rngs::OsRng::new().unwrap()))
+    }
+
+    /// Create a virtio entropy source device with a fixed seed.
+    /// **This is not cryptographically secure!!!**
+    pub fn new_seeded() -> Rng {
+        Self::new(Box::new(rand::rngs::SmallRng::seed_from_u64(0xcafebabedeadbeef)))
     }
 }
 

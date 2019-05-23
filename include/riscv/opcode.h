@@ -48,11 +48,6 @@ enum class Opcode {
     /* M extension */
     /* Base Opcode = OP */
     /* Base Opcode = OP-32 */
-    mulw,
-    divw,
-    divuw,
-    remw,
-    remuw,
 
     /* A extension */
     /* Base Opcode = AMO */
