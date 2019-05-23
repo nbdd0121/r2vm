@@ -164,9 +164,29 @@ fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
     return Ok(ret);
 }
 
+const CACHE_LINE_LOG2_SIZE: usize = 12;
+
+fn translate_cached(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
+    let idx = addr >> CACHE_LINE_LOG2_SIZE;
+    let line: &mut CacheLine = unsafe{&mut *(&mut ctx.line[(idx & 1023) as usize] as *mut _)};
+    if line.tag != idx || (write && (line.paddr & 1) == 0) {
+        let out = match translate(ctx, addr, write) {
+            Ok(addr) => addr,
+            Err(ex) => {
+                ctx.stval = addr;
+                return Err(ex)
+            }
+        };
+        line.tag = idx;
+        line.paddr = out &! ((1 << CACHE_LINE_LOG2_SIZE) - 1);
+        if write { line.paddr |= 1 }
+    }
+    return Ok((line.paddr &! 1) | (addr & ((1 << CACHE_LINE_LOG2_SIZE) - 1)));
+}
+
 #[no_mangle]
 extern "C" fn rs_translate(ctx: &mut Context, addr: u64, write: bool, out: &mut u64) -> Trap {
-    match translate(ctx, addr, write) {
+    match translate_cached(ctx, addr, write) {
         Ok(ret) => {
             *out = ret;
             0

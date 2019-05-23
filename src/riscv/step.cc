@@ -708,19 +708,9 @@ extern "C" uint64_t legacy_step(riscv::Context* ctx, riscv::Instruction* inst)  
 extern "C" reg_t rs_translate(Context* context, reg_t addr, bool write, reg_t& out);
 
 reg_t translate(Context* context, reg_t addr, bool write) {
-    auto idx = addr >> CACHE_LINE_LOG2_SIZE;
-    auto& line = context->line[idx & 1023];
-    if (LIKELY(line.tag == idx)) {
-        if (!write || (line.paddr & 1)) {
-            return (line.paddr &~ 1) | (addr & ((1 << CACHE_LINE_LOG2_SIZE) - 1));
-        }
-    }
     reg_t out;
     reg_t ex = rs_translate(context, addr, write, out);
     if (ex) throw Trap { (Cause)ex, addr };
-    line.tag = idx;
-    line.paddr = out &~ ((1 << CACHE_LINE_LOG2_SIZE) - 1);
-    if (write) line.paddr |= 1;
     return out;
 }
 
