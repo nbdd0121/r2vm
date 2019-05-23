@@ -151,7 +151,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                     // translate to addi rd', x2, imm
                     Op::Addi { rd: c_rds(bits), rs1: 2, imm }
                 }
-                _ => Op::Illegal,
+                _ => Op::Legacy(unsafe { legacy_decode(bits as u32) }),
             }
         }
         0b01 => {
@@ -312,7 +312,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                         }
                     }
                 }
-                _ => Op::Illegal
+                _ => Op::Legacy(unsafe { legacy_decode(bits as u32) })
             }
         }
         _ => unreachable!(),
@@ -527,11 +527,7 @@ pub fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
         *pc += 2;
         (decode(bits), false)
     } else {
-        let op = decode_compressed(bits as u16);
-        if let Op::Illegal = op {
-            return (Op::Legacy(unsafe { legacy_decode(bits) }), true)
-        }
-        (op, true)
+        (decode_compressed(bits as u16), true)
     }
 }
 

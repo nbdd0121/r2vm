@@ -3,7 +3,10 @@ use super::op::{LegacyOp, Op};
 
 #[repr(C)]
 struct CacheLine {
+    /// Lowest bit is used to store whether this cache line is non-writable
+    /// It actually stores (tag << 1) | non-writable
     tag: u64,
+    /// It actually stores vaddr ^ paddr
     paddr: u64,
 }
 
@@ -169,7 +172,7 @@ const CACHE_LINE_LOG2_SIZE: usize = 12;
 fn translate_cached(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line: &mut CacheLine = unsafe{&mut *(&mut ctx.line[(idx & 1023) as usize] as *mut _)};
-    if line.tag != idx || (write && (line.paddr & 1) == 0) {
+    if (line.tag >> 1) != idx || (write && (line.tag & 1) != 0) {
         let out = match translate(ctx, addr, write) {
             Ok(addr) => addr,
             Err(ex) => {
@@ -177,11 +180,16 @@ fn translate_cached(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Tr
                 return Err(ex)
             }
         };
-        line.tag = idx;
-        line.paddr = out &! ((1 << CACHE_LINE_LOG2_SIZE) - 1);
-        if write { line.paddr |= 1 }
+        if out < 0x80000000 {
+            // Refill is only possible if reside in physical memory
+            line.tag = idx << 1;
+            line.paddr = out ^ addr;
+            if !write { line.tag |= 1 }
+        }
+        return Ok(out);
+    } else {
+        return Ok(line.paddr ^ addr);
     }
-    return Ok((line.paddr &! 1) | (addr & ((1 << CACHE_LINE_LOG2_SIZE) - 1)));
 }
 
 #[no_mangle]
@@ -245,6 +253,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), Trap> {
     macro_rules! read_reg {
         ($rs: expr) => {{
             let rs = $rs as usize;
+            if rs >= 32 { unsafe { std::hint::unreachable_unchecked() } }
             ctx.registers[rs]
         }}
     }
@@ -252,6 +261,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), Trap> {
         ($rd: expr, $expression:expr) => {{
             let rd = $rd as usize;
             let value = $expression;
+            if rd >= 32 { unsafe { std::hint::unreachable_unchecked() } }
             if rd != 0 { ctx.registers[rd] = value }
         }}
     }

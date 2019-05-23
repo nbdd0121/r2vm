@@ -19,7 +19,6 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
         // Fields definition
         using C_funct3_field = util::Bitfield<uint32_t, 15, 13>;
         using C_rd_field = util::Bitfield<uint32_t, 11, 7>;
-        using C_rs1_field = C_rd_field;
         using C_rs2_field = util::Bitfield<uint32_t, 6, 2>;
         using C_rds_field = util::Bitfield<uint32_t, 4, 2>;
         using C_rs1s_field = util::Bitfield<uint32_t, 9, 7>;
@@ -27,10 +26,8 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
 
         using Ci_lwsp_imm_field = util::Bitfield<uint32_t, 3, 2, 12, 12, 6, 4, -1, 2>;
         using Ci_ldsp_imm_field = util::Bitfield<uint32_t, 4, 2, 12, 12, 6, 5, -1, 3>;
-        using Ci_addi16sp_imm_field = util::Bitfield<int64_t, 12, 12, 4, 3, 5, 5, 2, 2, 6, 6, -1, 4>;
         using Css_swsp_imm_field = util::Bitfield<uint32_t, 8, 7, 12, 9, -1, 2>;
         using Css_sdsp_imm_field = util::Bitfield<uint32_t, 9, 7, 12, 10, -1, 3>;
-        using Ciw_imm_field = util::Bitfield<uint32_t, 10, 7, 12, 11, 5, 5, 6, 6, -1, 2>;
         using Cl_lw_imm_field = util::Bitfield<uint32_t, 5, 5, 12, 10, 6, 6, -1, 2>;
         using Cl_ld_imm_field = util::Bitfield<uint32_t, 6, 5, 12, 10, -1, 3>;
         using Cs_sw_imm_field = Cl_lw_imm_field;
@@ -43,14 +40,7 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
         switch (bits & 0b11) {
             case 0b00: {
                 switch (function) {
-                    case 0b000: {
-                        reg_t imm = Ciw_imm_field::extract(bits);
-                        if (imm == 0) {
-                            // Illegal instruction. At this point ret is all zero, so return directly.
-                            return ret;
-                        }
-                        throw "moved to rust";
-                    }
+                    case 0b000: throw "moved to rust";
                     case 0b001: {
                         // C.FLD
                         // translate to fld rd', rs1', offset
@@ -112,60 +102,7 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
                     default: UNREACHABLE();
                 }
             }
-            case 0b01: {
-                switch (function) {
-                    case 0b000: throw "moved to rust";
-                    case 0b001: {
-                        int rd = C_rd_field::extract(bits);
-                        if (rd == 0) {
-                            // Reserved
-                            goto illegal_compressed;
-                        }
-                        throw "moved to rust";
-                    }
-                    case 0b010: throw "moved to rust";
-                    case 0b011: {
-                        int rd = C_rd_field::extract(bits);
-                        if (rd == 2) {
-                            reg_t imm = Ci_addi16sp_imm_field::extract(bits);
-                            if (imm == 0) {
-                                // Reserved
-                                goto illegal_compressed;
-                            }
-                            throw "moved to rust";
-                        } else {
-                            throw "moved to rust";
-                        }
-                    }
-                    case 0b100: {
-                        switch (util::Bitfield<uint32_t, 11, 10>::extract(bits)) {
-                            case 0b00:
-                            case 0b01:
-                            case 0b10: throw "moved to rust";
-                            case 0b11: {
-                                if ((bits & 0x1000) == 0) {
-                                    throw "moved to rust";
-                                } else {
-                                    switch (util::Bitfield<uint32_t, 6, 5>::extract(bits)) {
-                                        case 0b00:
                                         case 0b01: throw "moved to rust";
-                                        default:
-                                            // Reserved
-                                            goto illegal_compressed;
-                                    }
-                                }
-                            }
-                            // full case
-                            default: UNREACHABLE();
-                        }
-                    }
-                    case 0b101:
-                    case 0b110:
-                    case 0b111: throw "moved to rust";
-                    // full case
-                    default: UNREACHABLE();
-                }
-            }
             case 0b10: {
                 switch (function) {
                     case 0b000: throw "moved to rust";
@@ -207,23 +144,7 @@ extern "C" Instruction legacy_decode(uint32_t bits) {
                         ret.imm(Ci_ldsp_imm_field::extract(bits));
                         return ret;
                     }
-                    case 0b100: {
-                        int rs2 = C_rs2_field::extract(bits);
-                        if ((bits & 0x1000) == 0) {
-                            if (rs2 == 0) {
-                                int rs1 = C_rs1_field::extract(bits);
-                                if (rs1 == 0) {
-                                    // Reserved
-                                    goto illegal_compressed;
-                                }
-                                throw "moved to rust";
-                            } else {
-                                throw "moved to rust";
-                            }
-                        } else {
-                            throw "moved to rust";
-                        }
-                    }
+                    case 0b100: throw "moved to rust";
                     case 0b101: {
                         // C.FSDSP
                         // translate to fsd rs2, x2, imm
