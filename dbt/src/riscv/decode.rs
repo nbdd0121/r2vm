@@ -356,6 +356,7 @@ pub fn decode(bits: u32) -> Op {
                     }
                 0b110 => Op::Ori { rd, rs1, imm },
                 0b111 => Op::Andi { rd, rs1, imm },
+                // full case
                 _ => unsafe { std::hint::unreachable_unchecked() }
             }
         }
@@ -399,8 +400,17 @@ pub fn decode(bits: u32) -> Op {
         0b0110011 => {
             match funct7(bits) {
                 // M-extension
-                0b0000001 => {
-                    return Op::Legacy(unsafe { legacy_decode(bits) })
+                0b0000001 => match function {
+                    0b000 => Op::Mul { rd, rs1, rs2 },
+                    0b001 => Op::Mulh { rd, rs1, rs2 },
+                    0b010 => Op::Mulhsu { rd, rs1, rs2 },
+                    0b011 => Op::Mulhu { rd, rs1, rs2 },
+                    0b100 => Op::Div { rd, rs1, rs2 },
+                    0b101 => Op::Divu { rd, rs1, rs2 },
+                    0b110 => Op::Rem { rd, rs1, rs2 },
+                    0b111 => Op::Remu { rd, rs1, rs2 },
+                    // full case
+                    _ => unsafe { std::hint::unreachable_unchecked() },
                 }
                 0b0000000 => match function {
                     0b000 => Op::Add { rd, rs1, rs2 },
@@ -411,6 +421,7 @@ pub fn decode(bits: u32) -> Op {
                     0b101 => Op::Srl { rd, rs1, rs2 },
                     0b110 => Op::Or { rd, rs1, rs2 },
                     0b111 => Op::And { rd, rs1, rs2 },
+                    // full case
                     _ => unsafe { std::hint::unreachable_unchecked() },
                 }
                 0b0100000 => match function {
@@ -426,11 +437,16 @@ pub fn decode(bits: u32) -> Op {
         0b0110111 => Op::Lui { rd, imm: u_imm(bits) },
 
         /* OP-32 */
-        0b0110011 => {
+        0b0111011 => {
             match funct7(bits) {
                 // M-extension
-                0b0000001 => {
-                    return Op::Legacy(unsafe { legacy_decode(bits) })
+                0b0000001 => match function {
+                    0b000 => Op::Mulw { rd, rs1, rs2 },
+                    0b100 => Op::Divw { rd, rs1, rs2 },
+                    0b101 => Op::Divuw { rd, rs1, rs2 },
+                    0b110 => Op::Remw { rd, rs1, rs2 },
+                    0b111 => Op::Remuw { rd, rs1, rs2 },
+                    _ => Op::Illegal,
                 }
                 0b0000000 => match function {
                     0b000 => Op::Addw { rd, rs1, rs2 },

@@ -174,6 +174,20 @@ extern "C" fn rs_translate(ctx: &mut Context, addr: u64, write: bool, out: &mut 
         Err(trap) => trap,
     }
 }
+
+
+use fnv::FnvHashMap;
+type Block = (Vec<(Op, bool)>, u64, u64);
+
+static mut ICACHE: Option<FnvHashMap<u64, Block>> = None;
+
+fn icache() -> &'static mut FnvHashMap<u64, Block> {
+    unsafe {
+        if ICACHE.is_none() {
+            ICACHE = Some(FnvHashMap::default())
+        }
+        ICACHE.as_mut().unwrap()
+    }
 }
 
 extern {
@@ -197,6 +211,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
             for l in ctx.line.iter_mut() {
                 l.tag = i64::max_value() as u64;
             }
+            icache().clear();
             0
         }
         8 => std::process::exit(0),
@@ -233,23 +248,23 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), Trap> {
         }
         Op::Illegal => return Err(2),
         /* OP-IMM */
-        Op::Addi { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1).wrapping_add(imm as u64)),
-        Op::Slli { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) << imm),
-        Op::Slti { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i64) < (imm as i64)) as u64),
-        Op::Sltiu { rd, rs1, imm }=> write_reg!(rd, (read_reg!(rs1) < (imm as u64)) as u64),
-        Op::Xori { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) ^ (imm as u64)),
-        Op::Srli { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) >> imm),
-        Op::Srai { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i64) >> imm) as u64),
-        Op::Ori { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) | (imm as u64)),
-        Op::Andi { rd, rs1, imm }=> write_reg!(rd, read_reg!(rs1) & (imm as u64)),
+        Op::Addi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1).wrapping_add(imm as u64)),
+        Op::Slli { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) << imm),
+        Op::Slti { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i64) < (imm as i64)) as u64),
+        Op::Sltiu { rd, rs1, imm } => write_reg!(rd, (read_reg!(rs1) < (imm as u64)) as u64),
+        Op::Xori { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) ^ (imm as u64)),
+        Op::Srli { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) >> imm),
+        Op::Srai { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i64) >> imm) as u64),
+        Op::Ori { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) | (imm as u64)),
+        Op::Andi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) & (imm as u64)),
         /* MISC-MEM */
         Op::Fence => (),
-        Op::FenceI => (),
+        Op::FenceI => icache().clear(),
         /* OP-IMM-32 */
-        Op::Addiw { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64),
-        Op::Slliw { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
-        Op::Srliw { rd, rs1, imm }=> write_reg!(rd, (((read_reg!(rs1) as u32) >> imm) as i32) as u64),
-        Op::Sraiw { rd, rs1, imm }=> write_reg!(rd, ((read_reg!(rs1) as i32) >> imm) as u64),
+        Op::Addiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64),
+        Op::Slliw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
+        Op::Srliw { rd, rs1, imm } => write_reg!(rd, (((read_reg!(rs1) as u32) >> imm) as i32) as u64),
+        Op::Sraiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) >> imm) as u64),
         /* OP */
         Op::Add { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_add(read_reg!(rs2))),
         Op::Sub { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_sub(read_reg!(rs2))),
@@ -263,11 +278,11 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), Trap> {
         Op::And { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) & read_reg!(rs2)),
         /* LUI */
         Op::Lui { rd, imm } => write_reg!(rd, imm as u64),
-        Op::Addw { rd, rs1, rs2 }=> write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(read_reg!(rs2) as i32)) as u64),
-        Op::Subw { rd, rs1, rs2 }=> write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_sub(read_reg!(rs2) as i32)) as u64),
-        Op::Sllw { rd, rs1, rs2 }=> write_reg!(rd, ((read_reg!(rs1) as i32) << (read_reg!(rs2) & 31)) as u64),
-        Op::Srlw { rd, rs1, rs2 }=> write_reg!(rd, (((read_reg!(rs1) as u32) >> (read_reg!(rs2) & 31)) as i32) as u64),
-        Op::Sraw { rd, rs1, rs2 }=> write_reg!(rd, ((read_reg!(rs1) as i32) >> (read_reg!(rs2) & 31)) as u64),
+        Op::Addw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(read_reg!(rs2) as i32)) as u64),
+        Op::Subw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_sub(read_reg!(rs2) as i32)) as u64),
+        Op::Sllw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32) << (read_reg!(rs2) & 31)) as u64),
+        Op::Srlw { rd, rs1, rs2 } => write_reg!(rd, (((read_reg!(rs1) as u32) >> (read_reg!(rs2) & 31)) as i32) as u64),
+        Op::Sraw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32) >> (read_reg!(rs2) & 31)) as u64),
         /* AUIPC */
         Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64)),
         /* BRANCH */
@@ -473,6 +488,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), Trap> {
             for l in ctx.line.iter_mut() {
                 l.tag = i64::max_value() as u64;
             }
+            icache().clear()
         }
     }
     Ok(())
