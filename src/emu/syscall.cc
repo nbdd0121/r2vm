@@ -235,7 +235,7 @@ constexpr bool need_iovec_conversion() {
 
 template<typename Abi>
 void convert_iovec_to_host(struct iovec *host_iov, const typename Abi::iovec* guest_iov) {
-    host_iov->iov_base = emu::translate_address(guest_iov->iov_base);
+    host_iov->iov_base = guest_iov->iov_base;
     host_iov->iov_len = guest_iov->iov_len;
 }
 
@@ -337,7 +337,7 @@ reg_t syscall(
 
     switch (nr) {
         case riscv::abi::Syscall_number::getcwd: {
-            char *buffer = reinterpret_cast<char*>(translate_address(arg0));
+            char *buffer = reinterpret_cast<char*>(arg0);
             size_t size = arg1;
             sreg_t ret = getcwd(buffer, size) ? 0 : -static_cast<sreg_t>(riscv::abi::Errno::einval);
             if (state::get_flags().strace) {
@@ -352,7 +352,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::unlinkat: {
             int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
-            auto pathname = reinterpret_cast<char*>(translate_address(arg1));
+            auto pathname = reinterpret_cast<char*>(arg1);
             sreg_t ret = return_errno(unlinkat(dirfd, translate_path(pathname), arg2));
 
             if (state::get_flags().strace) {
@@ -365,7 +365,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::faccessat: {
             int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
-            auto pathname = reinterpret_cast<char*>(translate_address(arg1));
+            auto pathname = reinterpret_cast<char*>(arg1);
             sreg_t ret = return_errno(faccessat(dirfd, translate_path(pathname), arg2, arg3));
 
             if (state::get_flags().strace) {
@@ -378,7 +378,7 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::openat: {
             int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
-            auto pathname = reinterpret_cast<char*>(translate_address(arg1));
+            auto pathname = reinterpret_cast<char*>(arg1);
             auto flags = convert_open_flags_to_host(arg2);
             auto proc_self = is_proc_self(pathname);
             sreg_t ret;
@@ -424,7 +424,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::read: {
-            auto buffer = reinterpret_cast<char*>(translate_address(arg1));
+            auto buffer = reinterpret_cast<char*>(arg1);
 
             // Handle standard IO specially, since it is shared between emulator and guest program.
             sreg_t ret = return_errno(read(arg0, buffer, arg2));
@@ -441,7 +441,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::write: {
-            auto buffer = reinterpret_cast<const char*>(translate_address(arg1));
+            auto buffer = reinterpret_cast<const char*>(arg1);
 
             sreg_t ret = return_errno(write(arg0, buffer, arg2));
 
@@ -460,12 +460,12 @@ reg_t syscall(
             sreg_t ret;
             if constexpr (need_iovec_conversion<Abi>()) {
                 std::vector<struct iovec> host_iov(arg2);
-                Abi::iovec *guest_iov = reinterpret_cast<Abi::iovec*>(translate_address(arg1));
+                Abi::iovec *guest_iov = reinterpret_cast<Abi::iovec*>(arg1);
                 for (unsigned i = 0; i < arg2; i++) convert_iovec_to_host<Abi>(&host_iov[i], &guest_iov[i]);
                 ret = return_errno(writev(arg0, host_iov.data(), arg2));
 
             } else {
-                ret = return_errno(writev(arg0, reinterpret_cast<struct iovec*>(translate_address(arg1)), arg2));
+                ret = return_errno(writev(arg0, reinterpret_cast<struct iovec*>(arg1), arg2));
             }
 
             if (state::get_flags().strace) {
@@ -481,8 +481,8 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::readlinkat: {
             int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
-            auto pathname = reinterpret_cast<char*>(translate_address(arg1));
-            auto buffer = reinterpret_cast<char*>(translate_address(arg2));
+            auto pathname = reinterpret_cast<char*>(arg1);
+            auto buffer = reinterpret_cast<char*>(arg2);
             auto proc_self = is_proc_self(pathname);
             sreg_t ret;
             if (proc_self != nullptr && strcmp(proc_self, "exe") == 0) {
@@ -513,14 +513,14 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::fstatat: {
             int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
-            auto pathname = reinterpret_cast<char*>(translate_address(arg1));
+            auto pathname = reinterpret_cast<char*>(arg1);
 
             struct stat host_stat;
             sreg_t ret = return_errno(fstatat(dirfd, translate_path(pathname), &host_stat, arg3));
 
             // When success, convert stat format to guest format.
             if (ret == 0) {
-                struct riscv::abi::stat *guest_stat = reinterpret_cast<riscv::abi::stat*>(translate_address(arg2));
+                struct riscv::abi::stat *guest_stat = reinterpret_cast<riscv::abi::stat*>(arg2);
                 convert_stat_from_host(guest_stat, &host_stat);
             }
 
@@ -543,7 +543,7 @@ reg_t syscall(
 
             // When success, convert stat format to guest format.
             if (ret == 0) {
-                struct riscv::abi::stat *guest_stat = reinterpret_cast<riscv::abi::stat*>(translate_address(arg1));
+                struct riscv::abi::stat *guest_stat = reinterpret_cast<riscv::abi::stat*>(arg1);
                 convert_stat_from_host(guest_stat, &host_stat);
             }
 
@@ -577,11 +577,11 @@ reg_t syscall(
                 struct utsname host_utsname;
                 ret = return_errno(uname(&host_utsname));
                 convert_utsname_from_host<Abi>(
-                    reinterpret_cast<Abi::utsname*>(translate_address(arg0)), &host_utsname
+                    reinterpret_cast<Abi::utsname*>(arg0), &host_utsname
                 );
 
             } else {
-                ret = return_errno(uname(reinterpret_cast<struct utsname*>(translate_address(arg0))));
+                ret = return_errno(uname(reinterpret_cast<struct utsname*>(arg0)));
             }
 
             if (state::get_flags().strace) {
@@ -598,7 +598,7 @@ reg_t syscall(
             sreg_t ret = return_errno(gettimeofday(&host_tv, nullptr));
 
             if (ret == 0) {
-                struct riscv::abi::timeval *guest_tv = reinterpret_cast<riscv::abi::timeval*>(translate_address(arg0));
+                struct riscv::abi::timeval *guest_tv = reinterpret_cast<riscv::abi::timeval*>(arg0);
                 convert_timeval_from_host(guest_tv, &host_tv);
             }
 
@@ -665,7 +665,7 @@ reg_t syscall(
                 // Cannot reduce beyond original_brk
             } else if (arg0 <= state::heap_end) {
                 if (arg0 > state::brk) {
-                    zero_memory(state::brk, arg0 - state::brk);
+                    memset((void*)state::brk, 0, arg0 - state::brk);
                 }
                 state::brk = arg0;
             } else {
@@ -684,7 +684,7 @@ reg_t syscall(
                 } else {
 
                     // Memory should be zeroed here as this is expected by glibc.
-                    zero_memory(state::brk, state::heap_end - state::brk);
+                    memset((void*)state::brk, 0, state::heap_end - state::brk);
                     state::heap_end = new_heap_end;
                     state::brk = arg0;
                 }
@@ -731,7 +731,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::open: {
-            auto pathname = reinterpret_cast<char*>(translate_address(arg0));
+            auto pathname = reinterpret_cast<char*>(arg0);
             auto flags = convert_open_flags_to_host(arg1);
 
             sreg_t ret = return_errno(open(translate_path(pathname), flags, arg2));
@@ -742,7 +742,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::unlink: {
-            auto pathname = reinterpret_cast<char*>(translate_address(arg0));
+            auto pathname = reinterpret_cast<char*>(arg0);
             sreg_t ret = return_errno(unlink(translate_path(pathname)));
             if (state::get_flags().strace) {
                 util::log("unlink({}) = {}\n", escape(pathname), ret);
@@ -750,14 +750,14 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::stat: {
-            auto pathname = reinterpret_cast<char*>(translate_address(arg0));
+            auto pathname = reinterpret_cast<char*>(arg0);
 
             struct stat host_stat;
             sreg_t ret = return_errno(stat(translate_path(pathname), &host_stat));
 
             // When success, convert stat format to guest format.
             if (ret == 0) {
-                struct riscv::abi::stat *guest_stat = reinterpret_cast<riscv::abi::stat*>(translate_address(arg1));
+                struct riscv::abi::stat *guest_stat = reinterpret_cast<riscv::abi::stat*>(arg1);
                 convert_stat_from_host(guest_stat, &host_stat);
             }
 

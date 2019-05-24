@@ -69,7 +69,7 @@ reg_t load_bin(const char *filename, reg_t location) {
 
     Bin_file file;
     file.load(filename);
-    copy_from_host(location, file.memory, file.file_size);
+    memcpy((void*)location, file.memory, file.file_size);
     return file.file_size;
 }
 

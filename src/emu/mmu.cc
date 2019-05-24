@@ -15,7 +15,7 @@ reg_t guest_mmap(reg_t address, reg_t size, int prot, int flags, int fd, reg_t o
         prot |= PROT_READ;
     }
 
-    return reinterpret_cast<reg_t>(mmap(translate_address(address), size, prot, flags, fd, offset));
+    return reinterpret_cast<reg_t>(mmap((void*)address, size, prot, flags, fd, offset));
 }
 
 reg_t guest_mmap_nofail(reg_t address, reg_t size, int prot, int flags, int fd, reg_t offset) {
@@ -32,11 +32,11 @@ int guest_mprotect(reg_t address, reg_t size, int prot) {
         prot |= PROT_READ;
     }
 
-    return mprotect(translate_address(address), size, prot);
+    return mprotect((void*)address, size, prot);
 }
 
 int guest_munmap(reg_t address, reg_t size) {
-    return munmap(translate_address(address), size);
+    return munmap((void*)address, size);
 }
 
 }

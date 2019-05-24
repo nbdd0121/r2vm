@@ -71,7 +71,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> u64 {
         Csr::Sip => ctx.sip,
         Csr::Satp => ctx.satp,
         _ => {
-           unreachable!("read illegal csr {}", csr as i32);
+           unreachable!("read illegal csr {:x}", csr as i32);
         }
     }
 }
@@ -117,7 +117,11 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
         Csr::Sepc => ctx.sepc = value &! 1,
         Csr::Scause => ctx.scause = value,
         Csr::Stval => ctx.stval = value,
-        // Csr::Sip => ctx.sip = value,
+        Csr::Sip => {
+            // Only SSIP flag can be cleared by software
+            ctx.sip = ctx.sip &! 0x2 | value & 0x2;
+            ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 }
+        }
         Csr::Satp => {
             match value >> 60 {
                 // No paging
@@ -132,7 +136,7 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
             }
         }
         _ => {
-           unreachable!("write illegal csr {}", csr as i32);
+           unreachable!("write illegal csr {:x} = {:x}", csr as i32, value);
         }
     }
 }

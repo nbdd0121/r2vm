@@ -51,31 +51,6 @@ pub unsafe fn write_memory<T: Copy>(addr: u64, value: T) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn mmio_read(addr: usize) -> u32 {
-    if addr >= 0x100000 {
-        PLIC.as_mut().unwrap().read_u32(addr - 0x100000)
-    } else {
-        if addr >= 4096 {
-            VIRTIO_RNG.as_mut().unwrap().read_u32(addr - 4096)
-        } else {
-            VIRTIO_BLK.as_mut().unwrap().read_u32(addr)
-        }
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn mmio_write(addr: usize, value: u32) {
-    if addr >= 0x100000 {
-        PLIC.as_mut().unwrap().write_u32(addr - 0x100000, value)
-    } else {
-        if addr >= 4096 {
-            VIRTIO_RNG.as_mut().unwrap().write_u32(addr - 4096, value)
-        } else {
-            VIRTIO_BLK.as_mut().unwrap().write_u32(addr, value)
-        }
-    }
-}
-
 pub extern "C" fn phys_read(addr: u64, size: u32) -> u64 {
     if addr >= 0x80000000 {
         let addr = (addr - 0x80000000) as usize;
@@ -99,6 +74,7 @@ pub extern "C" fn phys_read(addr: u64, size: u32) -> u64 {
     }
 }
 
+#[no_mangle]
 pub extern "C" fn phys_write(addr: u64, value: u64, size: u32) {
     if addr >= 0x80000000 {
         let addr = (addr - 0x80000000) as usize;

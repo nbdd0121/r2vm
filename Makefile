@@ -21,7 +21,6 @@ OBJS = \
 	softfp/float.o \
 	util/assert.o \
 	util/format.o \
-	util/safe_memory.o \
 	x86/decoder.o \
 	x86/disassembler.o
 
@@ -47,15 +46,6 @@ release: $(patsubst %,bin/release/%,$(OBJS)) $(LIBS) dbt/target/release/libdbt.a
 bin/feature.o: src/feature.cc
 	@mkdir -p $(dir $@)
 	$(CXX) -c -MMD -MP $(CXX_FLAGS) $< -o $@
-
-# safe_memory.cc must be compiled with -fnon-call-exceptions for the program to work.
-bin/util/safe_memory.o: src/util/safe_memory.cc
-	@mkdir -p $(dir $@)
-	$(CXX) -c -MMD -MP $(CXX_FLAGS) -fnon-call-exceptions $< -o $@
-
-bin/release/util/safe_memory.o: src/util/safe_memory.cc
-	@mkdir -p $(dir $@)
-	$(CXX) -c -MMD -MP $(CXX_FLAGS) -fno-lto -fnon-call-exceptions $< -o $@
 
 bin/%.o: src/%.cc bin/feature.o
 	@mkdir -p $(dir $@)

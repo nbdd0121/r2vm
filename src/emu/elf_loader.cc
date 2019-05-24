@@ -194,7 +194,7 @@ reg_t load_elf_image(Elf_file& file, reg_t& load_addr, reg_t& brk) {
                 guest_mprotect(bias + map_end, page_end - map_end, PROT_READ | PROT_WRITE);
 
                 // Copy across.
-                copy_from_host(bias + map_end, memory + file_offset + (map_end - page_start), vaddr_map_end - map_end);
+                memcpy((void*)(bias + map_end), memory + file_offset + (map_end - page_start), vaddr_map_end - map_end);
 
                 if (prot != (PROT_READ | PROT_WRITE)) {
                     guest_mprotect(bias + map_end, page_end - map_end, prot);

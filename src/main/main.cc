@@ -33,7 +33,7 @@ extern "C" void setup_mem(riscv::Context& context, const char *program_name, int
 
             // Allocate memory from stack and copy to that region.
             sp -= env_length;
-            emu::copy_from_host(sp, *env, env_length);
+            memcpy((void*)sp, *env, env_length);
             env_pointers.push_back(sp);
         }
 
@@ -43,7 +43,7 @@ extern "C" void setup_mem(riscv::Context& context, const char *program_name, int
 
             // Allocate memory from stack and copy to that region.
             sp -= arg_length;
-            emu::copy_from_host(sp, argv[i], arg_length);
+            memcpy((void*)sp, argv[i], arg_length);
             arg_pointers[i] = sp;
         }
 
@@ -91,12 +91,12 @@ extern "C" void setup_mem(riscv::Context& context, const char *program_name, int
         // fill in environ, last is nullptr
         push(0);
         sp -= env_pointers.size() * sizeof(emu::reg_t);
-        emu::copy_from_host(sp, env_pointers.data(), env_pointers.size() * sizeof(emu::reg_t));
+        memcpy((void*)sp, env_pointers.data(), env_pointers.size() * sizeof(emu::reg_t));
 
         // fill in argv, last is nullptr
         push(0);
         sp -= arg_pointers.size() * sizeof(emu::reg_t);
-        emu::copy_from_host(sp, arg_pointers.data(), arg_pointers.size() * sizeof(emu::reg_t));
+        memcpy((void*)sp, arg_pointers.data(), arg_pointers.size() * sizeof(emu::reg_t));
 
         // set argc
         push(arg_pointers.size());
