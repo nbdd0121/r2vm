@@ -32,10 +32,6 @@ struct Escape_formatter {
     size_t length;
 };
 
-Escape_formatter escape(const char *pointer, size_t length) {
-    return { pointer, length };
-}
-
 Escape_formatter escape(const char *pointer) {
     return { pointer, strlen(pointer) };
 }
@@ -98,11 +94,8 @@ std::ostream& operator <<(std::ostream& stream, Pointer_formatter formatter) {
 
 /* Converters between guest and host data enums structure */
 
-extern "C" int convert_errno_from_host(int number);
 extern "C" int convert_open_flags_to_host(int flags);
 extern "C" void convert_stat_from_host(riscv::abi::stat *guest_stat, struct stat *host_stat);
-extern "C" void convert_timeval_from_host(riscv::abi::timeval *guest_tv, struct timeval *host_tv);
-extern "C" void convert_iovec_to_host(struct iovec *host_iov, const riscv::abi::iovec* guest_iov);
 extern "C" int convert_mmap_prot_to_host(typename riscv::abi::int_t prot);
 extern "C" int convert_mmap_flags_to_host(typename riscv::abi::int_t flags);
 extern "C" emu::sreg_t return_errno(emu::sreg_t val);
@@ -153,20 +146,6 @@ reg_t legacy_syscall(
     reg_t arg0, reg_t arg1, reg_t arg2, reg_t arg3, reg_t arg4, reg_t arg5
 ) {
     switch (nr) {
-        case riscv::abi::Syscall_number::getcwd: {
-            char *buffer = reinterpret_cast<char*>(arg0);
-            size_t size = arg1;
-            sreg_t ret = getcwd(buffer, size) ? 0 : -static_cast<sreg_t>(riscv::abi::Errno::einval);
-            if (state::get_flags().strace) {
-                if (ret == 0) {
-                    util::log("getcwd({}, {}) = 0\n", escape(buffer), size);
-                } else {
-                    util::log("getcwd({}, {}) = {}\n", buffer, size, ret);
-                }
-            }
-
-            return ret;
-        }
         case riscv::abi::Syscall_number::unlinkat: {
             int dirfd = static_cast<sreg_t>(arg0) == riscv::abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
             auto pathname = reinterpret_cast<char*>(arg1);
@@ -213,79 +192,6 @@ reg_t legacy_syscall(
             if (state::get_flags().strace) {
                 util::log(
                     "openat({}, {}, {}, {}) = {}\n", static_cast<sreg_t>(arg0), escape(pathname), arg2, arg3, ret
-                );
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::close: {
-            // Handle standard IO specially, pretending close is sucessful.
-            sreg_t ret;
-            if (arg0 <= 2) {
-                ret = 0;
-            } else {
-                ret = return_errno(close(arg0));
-            }
-
-            if (state::get_flags().strace) {
-                util::log("close({}) = {}\n", arg0, ret);
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::lseek: {
-            sreg_t ret = return_errno(lseek(arg0, arg1, arg2));
-            if (state::get_flags().strace) {
-                util::log("lseek({}, {}, {}) = {}\n", arg0, arg1, arg2, ret);
-            }
-            return ret;
-        }
-        case riscv::abi::Syscall_number::read: {
-            auto buffer = reinterpret_cast<char*>(arg1);
-
-            // Handle standard IO specially, since it is shared between emulator and guest program.
-            sreg_t ret = return_errno(read(arg0, buffer, arg2));
-
-            if (state::get_flags().strace) {
-                util::log("read({}, {}, {}) = {}\n",
-                    arg0,
-                    escape(buffer, arg2),
-                    arg2,
-                    ret
-                );
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::write: {
-            auto buffer = reinterpret_cast<const char*>(arg1);
-
-            sreg_t ret = return_errno(write(arg0, buffer, arg2));
-
-            if (state::get_flags().strace) {
-                util::log("write({}, {}, {}) = {}\n",
-                    arg0,
-                    escape(buffer, arg2),
-                    arg2,
-                    ret
-                );
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::writev: {
-            sreg_t ret;
-            std::vector<struct iovec> host_iov(arg2);
-            riscv::abi::iovec *guest_iov = reinterpret_cast<riscv::abi::iovec*>(arg1);
-            for (unsigned i = 0; i < arg2; i++) convert_iovec_to_host(&host_iov[i], &guest_iov[i]);
-            ret = return_errno(writev(arg0, host_iov.data(), arg2));
-
-            if (state::get_flags().strace) {
-                util::log("writev({}, {}, {}) = {}\n",
-                    arg0,
-                    arg1,
-                    arg2,
-                    ret
                 );
             }
 
@@ -345,119 +251,6 @@ reg_t legacy_syscall(
                 } else {
                     util::log("fstatat({}, {}, {:#x}, {}) = {}\n", arg0, escape(pathname), arg2, arg3, ret);
                 }
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::fstat: {
-            struct stat host_stat;
-            sreg_t ret = return_errno(fstat(arg0, &host_stat));
-
-            // When success, convert stat format to guest format.
-            if (ret == 0) {
-                struct riscv::abi::stat *guest_stat = reinterpret_cast<riscv::abi::stat*>(arg1);
-                convert_stat_from_host(guest_stat, &host_stat);
-            }
-
-            if (state::get_flags().strace) {
-                if (ret == 0) {
-                    util::log("fstat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0\n", arg0, host_stat.st_mode, host_stat.st_size);
-                } else {
-                    util::log("fstat({}, {:#x}) = {}\n", arg0, arg1, ret);
-                }
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::exit: {
-            if (state::get_flags().strace) {
-                util::log("exit({}) = ?\n", arg0);
-            }
-
-            exit(arg0);
-        }
-        case riscv::abi::Syscall_number::exit_group: {
-            if (state::get_flags().strace) {
-                util::log("exit_group({}) = ?\n", arg0);
-            }
-
-            exit(arg0);
-        }
-        case riscv::abi::Syscall_number::uname: {
-            sreg_t ret = return_errno(uname(reinterpret_cast<struct utsname*>(arg0)));
-            
-            if (state::get_flags().strace) {
-                util::log("uname({:#x}) = {}\n", arg0, ret);
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::gettimeofday: {
-            struct timeval host_tv;
-
-            // TODO: gettimeofday is obsolescent. Even if some applications require this syscall, we should try to work
-            // around it instead of using the obsolescent function.
-            sreg_t ret = return_errno(gettimeofday(&host_tv, nullptr));
-
-            if (ret == 0) {
-                struct riscv::abi::timeval *guest_tv = reinterpret_cast<riscv::abi::timeval*>(arg0);
-                convert_timeval_from_host(guest_tv, &host_tv);
-            }
-
-            if (state::get_flags().strace) {
-                if (ret == 0) {
-                    util::log("gettimeofday({{{}, {}}}, NULL) = 0\n", host_tv.tv_sec, host_tv.tv_usec);
-                } else {
-                    util::log("gettimeofday({:#x}) = {}\n", arg0, ret);
-                }
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::getpid: {
-            reg_t ret = getpid();
-            if (state::get_flags().strace) {
-                util::log("getpid() = {}\n", ret);
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::getppid: {
-            reg_t ret = getppid();
-            if (state::get_flags().strace) {
-                util::log("getppid() = {}\n", ret);
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::getuid: {
-            reg_t ret = getuid();
-            if (state::get_flags().strace) {
-                util::log("getuid() = {}\n", ret);
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::geteuid: {
-            reg_t ret = geteuid();
-            if (state::get_flags().strace) {
-                util::log("geteuid() = {}\n", ret);
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::getgid: {
-            reg_t ret = getgid();
-            if (state::get_flags().strace) {
-                util::log("getgid() = {}\n", ret);
-            }
-
-            return ret;
-        }
-        case riscv::abi::Syscall_number::getegid: {
-            reg_t ret = getegid();
-            if (state::get_flags().strace) {
-                util::log("getegid() = {}\n", ret);
             }
 
             return ret;

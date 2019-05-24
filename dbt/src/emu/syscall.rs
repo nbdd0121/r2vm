@@ -9,6 +9,8 @@ impl<'a> fmt::Display for Escape<'a> {
         let mut start = 0;
         let end = std::cmp::min(self.0.len(), 64);
 
+        f.write_char('"')?;
+
         for i in 0..end {
             let code = self.0[i];
             let ch: char = code.into();
@@ -56,9 +58,8 @@ impl fmt::Display for Pointer {
     }
 }
 
-#[no_mangle]
 #[allow(unreachable_patterns)]
-extern "C" fn convert_errno_from_host(number: libc::c_int) -> abi::c_int {
+fn convert_errno_from_host(number: libc::c_int) -> abi::c_int {
     match number {
         libc::EPERM           => abi::EPERM          ,
         libc::ENOENT          => abi::ENOENT         ,
@@ -235,16 +236,11 @@ extern "C" fn convert_stat_from_host(guest_stat: &mut abi::stat, host_stat: &lib
     guest_stat.st_ctime_nsec = host_stat.st_ctime_nsec as _;
 }
 
-#[no_mangle]
-extern "C" fn convert_timeval_from_host(guest_tv: &mut abi::timeval, host_tv: &libc::timeval) {
-    guest_tv.tv_sec  = host_tv.tv_sec  as _;
-    guest_tv.tv_usec = host_tv.tv_usec as _;
+fn convert_iovec_to_host(guest_iov: &abi::iovec) -> libc::iovec {
+    libc::iovec {
+        iov_base: guest_iov.iov_base as _,
+        iov_len : guest_iov.iov_len as _,
 }
-
-#[no_mangle]
-extern "C" fn convert_iovec_to_host(host_iov: &mut libc::iovec, guest_iov: &abi::iovec) {
-    host_iov.iov_base = guest_iov.iov_base as _;
-    host_iov.iov_len  = guest_iov.iov_len  as _;
 }
 
 #[no_mangle]
@@ -271,12 +267,187 @@ extern "C" fn convert_mmap_flags_to_host(flags: abi::c_int) -> libc::c_int {
 /// Helper for converting library functions which use state variable `errno` to carry error
 /// information to a linux syscall style which returns a negative value representing the errno.
 #[no_mangle]
-extern "C" fn return_errno(val: abi::ssize_t) -> abi::ssize_t {
-    if val != -1 { return val }
-    return -convert_errno_from_host(unsafe { *libc::__errno_location() }) as _;
+extern "C" fn return_errno(val: i64) -> u64 {
+    if val != -1 { return val as u64 }
+    return (-convert_errno_from_host(unsafe { *libc::__errno_location() })) as _;
 }
 
 
 extern {
-    pub fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64;
+    pub fn legacy_syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64;
+}
+
+/// In this project, we consider everything that guest can reasonably do as "safe".
+pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
+    match nr as i64 {
+        abi::SYS_getcwd => {
+            let buffer = arg0 as *mut i8;
+            let size = arg1 as usize;
+            let ret = if libc::getcwd(buffer, size) != std::ptr::null_mut() { 0 } else { -abi::EINVAL };
+            if crate::get_flags().strace {
+                if ret == 0 {
+                    eprintln!(
+                        "getcwd({}, {}) = 0",
+                        Escape(std::slice::from_raw_parts(buffer as _, libc::strlen(buffer))),
+                        size
+                    );
+                } else {
+                    eprintln!("getcwd({}, {}) = {}", Pointer(arg0), size, ret);
+                }
+            }
+            ret as u64
+        }
+        abi::SYS_close => {
+            // Handle standard IO specially, pretending close is sucessful.
+            let ret = if arg0 <= 2 {
+                0
+            } else {
+                return_errno(libc::close(arg0 as _) as _)
+            };
+            if crate::get_flags().strace {
+                eprintln!("close({}) = {}", arg0, ret);
+            }
+            ret
+        }
+        abi::SYS_lseek => {
+            let ret = return_errno(libc::lseek(arg0 as _, arg1 as _, arg2 as _));
+            if crate::get_flags().strace {
+                eprintln!("lseek({}, {}, {}) = {}", arg0, arg1, arg2, ret);
+            }
+            ret
+        }
+        abi::SYS_read => {
+            let buffer = arg1 as usize as _;
+            let ret = return_errno(libc::read(arg0 as _, buffer, arg2 as _) as _);
+            if crate::get_flags().strace {
+                eprintln!("read({}, {}, {}) = {}",
+                    arg0,
+                    Escape(std::slice::from_raw_parts(buffer as _, arg2 as usize)),
+                    arg2,
+                    ret
+                );
+            }
+            ret
+        }
+        abi::SYS_write => {
+            let buffer = arg1 as usize as _;
+            let ret = return_errno(libc::write(arg0 as _, buffer, arg2 as _) as _);
+            if crate::get_flags().strace {
+                eprintln!("write({}, {}, {}) = {}",
+                    arg0,
+                    Escape(std::slice::from_raw_parts(buffer as _, arg2 as usize)),
+                    arg2,
+                    ret
+                );
+            }
+            ret
+        }
+        abi::SYS_writev => {
+            let guest_iov = std::slice::from_raw_parts(arg1 as usize as *const abi::iovec, arg2 as _);
+            let host_iov: Vec<_> = guest_iov.iter().map(convert_iovec_to_host).collect();
+            let ret = return_errno(libc::writev(arg0 as _, host_iov.as_ptr(), arg2 as _) as _);
+            if crate::get_flags().strace {
+                eprintln!("writev({}, {}, {}) = {}",
+                    arg0,
+                    arg1,
+                    arg2,
+                    ret
+                );
+            }
+            ret
+        }
+        abi::SYS_fstat => {
+            let mut host_stat = std::mem::uninitialized(); 
+            let ret = return_errno(libc::fstat(arg0 as _, &mut host_stat) as _);
+
+            // When success, convert stat format to guest format.
+            if ret == 0 {
+                let guest_stat = &mut *(arg1 as usize as *mut abi::stat);
+                convert_stat_from_host(guest_stat, &host_stat);
+            }
+
+            if crate::get_flags().strace {
+                if ret == 0 {
+                    eprintln!("fstat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0", arg0, host_stat.st_mode, host_stat.st_size);
+                } else {
+                    eprintln!("fstat({}, {:#x}) = {}", arg0, arg1, ret);
+                }
+            }
+
+            return ret;
+        }
+        abi::SYS_exit => {
+            if crate::get_flags().strace {
+                eprintln!("exit({}) = ?", arg0);
+            }
+            std::process::exit(arg0 as i32)
+        }
+        abi::SYS_exit_group => {
+            if crate::get_flags().strace {
+                eprintln!("exit_group({}) = ?", arg0);
+            }
+            std::process::exit(arg0 as i32)
+        }
+        abi::SYS_uname => {
+            let ret = return_errno(libc::uname(arg0 as _) as _);
+            if crate::get_flags().strace {
+                eprintln!("uname({:#x}) = {}", arg0, ret);
+            }
+            ret
+        }
+        abi::SYS_gettimeofday => {
+            use std::time::SystemTime;
+            let time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+            let guest_tv = &mut *(arg0 as usize as *mut abi::timeval);
+            guest_tv.tv_sec = time.as_secs() as _;
+            guest_tv.tv_usec = time.subsec_micros() as _;
+            if crate::get_flags().strace {
+                eprintln!("gettimeofday({{{}, {}}}, NULL) = 0", time.as_secs(), time.subsec_micros());
+            }
+            0
+        }
+        abi::SYS_getpid => {
+            let ret = libc::getpid() as u64;
+            if crate::get_flags().strace {
+                eprintln!("getpid() = {}", ret);
+            }
+            ret
+        }
+        abi::SYS_getppid => {
+            let ret = libc::getppid() as u64;
+            if crate::get_flags().strace {
+                eprintln!("getppid() = {}", ret);
+            }
+            ret
+        }
+        abi::SYS_getuid => {
+            let ret = libc::getuid() as u64;
+            if crate::get_flags().strace {
+                eprintln!("getuid() = {}", ret);
+            }
+            ret
+        }
+        abi::SYS_geteuid => {
+            let ret = libc::geteuid() as u64;
+            if crate::get_flags().strace {
+                eprintln!("geteuid() = {}", ret);
+            }
+            ret
+        }
+        abi::SYS_getgid => {
+            let ret = libc::getgid() as u64;
+            if crate::get_flags().strace {
+                eprintln!("getgid() = {}", ret);
+            }
+            ret
+        }
+        abi::SYS_getegid => {
+            let ret = libc::getegid() as u64;
+            if crate::get_flags().strace {
+                eprintln!("getegid() = {}", ret);
+            }
+            ret
+        }
+        _ => legacy_syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5),
+    }
 }
