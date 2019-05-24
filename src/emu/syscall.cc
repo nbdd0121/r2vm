@@ -98,195 +98,14 @@ std::ostream& operator <<(std::ostream& stream, Pointer_formatter formatter) {
 
 /* Converters between guest and host data enums structure */
 
-// Only translate POSIX specified subset of error numbers should be sufficient.
-riscv::abi::Errno convert_errno_from_host(int number) {
-    switch (number) {
-        case E2BIG              : return riscv::abi::Errno::e2big;
-        case EACCES             : return riscv::abi::Errno::eacces;
-        case EADDRINUSE         : return riscv::abi::Errno::eaddrinuse;
-        case EADDRNOTAVAIL      : return riscv::abi::Errno::eaddrnotavail;
-        case EAFNOSUPPORT       : return riscv::abi::Errno::eafnosupport;
-        case EAGAIN             : return riscv::abi::Errno::eagain;
-        case EALREADY           : return riscv::abi::Errno::ealready;
-        case EBADF              : return riscv::abi::Errno::ebadf;
-        case EBADMSG            : return riscv::abi::Errno::ebadmsg;
-        case EBUSY              : return riscv::abi::Errno::ebusy;
-        case ECANCELED          : return riscv::abi::Errno::ecanceled;
-        case ECHILD             : return riscv::abi::Errno::echild;
-        case ECONNABORTED       : return riscv::abi::Errno::econnaborted;
-        case ECONNREFUSED       : return riscv::abi::Errno::econnrefused;
-        case ECONNRESET         : return riscv::abi::Errno::econnreset;
-        case EDEADLK            : return riscv::abi::Errno::edeadlk;
-        case EDESTADDRREQ       : return riscv::abi::Errno::edestaddrreq;
-        case EDOM               : return riscv::abi::Errno::edom;
-        case EDQUOT             : return riscv::abi::Errno::edquot;
-        case EEXIST             : return riscv::abi::Errno::eexist;
-        case EFAULT             : return riscv::abi::Errno::efault;
-        case EFBIG              : return riscv::abi::Errno::efbig;
-        case EHOSTUNREACH       : return riscv::abi::Errno::ehostunreach;
-        case EIDRM              : return riscv::abi::Errno::eidrm;
-        case EILSEQ             : return riscv::abi::Errno::eilseq;
-        case EINPROGRESS        : return riscv::abi::Errno::einprogress;
-        case EINTR              : return riscv::abi::Errno::eintr;
-        case EINVAL             : return riscv::abi::Errno::einval;
-        case EIO                : return riscv::abi::Errno::eio;
-        case EISCONN            : return riscv::abi::Errno::eisconn;
-        case EISDIR             : return riscv::abi::Errno::eisdir;
-        case ELOOP              : return riscv::abi::Errno::eloop;
-        case EMFILE             : return riscv::abi::Errno::emfile;
-        case EMLINK             : return riscv::abi::Errno::emlink;
-        case EMSGSIZE           : return riscv::abi::Errno::emsgsize;
-        case EMULTIHOP          : return riscv::abi::Errno::emultihop;
-        case ENAMETOOLONG       : return riscv::abi::Errno::enametoolong;
-        case ENETDOWN           : return riscv::abi::Errno::enetdown;
-        case ENETRESET          : return riscv::abi::Errno::enetreset;
-        case ENETUNREACH        : return riscv::abi::Errno::enetunreach;
-        case ENFILE             : return riscv::abi::Errno::enfile;
-        case ENOBUFS            : return riscv::abi::Errno::enobufs;
-        case ENODEV             : return riscv::abi::Errno::enodev;
-        case ENOENT             : return riscv::abi::Errno::enoent;
-        case ENOEXEC            : return riscv::abi::Errno::enoexec;
-        case ENOLCK             : return riscv::abi::Errno::enolck;
-        case ENOLINK            : return riscv::abi::Errno::enolink;
-        case ENOMEM             : return riscv::abi::Errno::enomem;
-        case ENOMSG             : return riscv::abi::Errno::enomsg;
-        case ENOPROTOOPT        : return riscv::abi::Errno::enoprotoopt;
-        case ENOSPC             : return riscv::abi::Errno::enospc;
-        case ENOSYS             : return riscv::abi::Errno::enosys;
-        case ENOTCONN           : return riscv::abi::Errno::enotconn;
-        case ENOTDIR            : return riscv::abi::Errno::enotdir;
-        case ENOTEMPTY          : return riscv::abi::Errno::enotempty;
-        case ENOTRECOVERABLE    : return riscv::abi::Errno::enotrecoverable;
-        case ENOTSOCK           : return riscv::abi::Errno::enotsock;
-#if ENOTSUP != EOPNOTSUPP
-        case ENOTSUP            : return riscv::abi::Errno::enotsup;
-#endif
-        case ENOTTY             : return riscv::abi::Errno::enotty;
-        case ENXIO              : return riscv::abi::Errno::enxio;
-        case EOPNOTSUPP         : return riscv::abi::Errno::eopnotsupp;
-        case EOVERFLOW          : return riscv::abi::Errno::eoverflow;
-        case EOWNERDEAD         : return riscv::abi::Errno::eownerdead;
-        case EPERM              : return riscv::abi::Errno::eperm;
-        case EPIPE              : return riscv::abi::Errno::epipe;
-        case EPROTO             : return riscv::abi::Errno::eproto;
-        case EPROTONOSUPPORT    : return riscv::abi::Errno::eprotonosupport;
-        case EPROTOTYPE         : return riscv::abi::Errno::eprototype;
-        case ERANGE             : return riscv::abi::Errno::erange;
-        case EROFS              : return riscv::abi::Errno::erofs;
-        case ESPIPE             : return riscv::abi::Errno::espipe;
-        case ESRCH              : return riscv::abi::Errno::esrch;
-        case ESTALE             : return riscv::abi::Errno::estale;
-        case ETIMEDOUT          : return riscv::abi::Errno::etimedout;
-        case ETXTBSY            : return riscv::abi::Errno::etxtbsy;
-#if EWOULDBLOCK != EAGAIN
-        case EWOULDBLOCK        : return riscv::abi::Errno::ewouldblock;
-#endif
-        case EXDEV              : return riscv::abi::Errno::exdev;
-        default:
-            util::log("Fail to translate host errno = {} to guest errno\n", number);
-            return riscv::abi::Errno::enosys;
-    }
-}
-
-int convert_open_flags_to_host(int flags) {
-    int ret = 0;
-    if (flags & 01) ret |= O_WRONLY;
-    if (flags & 02) ret |= O_RDWR;
-    if (flags & 0100) ret |= O_CREAT;
-    if (flags & 0200) ret |= O_EXCL;
-    if (flags & 01000) ret |= O_TRUNC;
-    if (flags & 02000) ret |= O_APPEND;
-    if (flags & 04000) ret |= O_NONBLOCK;
-    if (flags & 04010000) ret |= O_SYNC;
-    return ret;
-}
-
-void convert_stat_from_host(riscv::abi::stat *guest_stat, struct stat *host_stat) {
-    guest_stat->st_dev          = host_stat->st_dev;
-    guest_stat->st_ino          = host_stat->st_ino;
-    guest_stat->st_mode         = host_stat->st_mode;
-    guest_stat->st_nlink        = host_stat->st_nlink;
-    guest_stat->st_uid          = host_stat->st_uid;
-    guest_stat->st_gid          = host_stat->st_gid;
-    guest_stat->st_rdev         = host_stat->st_rdev;
-    guest_stat->st_size         = host_stat->st_size;
-    guest_stat->st_blocks       = host_stat->st_blocks;
-    guest_stat->st_blksize      = host_stat->st_blksize;
-    guest_stat->guest_st_atime  = host_stat->st_atime;
-    guest_stat->st_atime_nsec   = host_stat->st_atim.tv_nsec;
-    guest_stat->guest_st_mtime  = host_stat->st_mtim.tv_sec;
-    guest_stat->st_mtime_nsec   = host_stat->st_mtim.tv_nsec;
-    guest_stat->guest_st_ctime  = host_stat->st_ctim.tv_sec;
-    guest_stat->st_ctime_nsec   = host_stat->st_ctim.tv_nsec;
-}
-
-void convert_timeval_from_host(riscv::abi::timeval *guest_tv, struct timeval *host_tv) {
-    guest_tv->tv_sec   = host_tv->tv_sec;
-    guest_tv->tv_usec  = host_tv->tv_usec;
-}
-
-template<typename Abi>
-constexpr bool need_iovec_conversion() {
-    return sizeof(struct iovec) != sizeof(typename Abi::iovec) ||
-           alignof(struct iovec) != alignof(typename Abi::iovec) ||
-           offsetof(struct iovec, iov_base) != offsetof(typename Abi::iovec, iov_base) ||
-           offsetof(struct iovec, iov_len) != offsetof(typename Abi::iovec, iov_len);
-}
-
-template<typename Abi>
-void convert_iovec_to_host(struct iovec *host_iov, const typename Abi::iovec* guest_iov) {
-    host_iov->iov_base = guest_iov->iov_base;
-    host_iov->iov_len = guest_iov->iov_len;
-}
-
-template<typename Abi>
-constexpr bool need_utsname_conversion() {
-
-    // Assume all fields have the same length, so if the total size is equal, no conversion would be needed.
-    return sizeof(struct utsname) != sizeof(typename Abi::utsname) ||
-           offsetof(struct iovec, iov_base) != offsetof(typename Abi::iovec, iov_base) ||
-           offsetof(struct iovec, iov_len) != offsetof(typename Abi::iovec, iov_len);
-}
-
-template<typename Abi>
-void convert_utsname_from_host(typename Abi::utsname *guest_utsname, const struct utsname *host_utsname) {
-    strncpy(guest_utsname->sysname, host_utsname->sysname, Abi::guest_UTSNAME_LENGTH - 1);
-    strncpy(guest_utsname->nodename, host_utsname->nodename, Abi::guest_UTSNAME_LENGTH - 1);
-    strncpy(guest_utsname->release, host_utsname->release, Abi::guest_UTSNAME_LENGTH - 1);
-    strncpy(guest_utsname->version, host_utsname->version, Abi::guest_UTSNAME_LENGTH - 1);
-    strncpy(guest_utsname->machine, host_utsname->machine, Abi::guest_UTSNAME_LENGTH - 1);
-#ifdef _GNU_SOURCE
-    strncpy(guest_utsname->domainname, host_utsname->domainname, Abi::guest_UTSNAME_LENGTH - 1);
-#endif
-}
-
-// When an error occurs during a system call, Linux will return the negated value of the error number. Library
-// functions, on the other hand, usually return -1 and set errno instead.
-// Helper for converting library functions which use state variable `errno` to carry error information to a linux
-// syscall style which returns a negative value representing the errno.
-emu::sreg_t return_errno(emu::sreg_t val) {
-    if (val != -1) return val;
-    return -static_cast<emu::sreg_t>(convert_errno_from_host(errno));
-}
-
-template<typename Abi>
-int convert_mmap_prot_from_host(typename Abi::int_t prot) {
-    int ret = 0;
-    if (prot & Abi::guest_PROT_READ) ret |= PROT_READ;
-    if (prot & Abi::guest_PROT_WRITE) ret |= PROT_WRITE;
-    if (prot & Abi::guest_PROT_EXEC) ret |= PROT_EXEC;
-    return ret;
-}
-
-template<typename Abi>
-int convert_mmap_flags_from_host(typename Abi::int_t flags) {
-    int ret = 0;
-    if (flags & Abi::guest_MAP_SHARED) ret |= MAP_SHARED;
-    if (flags & Abi::guest_MAP_PRIVATE) ret |= MAP_PRIVATE;
-    if (flags & Abi::guest_MAP_FIXED) ret |= MAP_FIXED;
-    if (flags & Abi::guest_MAP_ANON) ret |= MAP_ANON;
-    return ret;
-}
+extern "C" int convert_errno_from_host(int number);
+extern "C" int convert_open_flags_to_host(int flags);
+extern "C" void convert_stat_from_host(riscv::abi::stat *guest_stat, struct stat *host_stat);
+extern "C" void convert_timeval_from_host(riscv::abi::timeval *guest_tv, struct timeval *host_tv);
+extern "C" void convert_iovec_to_host(struct iovec *host_iov, const riscv::abi::iovec* guest_iov);
+extern "C" int convert_mmap_prot_to_host(typename riscv::abi::int_t prot);
+extern "C" int convert_mmap_flags_to_host(typename riscv::abi::int_t flags);
+extern "C" emu::sreg_t return_errno(emu::sreg_t val);
 
 // Detect whether the path is referencing /proc/self/.
 // returns null if the path does not match /proc/self/, and return the remaining part if it matches.
@@ -329,12 +148,10 @@ const char* translate_path(const char* pathname) {
 namespace emu {
 
 extern "C"
-reg_t syscall(
+reg_t legacy_syscall(
     riscv::abi::Syscall_number nr,
     reg_t arg0, reg_t arg1, reg_t arg2, reg_t arg3, reg_t arg4, reg_t arg5
 ) {
-    using Abi = riscv::abi::Abi;
-
     switch (nr) {
         case riscv::abi::Syscall_number::getcwd: {
             char *buffer = reinterpret_cast<char*>(arg0);
@@ -351,7 +168,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::unlinkat: {
-            int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
+            int dirfd = static_cast<sreg_t>(arg0) == riscv::abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
             auto pathname = reinterpret_cast<char*>(arg1);
             sreg_t ret = return_errno(unlinkat(dirfd, translate_path(pathname), arg2));
 
@@ -364,7 +181,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::faccessat: {
-            int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
+            int dirfd = static_cast<sreg_t>(arg0) == riscv::abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
             auto pathname = reinterpret_cast<char*>(arg1);
             sreg_t ret = return_errno(faccessat(dirfd, translate_path(pathname), arg2, arg3));
 
@@ -377,7 +194,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::openat: {
-            int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
+            int dirfd = static_cast<sreg_t>(arg0) == riscv::abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
             auto pathname = reinterpret_cast<char*>(arg1);
             auto flags = convert_open_flags_to_host(arg2);
             auto proc_self = is_proc_self(pathname);
@@ -386,7 +203,7 @@ reg_t syscall(
                 if (strcmp(proc_self, "exe") == 0) {
                     ret = return_errno(openat(dirfd, state::get_flags().exec_path, flags, arg3));
                 } else {
-                    // Auto handle cmdline, stat, auxv, cmdline here!"
+                    // Also handle cmdline, stat, auxv, cmdline here!"
                     ret = return_errno(openat(dirfd, translate_path(pathname), flags, arg3));
                 }
             } else {
@@ -458,15 +275,10 @@ reg_t syscall(
         }
         case riscv::abi::Syscall_number::writev: {
             sreg_t ret;
-            if constexpr (need_iovec_conversion<Abi>()) {
-                std::vector<struct iovec> host_iov(arg2);
-                Abi::iovec *guest_iov = reinterpret_cast<Abi::iovec*>(arg1);
-                for (unsigned i = 0; i < arg2; i++) convert_iovec_to_host<Abi>(&host_iov[i], &guest_iov[i]);
-                ret = return_errno(writev(arg0, host_iov.data(), arg2));
-
-            } else {
-                ret = return_errno(writev(arg0, reinterpret_cast<struct iovec*>(arg1), arg2));
-            }
+            std::vector<struct iovec> host_iov(arg2);
+            riscv::abi::iovec *guest_iov = reinterpret_cast<riscv::abi::iovec*>(arg1);
+            for (unsigned i = 0; i < arg2; i++) convert_iovec_to_host(&host_iov[i], &guest_iov[i]);
+            ret = return_errno(writev(arg0, host_iov.data(), arg2));
 
             if (state::get_flags().strace) {
                 util::log("writev({}, {}, {}) = {}\n",
@@ -480,7 +292,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::readlinkat: {
-            int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
+            int dirfd = static_cast<sreg_t>(arg0) == riscv::abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
             auto pathname = reinterpret_cast<char*>(arg1);
             auto buffer = reinterpret_cast<char*>(arg2);
             auto proc_self = is_proc_self(pathname);
@@ -512,7 +324,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::fstatat: {
-            int dirfd = static_cast<sreg_t>(arg0) == Abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
+            int dirfd = static_cast<sreg_t>(arg0) == riscv::abi::guest_AT_FDCWD ? AT_FDCWD : arg0;
             auto pathname = reinterpret_cast<char*>(arg1);
 
             struct stat host_stat;
@@ -572,18 +384,8 @@ reg_t syscall(
             exit(arg0);
         }
         case riscv::abi::Syscall_number::uname: {
-            sreg_t ret;
-            if constexpr (need_utsname_conversion<Abi>()) {
-                struct utsname host_utsname;
-                ret = return_errno(uname(&host_utsname));
-                convert_utsname_from_host<Abi>(
-                    reinterpret_cast<Abi::utsname*>(arg0), &host_utsname
-                );
-
-            } else {
-                ret = return_errno(uname(reinterpret_cast<struct utsname*>(arg0)));
-            }
-
+            sreg_t ret = return_errno(uname(reinterpret_cast<struct utsname*>(arg0)));
+            
             if (state::get_flags().strace) {
                 util::log("uname({:#x}) = {}\n", arg0, ret);
             }
@@ -712,8 +514,8 @@ reg_t syscall(
             return -static_cast<sreg_t>(riscv::abi::Errno::enosys);;
         }
         case riscv::abi::Syscall_number::mmap: {
-            int prot = convert_mmap_prot_from_host<Abi>(arg2);
-            int flags = convert_mmap_flags_from_host<Abi>(arg3);
+            int prot = convert_mmap_prot_to_host(arg2);
+            int flags = convert_mmap_flags_to_host(arg3);
             reg_t ret = reinterpret_cast<reg_t>(guest_mmap(arg0, arg1, prot, flags, arg4, arg5));
             if (state::get_flags().strace) {
                 util::error("mmap({:#x}, {}, {}, {}, {}, {}) = {:#x}\n", arg0, arg1, arg2, arg3, arg4, arg5, ret);
@@ -722,7 +524,7 @@ reg_t syscall(
             return ret;
         }
         case riscv::abi::Syscall_number::mprotect: {
-            int prot = convert_mmap_prot_from_host<Abi>(arg2);
+            int prot = convert_mmap_prot_to_host(arg2);
             sreg_t ret = return_errno(guest_mprotect(arg0, arg1, prot));
             if (state::get_flags().strace) {
                 util::error("mprotect({:#x}, {}, {}) = {:#x}\n", arg0, arg1, arg2, ret);
