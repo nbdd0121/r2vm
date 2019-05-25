@@ -1,5 +1,9 @@
-use std::fmt::{self, Write};
 use super::abi;
+
+use std::fmt::{self, Write};
+use std::ffi::{CStr, CString};
+use std::borrow::Cow;
+use std::path::Path;
 
 struct Escape<'a>(&'a [u8]);
 
@@ -23,7 +27,7 @@ impl<'a> fmt::Display for Escape<'a> {
                 // It's okay to use unchecked here becuase we know this is all ASCII
                 f.write_str(unsafe { std::str::from_utf8_unchecked(&self.0[start..i]) })?;
             }
-        
+
             f.write_char('\\')?;
             match ch {
                 '"' | '\\' => f.write_char(ch)?,
@@ -202,7 +206,6 @@ fn convert_errno_from_host(number: libc::c_int) -> abi::c_int {
     }
 }
 
-#[no_mangle]
 extern "C" fn convert_open_flags_to_host(flags: abi::c_int) -> libc::c_int {
     let mut ret = 0;
     if flags & 01 != 0 { ret |= libc::O_WRONLY }
@@ -216,7 +219,6 @@ extern "C" fn convert_open_flags_to_host(flags: abi::c_int) -> libc::c_int {
     ret
 }
 
-#[no_mangle]
 extern "C" fn convert_stat_from_host(guest_stat: &mut abi::stat, host_stat: &libc::stat) {
     guest_stat.st_dev        = host_stat.st_dev;
     guest_stat.st_ino        = host_stat.st_ino;
@@ -240,7 +242,7 @@ fn convert_iovec_to_host(guest_iov: &abi::iovec) -> libc::iovec {
     libc::iovec {
         iov_base: guest_iov.iov_base as _,
         iov_len : guest_iov.iov_len as _,
-}
+    }
 }
 
 #[no_mangle]
@@ -267,11 +269,53 @@ extern "C" fn convert_mmap_flags_to_host(flags: abi::c_int) -> libc::c_int {
 /// Helper for converting library functions which use state variable `errno` to carry error
 /// information to a linux syscall style which returns a negative value representing the errno.
 #[no_mangle]
-extern "C" fn return_errno(val: i64) -> u64 {
-    if val != -1 { return val as u64 }
-    return (-convert_errno_from_host(unsafe { *libc::__errno_location() })) as _;
+extern "C" fn return_errno(val: i64) -> i64 {
+    if val != -1 { return val }
+    return -convert_errno_from_host(unsafe { *libc::__errno_location() }) as _;
 }
 
+/// Detect whether the path is referencing /proc/self/ or friends.
+/// returns None if the path does not match /proc/self/, and return the remaining part if it matches.
+fn is_proc_self(path: &CStr) -> Option<&Path> {
+    let path = match path.to_str() {
+        Err(_) => return None,
+        Ok(v) => Path::new(v),
+    };
+    let path = match path.strip_prefix("/proc") {
+        Err(_) => return None,
+        Ok(v) => v,
+    };
+    match path.strip_prefix("self") {
+        Ok(v) => return Some(v),
+        Err(_) => (),
+    }
+    // We still need to check /proc/pid
+    let pid = format!("{}", std::process::id());
+    match path.strip_prefix(pid) {
+        Ok(v) => Some(v),
+        Err(_) => None,
+    }
+}
+
+/// Convert a guest path to actual path. When guest is accessing some files in sysroot, this
+/// step is necessary.
+unsafe fn translate_path(pathname: &CStr) -> Cow<CStr> {
+    let path = match pathname.to_str() {
+        // Just return as is if the path cannot be converted to str
+        Err(_) => return Cow::Borrowed(pathname),
+        Ok(v) => Path::new(v),
+    };
+    // We assume relative paths cannot point to sysroot
+    if path.is_relative() { return Cow::Borrowed(pathname) }
+    // TODO: Replace this once we get proper type for sysroot
+    let sysroot = Path::new(CStr::from_ptr(crate::get_flags().sysroot).to_str().unwrap());
+    let newpath = sysroot.join(path.strip_prefix("/").unwrap());
+    if !newpath.exists() { return Cow::Borrowed(pathname) }
+    if crate::get_flags().strace {
+        eprintln!("Translate {} to {}", path.display(), newpath.display());
+    }
+    Cow::Owned(CString::new(newpath.into_os_string().into_string().unwrap()).unwrap())
+}
 
 extern {
     pub fn legacy_syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64;
@@ -279,7 +323,7 @@ extern {
 
 /// In this project, we consider everything that guest can reasonably do as "safe".
 pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
-    match nr as i64 {
+    let ret: i64 = match nr as i64 {
         abi::SYS_getcwd => {
             let buffer = arg0 as *mut i8;
             let size = arg1 as usize;
@@ -295,7 +339,56 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                     eprintln!("getcwd({}, {}) = {}", Pointer(arg0), size, ret);
                 }
             }
-            ret as u64
+            ret as _
+        }
+        abi::SYS_unlinkat => {
+            let arg0 = arg0 as abi::c_int;
+            let dirfd: i32 = if arg0 == abi::AT_FDCWD { libc::AT_FDCWD } else { arg0 as _ };
+            let pathname = CStr::from_ptr(arg1 as usize as _);
+            let ret = return_errno(libc::unlinkat(dirfd, translate_path(pathname).as_ptr(), arg2 as _) as _);
+            if crate::get_flags().strace {
+                eprintln!(
+                    "unlinkat({}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, ret
+                );
+            }
+            ret
+        }
+        abi::SYS_faccessat => {
+            let arg0 = arg0 as abi::c_int;
+            let dirfd: i32 = if arg0 == abi::AT_FDCWD { libc::AT_FDCWD } else { arg0 as _ };
+            let pathname = CStr::from_ptr(arg1 as usize as _);
+            let ret = return_errno(libc::faccessat(
+                dirfd,
+                translate_path(pathname).as_ptr(),
+                arg2 as _,
+                arg3 as _
+            ) as _);
+            if crate::get_flags().strace {
+                eprintln!(
+                    "faccessat({}, {}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret
+                );
+            }
+            ret
+        }
+        abi::SYS_openat => {
+            let arg0 = arg0 as abi::c_int;
+            let arg3 = arg0 as libc::mode_t;
+            let dirfd: i32 = if arg0 == abi::AT_FDCWD { libc::AT_FDCWD } else { arg0 as _ };
+            let pathname = CStr::from_ptr(arg1 as usize as _);
+            let flags = convert_open_flags_to_host(arg2 as _);
+            let proc_self = is_proc_self(pathname);
+            let ret = match proc_self {
+                Some(v) if v == std::ffi::OsStr::new("exe") => {
+                    libc::openat(dirfd, crate::get_flags().exec_path, flags, arg3) as _
+                }
+                _ => return_errno(libc::openat(dirfd, translate_path(pathname).as_ptr(), flags, arg3) as _),
+            };
+            if crate::get_flags().strace {
+                eprintln!(
+                    "openat({}, {}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret
+                );
+            }
+            ret
         }
         abi::SYS_close => {
             // Handle standard IO specially, pretending close is sucessful.
@@ -356,8 +449,73 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             }
             ret
         }
+        abi::SYS_readlinkat => {
+            let arg0 = arg0 as abi::c_int;
+            let dirfd: i32 = if arg0 == abi::AT_FDCWD { libc::AT_FDCWD } else { arg0 as _ };
+            let pathname = CStr::from_ptr(arg1 as usize as _);
+            let buffer = arg2 as usize as *mut i8;
+            let proc_self = is_proc_self(pathname);
+            let ret = match proc_self {
+                Some(v) if v == std::ffi::OsStr::new("exe") => {
+                    let path = libc::realpath(crate::get_flags().exec_path, std::ptr::null_mut());
+                    if path != std::ptr::null_mut() {
+                        libc::strncpy(buffer, path, arg3 as _);
+                        let ret = libc::strlen(path);
+                        libc::free(path as *mut _);
+                        ret as i64
+                    } else {
+                        return_errno(-1)
+                    }
+                }
+                _ => return_errno(libc::readlinkat(dirfd, translate_path(pathname).as_ptr(), buffer, arg3 as _) as _)
+            };
+            if crate::get_flags().strace {
+                if ret > 0 {
+                    eprintln!(
+                        "readlinkat({}, {}, {}, {}) = {}",
+                        arg0,
+                        Escape(pathname.to_bytes()),
+                        Escape(CStr::from_ptr(buffer).to_bytes()), arg3, ret
+                    );
+                } else {
+                    eprintln!("readlinkat({}, {}, {:#x}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret);
+                }
+            }
+            ret
+        }
+        abi::SYS_fstatat => {
+            let arg0 = arg0 as abi::c_int;
+            let dirfd: i32 = if arg0 == abi::AT_FDCWD { libc::AT_FDCWD } else { arg0 as _ };
+            let pathname = CStr::from_ptr(arg1 as usize as _);
+
+            let mut host_stat = std::mem::uninitialized();
+            let ret = return_errno(libc::fstatat(
+                dirfd,
+                translate_path(pathname).as_ptr(),
+                &mut host_stat,
+                arg3 as _
+            ) as _);
+
+            // When success, convert stat format to guest format.
+            if ret == 0 {
+                let guest_stat = &mut *(arg2 as usize as *mut abi::stat);
+                convert_stat_from_host(guest_stat, &host_stat);
+            }
+
+            if crate::get_flags().strace {
+                if ret == 0 {
+                    eprintln!(
+                        "fstatat({}, {}, {{st_mode={:#o}, st_size={}, ...}}, {}) = 0",
+                        arg0, Escape(pathname.to_bytes()), host_stat.st_mode, host_stat.st_size, arg3
+                    );
+                } else {
+                    eprintln!("fstatat({}, {}, {:#x}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret);
+                }
+            }
+            ret
+        }
         abi::SYS_fstat => {
-            let mut host_stat = std::mem::uninitialized(); 
+            let mut host_stat = std::mem::uninitialized();
             let ret = return_errno(libc::fstat(arg0 as _, &mut host_stat) as _);
 
             // When success, convert stat format to guest format.
@@ -373,8 +531,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                     eprintln!("fstat({}, {:#x}) = {}", arg0, arg1, ret);
                 }
             }
-
-            return ret;
+            ret
         }
         abi::SYS_exit => {
             if crate::get_flags().strace {
@@ -407,47 +564,88 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             0
         }
         abi::SYS_getpid => {
-            let ret = libc::getpid() as u64;
+            let ret = libc::getpid();
             if crate::get_flags().strace {
                 eprintln!("getpid() = {}", ret);
             }
-            ret
+            ret as i64
         }
         abi::SYS_getppid => {
-            let ret = libc::getppid() as u64;
+            let ret = libc::getppid();
             if crate::get_flags().strace {
                 eprintln!("getppid() = {}", ret);
             }
-            ret
+            ret as i64
         }
         abi::SYS_getuid => {
-            let ret = libc::getuid() as u64;
+            let ret = libc::getuid();
             if crate::get_flags().strace {
                 eprintln!("getuid() = {}", ret);
             }
-            ret
+            ret as i64
         }
         abi::SYS_geteuid => {
-            let ret = libc::geteuid() as u64;
+            let ret = libc::geteuid();
             if crate::get_flags().strace {
                 eprintln!("geteuid() = {}", ret);
             }
-            ret
+            ret as i64
         }
         abi::SYS_getgid => {
-            let ret = libc::getgid() as u64;
+            let ret = libc::getgid();
             if crate::get_flags().strace {
                 eprintln!("getgid() = {}", ret);
             }
-            ret
+            ret as i64
         }
         abi::SYS_getegid => {
-            let ret = libc::getegid() as u64;
+            let ret = libc::getegid();
             if crate::get_flags().strace {
                 eprintln!("getegid() = {}", ret);
             }
+            ret as i64
+        }
+        abi::SYS_open => {
+            let pathname = CStr::from_ptr(arg0 as usize as _);
+            let flags = convert_open_flags_to_host(arg1 as _);
+            let ret = return_errno(libc::open(translate_path(pathname).as_ptr(), flags, arg2 as libc::mode_t) as _);
+            if crate::get_flags().strace {
+                eprintln!("open({}, {}, {}) = {}", Escape(pathname.to_bytes()), arg1, arg2, ret);
+            }
             ret
         }
-        _ => legacy_syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5),
-    }
+        abi::SYS_unlink => {
+            let pathname = CStr::from_ptr(arg0 as usize as _);
+            let ret = return_errno(libc::unlink(translate_path(pathname).as_ptr()) as _);
+            if crate::get_flags().strace {
+                eprintln!("unlink({}) = {}", Escape(pathname.to_bytes()), ret);
+            }
+            ret
+        }
+        abi::SYS_stat => {
+            let pathname = CStr::from_ptr(arg0 as usize as _);
+            let mut host_stat = std::mem::uninitialized();
+            let ret = return_errno(libc::stat(translate_path(pathname).as_ptr(), &mut host_stat) as _);
+
+            // When success, convert stat format to guest format.
+            if ret == 0 {
+                let guest_stat = &mut *(arg1 as usize as *mut abi::stat);
+                convert_stat_from_host(guest_stat, &host_stat);
+            }
+
+            if crate::get_flags().strace {
+                if ret == 0 {
+                    eprintln!(
+                        "stat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0",
+                        Escape(pathname.to_bytes()), host_stat.st_mode, host_stat.st_size,
+                    );
+                } else {
+                    eprintln!("stat({}, {:#x}) = {}", Escape(pathname.to_bytes()), arg1, ret);
+                }
+            }
+            ret
+        }
+        _ => legacy_syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5) as i64,
+    };
+    ret as u64
 }
