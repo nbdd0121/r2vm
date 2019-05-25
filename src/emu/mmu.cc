@@ -2,9 +2,19 @@
 #include <sys/mman.h>
 
 #include "emu/mmu.h"
+#include "emu/state.h"
 #include "util/memory.h"
 
 namespace emu {
+
+namespace state {
+
+reg_t original_brk;
+reg_t brk;
+reg_t heap_start;
+reg_t heap_end;
+
+}
 
 // Establish a mapping for guest.
 reg_t guest_mmap(reg_t address, reg_t size, int prot, int flags, int fd, reg_t offset) {

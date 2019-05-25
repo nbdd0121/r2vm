@@ -5,6 +5,13 @@ use std::ffi::{CStr, CString};
 use std::borrow::Cow;
 use std::path::Path;
 
+extern {
+    static mut original_brk: u64;
+    static mut brk: u64;
+    static mut heap_start: u64;
+    static mut heap_end: u64;
+}
+
 struct Escape<'a>(&'a [u8]);
 
 impl<'a> fmt::Display for Escape<'a> {
@@ -250,7 +257,8 @@ extern "C" fn convert_mmap_prot_to_host(prot: abi::c_int) -> libc::c_int {
     let mut ret = 0;
     if (prot & abi::PROT_READ) != 0 { ret |= libc::PROT_READ }
     if (prot & abi::PROT_WRITE) != 0 { ret |= libc::PROT_WRITE }
-    if (prot & abi::PROT_EXEC) != 0 { ret |= libc::PROT_EXEC }
+    // Guest code isn't directly executable, map them to PROT_READ instead.
+    if (prot & abi::PROT_EXEC) != 0 { ret |= libc::PROT_READ }
     ret
 }
 
@@ -315,10 +323,6 @@ unsafe fn translate_path(pathname: &CStr) -> Cow<CStr> {
         eprintln!("Translate {} to {}", path.display(), newpath.display());
     }
     Cow::Owned(CString::new(newpath.into_os_string().into_string().unwrap()).unwrap())
-}
-
-extern {
-    pub fn legacy_syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64;
 }
 
 /// In this project, we consider everything that guest can reasonably do as "safe".
@@ -605,6 +609,71 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             }
             ret as i64
         }
+        abi::SYS_brk => {
+            if arg0 < original_brk {
+                // Cannot reduce beyond original_brk
+            } else if arg0 <= heap_end {
+                if arg0 > brk {
+                    libc::memset(brk as usize as _, 0, (arg0 - brk) as _);
+                }
+                brk = arg0;
+            } else {
+                let new_heap_end = std::cmp::max(heap_start, (arg0 + 4095) &! 4095);
+
+                // The heap needs to be expanded
+                let addr = libc::mmap(
+                    heap_end as _, (new_heap_end - heap_end) as _,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED,
+                    -1, 0
+                ) as isize as i64;
+
+                if addr == -1 {
+                    // We failed to expand the brk
+                } else {
+                    // Memory should be zeroed here as this is expected by glibc.
+                    libc::memset(brk as usize as _, 0, (heap_end - brk) as _);
+                    heap_end = new_heap_end;
+                    brk = arg0;
+                }
+            }
+            if crate::get_flags().strace {
+                eprintln!("brk({}) = {}", Pointer(arg0), Pointer(brk));
+            }
+            brk as i64
+        }
+        abi::SYS_munmap => {
+            let ret = return_errno(libc::munmap(arg0 as _, arg1 as _) as _);
+            if crate::get_flags().strace {
+                eprintln!("munmap({:#x}, {}) = {}", arg0, arg1, ret);
+            }
+            ret
+        }
+        // This is linux specific call, we will just return ENOSYS.
+        abi::SYS_mremap => {
+            if crate::get_flags().strace {
+                eprintln!("mremap({}, {}, {}, {}, {:#x}) = -ENOSYS", arg0, arg1, arg2, arg3, arg4);
+            }
+            -abi::ENOSYS as i64
+        }
+        abi::SYS_mmap => {
+            let prot = convert_mmap_prot_to_host(arg2 as _);
+            let flags = convert_mmap_flags_to_host(arg3 as _);
+            let arg4 = arg4 as _;
+            let ret = return_errno(libc::mmap(arg0 as _, arg1 as _, prot, flags, arg4, arg5 as _) as _);
+            if crate::get_flags().strace {
+                eprintln!("mmap({}, {}, {}, {}, {}, {}) = {:#x}", Pointer(arg0), arg1, arg2, arg3, arg4, arg5, ret);
+            }
+            ret
+        }
+        abi::SYS_mprotect => {
+            let prot = convert_mmap_prot_to_host(arg2 as _);
+            let ret = return_errno(libc::mprotect(arg0 as _, arg1 as _, prot) as _);
+            if crate::get_flags().strace {
+                eprintln!("mprotect({:#x}, {}, {}) = {:#x}", arg0, arg1, arg2, ret);
+            }
+            ret
+        }
         abi::SYS_open => {
             let pathname = CStr::from_ptr(arg0 as usize as _);
             let flags = convert_open_flags_to_host(arg1 as _);
@@ -645,7 +714,10 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             }
             ret
         }
-        _ => legacy_syscall(nr, arg0, arg1, arg2, arg3, arg4, arg5) as i64,
+        _ => {
+            eprintln!("illegal syscall {}({}, {})\n", nr, arg0, arg1);
+            -abi::ENOSYS as i64
+        }
     };
     ret as u64
 }

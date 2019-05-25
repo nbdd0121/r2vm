@@ -19,10 +19,10 @@ namespace state {
 // The program/data break of the address space. original_brk represents the initial brk from information gathered
 // in elf. Both values are set initially to original_brk by elf_loader, and original_brk should not be be changed.
 // A constraint original_brk <= brk must be satisified.
-extern reg_t original_brk;
-extern reg_t brk;
-extern reg_t heap_start;
-extern reg_t heap_end;
+extern "C" reg_t original_brk;
+extern "C" reg_t brk;
+extern "C" reg_t heap_start;
+extern "C" reg_t heap_end;
 
 struct flags_t {
 

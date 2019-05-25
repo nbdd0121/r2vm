@@ -13,7 +13,6 @@ OBJS = \
 	emu/elf_loader.o \
 	emu/bin_loader.o \
 	emu/mmu.o \
-	emu/syscall.o \
 	main/main.o \
 	main/signal.o \
 	riscv/decoder.o \
