@@ -14,14 +14,9 @@ OBJS = \
 	emu/bin_loader.o \
 	emu/mmu.o \
 	main/main.o \
-	main/signal.o \
 	riscv/decoder.o \
 	riscv/step.o \
-	softfp/float.o \
-	util/assert.o \
-	util/format.o \
-	x86/decoder.o \
-	x86/disassembler.o
+	softfp/float.o
 
 default: all
 

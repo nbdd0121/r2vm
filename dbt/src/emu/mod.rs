@@ -4,7 +4,7 @@ use crate::io::virtio::{Mmio, Block, Rng};
 
 mod abi;
 mod syscall;
-mod safe_memory;
+pub mod safe_memory;
 pub use syscall::syscall;
 
 // The global PLIC

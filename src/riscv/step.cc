@@ -1,7 +1,3 @@
-#include <iostream>
-
-#include "emu/mmu.h"
-#include "emu/state.h"
 #include "riscv/context.h"
 #include "riscv/instruction.h"
 #include "riscv/opcode.h"

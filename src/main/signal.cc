@@ -8,37 +8,7 @@
 #include "x86/decoder.h"
 #include "x86/opcode.h"
 
-extern "C" char memory_probe_start;
-extern "C" char memory_probe_end;
-
 namespace {
-
-void handle_fault(int sig, siginfo_t*, void* context) {
-    ASSERT(sig == SIGSEGV || sig == SIGBUS);
-
-    auto ucontext = reinterpret_cast<ucontext_t*>(context);
-
-    // Fault within the probe
-    uint64_t current_ip = ucontext->uc_mcontext.gregs[REG_RIP];
-    if (current_ip >= (uintptr_t)&memory_probe_start &&
-        current_ip < (uintptr_t)&memory_probe_end) {
-
-        // If we fault with in the probe, let the probe return instead.
-        // Pop out rip from the stack and set it.
-        ucontext->uc_mcontext.gregs[REG_RIP] = *(uintptr_t*)ucontext->uc_mcontext.gregs[REG_RSP];
-        ucontext->uc_mcontext.gregs[REG_RSP] += 8;
-
-        // Set rax to 1 to signal failure
-        ucontext->uc_mcontext.gregs[REG_RAX] = 1;
-        return;
-    }
-
-    sigset_t x;
-    sigemptyset(&x);
-    sigaddset(&x, sig);
-    sigprocmask(SIG_UNBLOCK, &x, nullptr);
-    throw Segv_exception {sig};
-}
 
 void handle_fpe(int sig, siginfo_t*, void* context) {
     ASSERT(sig == SIGFPE);
@@ -121,13 +91,6 @@ void handle_fpe(int sig, siginfo_t*, void* context) {
 
 void setup_fault_handler() {
     struct sigaction act;
-
-    memset (&act, 0, sizeof(act));
-    act.sa_sigaction = handle_fault;
-    act.sa_flags = SA_SIGINFO;
-    sigaction(SIGSEGV, &act, NULL);
-    sigaction(SIGBUS, &act, NULL);
-
     memset (&act, 0, sizeof(act));
     act.sa_sigaction = handle_fpe;
     act.sa_flags = SA_SIGINFO;

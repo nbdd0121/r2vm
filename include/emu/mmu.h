@@ -8,7 +8,6 @@
 
 #include "config.h"
 #include "emu/typedef.h"
-#include "util/assert.h"
 
 extern "C" uint32_t phys_read(uint64_t, uint32_t);
 extern "C" void phys_write(uint64_t, uint64_t, uint32_t);

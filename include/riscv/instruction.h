@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <type_traits>
 
-#include "util/assert.h"
 #include "util/bitfield.h"
 #include "riscv/typedef.h"
 
@@ -74,7 +73,6 @@ public:
     void rm(int rm) noexcept { immediate_ = Rm_field::pack(immediate_, rm); }
 
     void length(int len) {
-        ASSERT(len == 2 || len == 4);
         rs2_ = Length_field::pack(rs2_, len == 4);
     }
 

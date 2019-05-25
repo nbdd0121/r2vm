@@ -1,9 +1,5 @@
-#include "emu/mmu.h"
-#include "emu/state.h"
 #include "riscv/opcode.h"
 #include "riscv/instruction.h"
-#include "util/assert.h"
-#include "util/format.h"
 
 using namespace riscv;
 

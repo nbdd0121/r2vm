@@ -245,7 +245,7 @@ pub extern fn rs_main(argc: i32, argv: *const *const i8) {
     std::mem::forget(csysroot);
 
     // Top priority: set up page fault handlers so safe_memory features will work.
-    unsafe { setup_fault_handler() };
+    emu::safe_memory::init();
     pretty_env_logger::init();
 
     // These should only be initialised for full-system emulation
