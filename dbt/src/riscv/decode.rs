@@ -672,6 +672,28 @@ pub fn decode(bits: u32) -> Op {
             let function7 = funct7(bits);
             match function7 {
                 /* F-extension and D-extension */
+                0b0010000 => match function {
+                    0b000 => Op::FsgnjS { frd: rd, frs1: rs1, frs2: rs2 },
+                    0b001 => Op::FsgnjnS { frd: rd, frs1: rs1, frs2: rs2 },
+                    0b010 => Op::FsgnjxS { frd: rd, frs1: rs1, frs2: rs2 },
+                    _ => Op::Illegal,
+                }
+                0b0010001 => match function {
+                    0b000 => Op::FsgnjD { frd: rd, frs1: rs1, frs2: rs2 },
+                    0b001 => Op::FsgnjnD { frd: rd, frs1: rs1, frs2: rs2 },
+                    0b010 => Op::FsgnjxD { frd: rd, frs1: rs1, frs2: rs2 },
+                    _ => Op::Illegal,
+                }
+                0b0010100 => match function {
+                    0b000 => Op::FminS { frd: rd, frs1: rs1, frs2: rs2 },
+                    0b001 => Op::FmaxS { frd: rd, frs1: rs1, frs2: rs2 },
+                    _ => Op::Illegal,
+                }
+                0b0010101 => match function {
+                    0b000 => Op::FminD { frd: rd, frs1: rs1, frs2: rs2 },
+                    0b001 => Op::FmaxD { frd: rd, frs1: rs1, frs2: rs2 },
+                    _ => Op::Illegal,
+                }
                 0b1110000 => match (rs2, function) {
                     (0b00000, 0b000) => Op::FmvXW { rd, frs1: rs1 },
                     (0b00000, 0b001) => Op::FclassS { rd, frs1: rs1 },

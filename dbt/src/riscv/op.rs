@@ -149,6 +149,11 @@ pub enum Op {
     /* Base Opcode = STORE-FP */
     Fsw { rs1: u8, frs2: u8, imm: i32 },
     /* Base Opcode = OP-FP */
+    FsgnjS { frd: u8, frs1: u8, frs2: u8 },
+    FsgnjnS { frd: u8, frs1: u8, frs2: u8 },
+    FsgnjxS { frd: u8, frs1: u8, frs2: u8 },
+    FminS { frd: u8, frs1: u8, frs2: u8 },
+    FmaxS { frd: u8, frs1: u8, frs2: u8 },
     FmvXW { rd: u8, frs1: u8 },
     FclassS { rd: u8, frs1: u8 },
     FeqS { rd: u8, frs1: u8, frs2: u8 },
@@ -162,6 +167,11 @@ pub enum Op {
     /* Base Opcode = STORE-FP */
     Fsd { rs1: u8, frs2: u8, imm: i32 },
     /* Base Opcode = OP-FP */
+    FsgnjD { frd: u8, frs1: u8, frs2: u8 },
+    FsgnjnD { frd: u8, frs1: u8, frs2: u8 },
+    FsgnjxD { frd: u8, frs1: u8, frs2: u8 },
+    FminD { frd: u8, frs1: u8, frs2: u8 },
+    FmaxD { frd: u8, frs1: u8, frs2: u8 },
     FmvXD { rd: u8, frs1: u8 },
     FclassD { rd: u8, frs1: u8 },
     FeqD { rd: u8, frs1: u8, frs2: u8 },

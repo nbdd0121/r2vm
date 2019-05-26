@@ -111,6 +111,11 @@ pub fn mnemonic(op: &Op) -> &'static str {
         Op::AmomaxuD {..} => "amomaxu.d",
         Op::Flw {..} => "flw",
         Op::Fsw {..} => "fsw",
+        Op::FsgnjS {..} => "fsgnj.s",
+        Op::FsgnjnS {..} => "fsgnjn.s",
+        Op::FsgnjxS {..} => "fsgnjx.s",
+        Op::FminS {..} => "fmin.s",
+        Op::FmaxS {..} => "fmax.s",
         Op::FmvXW {..} => "fmv.x.w",
         Op::FclassS {..} => "fclass.s",
         Op::FeqS {..} => "feq.s",
@@ -119,6 +124,11 @@ pub fn mnemonic(op: &Op) -> &'static str {
         Op::FmvWX {..} => "fmv.w.x",
         Op::Fld {..} => "fld",
         Op::Fsd {..} => "fsd",
+        Op::FsgnjD {..} => "fsgnj.d",
+        Op::FsgnjnD {..} => "fsgnjn.d",
+        Op::FsgnjxD {..} => "fsgnjx.d",
+        Op::FminD {..} => "fmin.d",
+        Op::FmaxD {..} => "fmax.d",
         Op::FmvXD {..} => "fmv.x.d",
         Op::FclassD {..} => "fclass.d",
         Op::FeqD {..} => "feq.d",
@@ -286,6 +296,17 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::Fsw { rs1, frs2, imm } |
         Op::Fsd { rs1, frs2, imm } =>
             print!("f{}, {}({})", frs2, imm, register_name(rs1)),
+        Op::FsgnjS { frd, frs1, frs2 } |
+        Op::FsgnjnS { frd, frs1, frs2 } |
+        Op::FsgnjxS { frd, frs1, frs2 } |
+        Op::FminS { frd, frs1, frs2 } |
+        Op::FmaxS { frd, frs1, frs2 } |
+        Op::FsgnjD { frd, frs1, frs2 } |
+        Op::FsgnjnD { frd, frs1, frs2 } |
+        Op::FsgnjxD { frd, frs1, frs2 } |
+        Op::FminD { frd, frs1, frs2 } |
+        Op::FmaxD { frd, frs1, frs2 } =>
+            print!("f{}, f{}, f{}", frd, frs1, frs2),
         Op::FmvXW { rd, frs1 } |
         Op::FclassS { rd, frs1 } |
         Op::FmvXD { rd, frs1 } |

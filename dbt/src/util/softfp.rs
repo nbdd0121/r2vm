@@ -96,6 +96,19 @@ impl<Desc: FpDesc> Fp<Desc> {
         Fp(value)
     }
 
+    // #region Special constants values
+    //
+
+    pub fn quiet_nan() -> Self {
+        let mut value = Self(Desc::Holder::zero());
+        value.set_biased_exponent(Self::INFINITY_BIASED_EXPONENT);
+        value.set_trailing_significand(Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH - 1));
+        value
+    }
+
+    //
+    // #endregion
+
     // #region Component accessors
     //
 
@@ -173,6 +186,38 @@ impl<Desc: FpDesc> Fp<Desc> {
         let significand = trailing_significand | (Desc::Holder::one() << Desc::SIGNIFICAND_WIDTH);
         (exponent, significand << 2)
     }
+
+    // #region sign bit operations
+    // IEEE 754-2008 5.5.1 Quiet-computational operations > Sign bit operations
+    //
+
+    pub fn abs(mut self) -> Self {
+        self.set_sign(false);
+        self
+    }
+
+    pub fn negate(mut self) -> Self {
+        self.set_sign(!self.sign());
+        self
+    }
+
+    pub fn copy_sign(mut self, another: Self) -> Self {
+        self.set_sign(another.sign());
+        self
+    }
+
+    pub fn copy_sign_negated(mut self, another: Self) -> Self {
+        self.set_sign(!another.sign());
+        self
+    }
+
+    pub fn copy_sign_xored(mut self, another: Self) -> Self {
+        self.set_sign(self.sign() ^ another.sign());
+        self
+    }
+
+    //
+    // #endregion
 
     // #region Classification
     //
@@ -254,6 +299,39 @@ impl<Desc: FpDesc> Fp<Desc> {
     // #region Comparison
     //
 
+    /* IEEE 754-2008 5.3.1 Homogeneous general-computational operations > General operations */
+    pub fn min_max(a: Self, b: Self) -> (Self, Self) {
+        if a.is_nan() || b.is_nan() {
+            if a.is_signaling() || b.is_signaling() {
+                set_exception_flag(EX_INVALID_OPERATION);
+                return (Self::quiet_nan(), Self::quiet_nan());
+            }
+
+            if a.is_nan() {
+                if b.is_nan() {
+                    return (Self::quiet_nan(), Self::quiet_nan());
+                }
+                return (b, b);
+            }
+
+            return (a, a);
+        }
+
+        if Self::total_order(a, b) == Ordering::Less {
+            return (a, b);
+        } else {
+            return (b, a);
+        }
+    }
+
+    pub fn min(a: Self, b: Self) -> Self {
+        Self::min_max(a, b).0
+    }
+
+    pub fn max(a: Self, b: Self) -> Self {
+        Self::min_max(a, b).1
+    }
+
     /* IEEE 754-2008 5.6.1 Signaling-computational operations > Comparisions */
     pub fn compare_quiet(a: Self, b: Self) -> Option<Ordering> {
         if a.is_nan() || b.is_nan() {
@@ -307,6 +385,13 @@ impl<Desc: FpDesc> std::cmp::PartialEq for Fp<Desc> {
 impl<Desc: FpDesc> std::cmp::PartialOrd for Fp<Desc> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Fp::compare_signaling(*self, *other)
+    }
+}
+
+impl<Desc: FpDesc> ops::Neg for Fp<Desc> {
+    type Output = Self;
+    fn neg(self) -> Self {
+        self.negate()
     }
 }
 

@@ -587,6 +587,19 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             if vaddr & 3 != 0 { trap!(5, vaddr) }
             write_vaddr(ctx, vaddr, read_fs!(frs2).0)?
         }
+        Op::FsgnjS { frd, frs1, frs2 } => write_fs!(frd, read_fs!(frs1).copy_sign(read_fs!(frs2))),
+        Op::FsgnjnS { frd, frs1, frs2 } => write_fs!(frd, read_fs!(frs1).copy_sign_negated(read_fs!(frs2))),
+        Op::FsgnjxS { frd, frs1, frs2 } => write_fs!(frd, read_fs!(frs1).copy_sign_xored(read_fs!(frs2))),
+        Op::FminS { frd, frs1, frs2 } => {
+            clear_flags!();
+            write_fs!(frd, F32::min(read_fs!(frs1), read_fs!(frs2)));
+            update_flags!();
+        }
+        Op::FmaxS { frd, frs1, frs2 } => {
+            clear_flags!();
+            write_fs!(frd, F32::max(read_fs!(frs1), read_fs!(frs2)));
+            update_flags!();
+        }
         Op::FmvXW { rd, frs1 } => {
             write_32!(rd, read_fs!(frs1).0);
         }
@@ -619,6 +632,19 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 7 != 0 { trap!(5, vaddr) }
             write_vaddr(ctx, vaddr, read_fd!(frs2).0)?
+        }
+        Op::FsgnjD { frd, frs1, frs2 } => write_fd!(frd, read_fd!(frs1).copy_sign(read_fd!(frs2))),
+        Op::FsgnjnD { frd, frs1, frs2 } => write_fd!(frd, read_fd!(frs1).copy_sign_negated(read_fd!(frs2))),
+        Op::FsgnjxD { frd, frs1, frs2 } => write_fd!(frd, read_fd!(frs1).copy_sign_xored(read_fd!(frs2))),
+        Op::FminD { frd, frs1, frs2 } => {
+            clear_flags!();
+            write_fd!(frd, F64::min(read_fd!(frs1), read_fd!(frs2)));
+            update_flags!();
+        }
+        Op::FmaxD { frd, frs1, frs2 } => {
+            clear_flags!();
+            write_fd!(frd, F64::max(read_fd!(frs1), read_fd!(frs2)));
+            update_flags!();
         }
         Op::FmvXD { rd, frs1 } => {
             write_reg!(rd, read_fd!(frs1).0);
