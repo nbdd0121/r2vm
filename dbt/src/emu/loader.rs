@@ -215,8 +215,6 @@ impl Loader {
     }
 
     unsafe fn load_elf(&self, sp: &mut ureg) -> ureg {
-        self.validate_elf().unwrap();
-
         let mut load_addr = 0;
         let mut brk = 0;
         let entry = self.load_image(&mut load_addr, &mut brk);

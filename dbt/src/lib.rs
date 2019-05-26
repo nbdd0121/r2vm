@@ -134,6 +134,10 @@ extern "C" fn interrupt() {
 
 #[no_mangle]
 pub extern "C" fn main(argc: i32, argv: *const *const i8) {
+    // Top priority: set up page fault handlers so safe_memory features will work.
+    emu::safe_memory::init();
+    pretty_env_logger::init();
+
     // Until we removed most out reliance on C++, we still build Rust code as a library -
     // so we need to parse args ourselves.
     let mut args_vec = Vec::with_capacity(argc as usize);
@@ -234,9 +238,12 @@ pub extern "C" fn main(argc: i32, argv: *const *const i8) {
     std::mem::forget(cprogram_name);
     unsafe { FLAGS.sysroot = Some(sysroot) };
 
-    // Top priority: set up page fault handlers so safe_memory features will work.
-    emu::safe_memory::init();
-    pretty_env_logger::init();
+    let loader = emu::loader::Loader::new(program_name.as_ref()).unwrap();
+    // Simple guess: If not elf, then we assume it is vmlinux
+    match loader.validate_elf() {
+        Ok(_) => (),
+        Err(_) => unsafe { FLAGS.user_only = false },
+    }
 
     // These should only be initialised for full-system emulation
     if !get_flags().user_only {
@@ -246,9 +253,11 @@ pub extern "C" fn main(argc: i32, argv: *const *const i8) {
 
     // x0 must always be 0
     unsafe { CTX.registers[0] = 0 };
-
-    let loader = emu::loader::Loader::new(program_name.as_ref()).unwrap();
     unsafe { emu::loader::load(&loader, &mut CTX, &mut std::iter::once(program_name).chain(args)) };
 
-    unsafe { riscv::interp::rust_emu_start(&mut CTX) };
+    loop {
+        unsafe {
+            riscv::interp::run_block_ex(&mut CTX)
+        }
+    }
 }

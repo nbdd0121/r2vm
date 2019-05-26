@@ -17,6 +17,11 @@ pub type ireg = i64;
 // The global PLIC
 pub static mut PLIC: Option<Plic> = None;
 
+/// This governs the boundary between RAM and I/O memory. If an address is strictly above this
+/// location, then it is considered I/O. For user-space applications, we consider all memory
+/// locations as RAM, so the default value here is `ureg::max_value()`.
+static mut IO_BOUNDARY: ureg = ureg::max_value();
+
 static mut VIRTIO_BLK: Option<Mmio> = None;
 static mut VIRTIO_RNG: Option<Mmio> = None;
 
@@ -31,6 +36,8 @@ pub fn init() {
         VIRTIO_BLK = Some(Mmio::new(Box::new(Block::new(Box::new(file)))));
         
         VIRTIO_RNG = Some(Mmio::new(Box::new(Rng::new_seeded())));
+
+        IO_BOUNDARY = 0x7fffffff;
     }
 }
 
@@ -59,8 +66,8 @@ pub unsafe fn write_memory<T: Copy>(addr: u64, value: T) {
 }
 
 #[no_mangle]
-pub extern "C" fn phys_read(addr: u64, size: u32) -> u64 {
-    if addr >= 0x80000000 {
+pub extern "C" fn phys_read(addr: ureg, size: u32) -> ureg {
+    if addr >= unsafe { IO_BOUNDARY } {
         let addr = (addr - 0x80000000) as usize;
         unsafe {if addr >= 0x100000 {
             PLIC.as_mut().unwrap().read(addr - 0x100000, size)
@@ -83,8 +90,8 @@ pub extern "C" fn phys_read(addr: u64, size: u32) -> u64 {
 }
 
 #[no_mangle]
-pub extern "C" fn phys_write(addr: u64, value: u64, size: u32) {
-    if addr >= 0x80000000 {
+pub extern "C" fn phys_write(addr: ureg, value: ureg, size: u32) {
+    if addr >= unsafe { IO_BOUNDARY } {
         let addr = (addr - 0x80000000) as usize;
         unsafe {if addr >= 0x100000 {
             PLIC.as_mut().unwrap().write(addr - 0x100000, value, size)

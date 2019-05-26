@@ -510,19 +510,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         /* SYSTEM */
         Op::Ecall =>
             if ctx.prv == 0 {
-                // if (emu::state::user_only) {
-                //     context->registers[10] = emu::syscall(
-                //         static_cast<abi::Syscall_number>(context->registers[17]),
-                //         context->registers[10],
-                //         context->registers[11],
-                //         context->registers[12],
-                //         context->registers[13],
-                //         context->registers[14],
-                //         context->registers[15]
-                //     );
-                // } else {
-                    trap!(8, 0)
-                // }
+                trap!(8, 0)
             } else {
                 ctx.registers[10] = sbi_call(
                     ctx,
@@ -930,61 +918,72 @@ fn run_block(ctx: &mut Context) -> Result<(), ()> {
     Ok(())
 }
 
-#[no_mangle]
-pub extern "C" fn rust_emu_start(ctx: &mut Context) {
+pub fn run_block_ex(ctx: &mut Context) {
     loop {
-        loop {
-            match run_block(ctx) {
-                Ok(()) => (),
-                Err(()) => break,
-            }
-            if ctx.instret >= ctx.timecmp {
-                ctx.sip |= 32;
-                ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
-            }
-            if ctx.pending != 0 {
-                // The highest set bit of ctx.pending
-                let pending = 63 - ctx.pending.leading_zeros() as u64;
-                ctx.sip &= !(1 << pending);
-                // The highest bit of cause indicates this is an interrupt
-                ctx.scause = (1 << 63) | pending;
-                ctx.stval = 0;
-                break;
-            }
-        };
-
-        // if user_only {
-        //     eprintln!("unhandled trap {}", ex);
-        //     eprintln!("pc  = {:16x}  ra  = {:16x}", ctx.pc, ctx.registers[1]);
-        //     for i in (2..32).step_by(2) {
-        //         eprintln!(
-        //             "{:-3} = {:16x}  {:-3} = {:16x}",
-        //             super::disasm::REG_NAMES[i], ctx.registers[i],
-        //             super::disasm::REG_NAMES[i + 1], ctx.registers[i + 1]
-        //         );
-        //     }
-        //     return;
-        // }
-
-        ctx.sepc = ctx.pc;
-
-        // Clear or set SPP bit
-        if ctx.prv != 0 {
-            ctx.sstatus |= 0x100;
-        } else {
-            ctx.sstatus &=! 0x100;
+        match run_block(ctx) {
+            Ok(()) => (),
+            Err(()) => break,
         }
-        // Clear of set SPIE bit
-        if (ctx.sstatus & 0x2) != 0 {
-            ctx.sstatus |= 0x20;
-        } else {
-            ctx.sstatus &=! 0x20;
+        if ctx.instret >= ctx.timecmp {
+            ctx.sip |= 32;
+            ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
         }
-        // Clear SIE
-        ctx.sstatus &= !0x2;
-        ctx.pending = 0;
-        // Switch to S-mode
-        ctx.prv = 1;
-        ctx.pc = ctx.stvec;
+        if ctx.pending != 0 {
+            // The highest set bit of ctx.pending
+            let pending = 63 - ctx.pending.leading_zeros() as u64;
+            ctx.sip &= !(1 << pending);
+            // The highest bit of cause indicates this is an interrupt
+            ctx.scause = (1 << 63) | pending;
+            ctx.stval = 0;
+            break;
+        }
+        return;
+    };
+
+    if crate::get_flags().user_only {
+        if ctx.scause == 8 {
+            ctx.registers[10] = unsafe { crate::emu::syscall(
+                ctx.registers[17],
+                ctx.registers[10],
+                ctx.registers[11],
+                ctx.registers[12],
+                ctx.registers[13],
+                ctx.registers[14],
+                ctx.registers[15],
+            ) };
+            ctx.pc += 4;
+            return;
+        }
+        eprintln!("unhandled trap {}", ctx.scause);
+        eprintln!("pc  = {:16x}  ra  = {:16x}", ctx.pc, ctx.registers[1]);
+        for i in (2..32).step_by(2) {
+            eprintln!(
+                "{:-3} = {:16x}  {:-3} = {:16x}",
+                super::disasm::REG_NAMES[i], ctx.registers[i],
+                super::disasm::REG_NAMES[i + 1], ctx.registers[i + 1]
+            );
+        }
+        std::process::exit(1);
     }
+
+    ctx.sepc = ctx.pc;
+
+    // Clear or set SPP bit
+    if ctx.prv != 0 {
+        ctx.sstatus |= 0x100;
+    } else {
+        ctx.sstatus &=! 0x100;
+    }
+    // Clear of set SPIE bit
+    if (ctx.sstatus & 0x2) != 0 {
+        ctx.sstatus |= 0x20;
+    } else {
+        ctx.sstatus &=! 0x20;
+    }
+    // Clear SIE
+    ctx.sstatus &= !0x2;
+    ctx.pending = 0;
+    // Switch to S-mode
+    ctx.prv = 1;
+    ctx.pc = ctx.stvec;
 }
