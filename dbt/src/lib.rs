@@ -99,8 +99,7 @@ pub extern fn get_flags() -> &'static Flags {
 }
 
 extern {
-    fn setup_fault_handler();
-    fn setup_mem(ctx: &mut riscv::interp::Context, program_name: *const i8, argc: i32, argv: *const *const i8);
+    fn setup_mem(ctx: &mut riscv::interp::Context, loader: &emu::loader::Loader, argc: i32, argv: *const *const i8);
 }
 
 static mut CTX: riscv::interp::Context = riscv::interp::Context {
@@ -259,6 +258,9 @@ pub extern fn rs_main(argc: i32, argv: *const *const i8) {
 
     // x0 must always be 0
     unsafe { CTX.registers[0] = 0 };
-    unsafe { setup_mem(&mut CTX, FLAGS.exec_path, 0, std::ptr::null()) };
+
+    let loader = emu::loader::Loader::new(program_name.as_ref()).unwrap();
+
+    unsafe { setup_mem(&mut CTX, &loader, 0, std::ptr::null()) };
     unsafe { riscv::interp::rust_emu_start(&mut CTX) };
 }

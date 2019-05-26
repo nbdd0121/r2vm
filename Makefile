@@ -10,8 +10,6 @@ CXX_RELEASE_FLAGS = -g -fPIE -std=c++17 -fconcepts -Wall -Wextra -Iinclude/ -O2 
 RUST_FILES = $(shell find dbt/src -type f -name '*')
 
 OBJS = \
-	emu/elf_loader.o \
-	emu/bin_loader.o \
 	emu/mmu.o \
 	main/main.o \
 	riscv/decoder.o \

@@ -1,15 +1,22 @@
-use super::abi;
-
 use std::fmt::{self, Write};
 use std::ffi::{CStr, CString};
 use std::borrow::Cow;
 use std::path::Path;
 
-extern {
-    static mut original_brk: u64;
-    static mut brk: u64;
-    static mut heap_start: u64;
-    static mut heap_end: u64;
+use super::abi;
+use super::ureg;
+
+static mut ORIGINAL_BRK: u64 = 0;
+static mut BRK         : u64 = 0;
+static mut HEAP_START  : u64 = 0;
+static mut HEAP_END    : u64 = 0;
+
+/// Initialise brk when program is being loaded. Should not be called after execution has started.
+pub unsafe fn init_brk(brk: ureg) {
+    ORIGINAL_BRK = brk;
+    BRK          = brk;
+    HEAP_START   = brk;
+    HEAP_END     = brk;
 }
 
 struct Escape<'a>(&'a [u8]);
@@ -305,27 +312,33 @@ fn is_proc_self(path: &CStr) -> Option<&Path> {
     }
 }
 
+pub fn translate_path(path: &Path) -> Cow<Path> {
+    // We assume relative paths cannot point to sysroot
+    if path.is_relative() { return Cow::Borrowed(path) }
+    // TODO: Replace this once we get proper type for sysroot
+    let sysroot = unsafe{Path::new(CStr::from_ptr(crate::get_flags().sysroot).to_str().unwrap())};
+    let newpath = sysroot.join(path.strip_prefix("/").unwrap());
+    if !newpath.exists() { return Cow::Borrowed(path) }
+    if crate::get_flags().strace {
+        eprintln!("Translate {} to {}", path.display(), newpath.display());
+    }
+    Cow::Owned(newpath)
+}
+
 /// Convert a guest path to actual path. When guest is accessing some files in sysroot, this
 /// step is necessary.
-unsafe fn translate_path(pathname: &CStr) -> Cow<CStr> {
+fn translate_path_cstr(pathname: &CStr) -> Cow<CStr> {
     let path = match pathname.to_str() {
         // Just return as is if the path cannot be converted to str
         Err(_) => return Cow::Borrowed(pathname),
         Ok(v) => Path::new(v),
     };
-    // We assume relative paths cannot point to sysroot
-    if path.is_relative() { return Cow::Borrowed(pathname) }
-    // TODO: Replace this once we get proper type for sysroot
-    let sysroot = Path::new(CStr::from_ptr(crate::get_flags().sysroot).to_str().unwrap());
-    let newpath = sysroot.join(path.strip_prefix("/").unwrap());
-    if !newpath.exists() { return Cow::Borrowed(pathname) }
-    if crate::get_flags().strace {
-        eprintln!("Translate {} to {}", path.display(), newpath.display());
+    match translate_path(path) {
+        Cow::Borrowed(_) => Cow::Borrowed(pathname),
+        Cow::Owned(v) => Cow::Owned(CString::new(v.into_os_string().into_string().unwrap()).unwrap()),
     }
-    Cow::Owned(CString::new(newpath.into_os_string().into_string().unwrap()).unwrap())
 }
 
-/// In this project, we consider everything that guest can reasonably do as "safe".
 pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
     let ret: i64 = match nr as i64 {
         abi::SYS_getcwd => {
@@ -349,7 +362,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let arg0 = arg0 as abi::c_int;
             let dirfd: i32 = if arg0 == abi::AT_FDCWD { libc::AT_FDCWD } else { arg0 as _ };
             let pathname = CStr::from_ptr(arg1 as usize as _);
-            let ret = return_errno(libc::unlinkat(dirfd, translate_path(pathname).as_ptr(), arg2 as _) as _);
+            let ret = return_errno(libc::unlinkat(dirfd, translate_path_cstr(pathname).as_ptr(), arg2 as _) as _);
             if crate::get_flags().strace {
                 eprintln!(
                     "unlinkat({}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, ret
@@ -363,7 +376,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let pathname = CStr::from_ptr(arg1 as usize as _);
             let ret = return_errno(libc::faccessat(
                 dirfd,
-                translate_path(pathname).as_ptr(),
+                translate_path_cstr(pathname).as_ptr(),
                 arg2 as _,
                 arg3 as _
             ) as _);
@@ -385,7 +398,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 Some(v) if v == std::ffi::OsStr::new("exe") => {
                     libc::openat(dirfd, crate::get_flags().exec_path, flags, arg3) as _
                 }
-                _ => return_errno(libc::openat(dirfd, translate_path(pathname).as_ptr(), flags, arg3) as _),
+                _ => return_errno(libc::openat(dirfd, translate_path_cstr(pathname).as_ptr(), flags, arg3) as _),
             };
             if crate::get_flags().strace {
                 eprintln!(
@@ -471,7 +484,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                         return_errno(-1)
                     }
                 }
-                _ => return_errno(libc::readlinkat(dirfd, translate_path(pathname).as_ptr(), buffer, arg3 as _) as _)
+                _ => return_errno(libc::readlinkat(dirfd, translate_path_cstr(pathname).as_ptr(), buffer, arg3 as _) as _)
             };
             if crate::get_flags().strace {
                 if ret > 0 {
@@ -495,7 +508,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let mut host_stat = std::mem::uninitialized();
             let ret = return_errno(libc::fstatat(
                 dirfd,
-                translate_path(pathname).as_ptr(),
+                translate_path_cstr(pathname).as_ptr(),
                 &mut host_stat,
                 arg3 as _
             ) as _);
@@ -610,19 +623,19 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             ret as i64
         }
         abi::SYS_brk => {
-            if arg0 < original_brk {
+            if arg0 < ORIGINAL_BRK {
                 // Cannot reduce beyond original_brk
-            } else if arg0 <= heap_end {
-                if arg0 > brk {
-                    libc::memset(brk as usize as _, 0, (arg0 - brk) as _);
+            } else if arg0 <= HEAP_END {
+                if arg0 > BRK {
+                    libc::memset(BRK as usize as _, 0, (arg0 - BRK) as _);
                 }
-                brk = arg0;
+                BRK = arg0;
             } else {
-                let new_heap_end = std::cmp::max(heap_start, (arg0 + 4095) &! 4095);
+                let new_heap_end = std::cmp::max(HEAP_START, (arg0 + 4095) &! 4095);
 
                 // The heap needs to be expanded
                 let addr = libc::mmap(
-                    heap_end as _, (new_heap_end - heap_end) as _,
+                    HEAP_END as _, (new_heap_end - HEAP_END) as _,
                     libc::PROT_READ | libc::PROT_WRITE,
                     libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED,
                     -1, 0
@@ -632,15 +645,15 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                     // We failed to expand the brk
                 } else {
                     // Memory should be zeroed here as this is expected by glibc.
-                    libc::memset(brk as usize as _, 0, (heap_end - brk) as _);
-                    heap_end = new_heap_end;
-                    brk = arg0;
+                    libc::memset(BRK as usize as _, 0, (HEAP_END - BRK) as _);
+                    HEAP_END = new_heap_end;
+                    BRK = arg0;
                 }
             }
             if crate::get_flags().strace {
-                eprintln!("brk({}) = {}", Pointer(arg0), Pointer(brk));
+                eprintln!("brk({}) = {}", Pointer(arg0), Pointer(BRK));
             }
-            brk as i64
+            BRK as i64
         }
         abi::SYS_munmap => {
             let ret = return_errno(libc::munmap(arg0 as _, arg1 as _) as _);
@@ -677,7 +690,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         abi::SYS_open => {
             let pathname = CStr::from_ptr(arg0 as usize as _);
             let flags = convert_open_flags_to_host(arg1 as _);
-            let ret = return_errno(libc::open(translate_path(pathname).as_ptr(), flags, arg2 as libc::mode_t) as _);
+            let ret = return_errno(libc::open(translate_path_cstr(pathname).as_ptr(), flags, arg2 as libc::mode_t) as _);
             if crate::get_flags().strace {
                 eprintln!("open({}, {}, {}) = {}", Escape(pathname.to_bytes()), arg1, arg2, ret);
             }
@@ -685,7 +698,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         }
         abi::SYS_unlink => {
             let pathname = CStr::from_ptr(arg0 as usize as _);
-            let ret = return_errno(libc::unlink(translate_path(pathname).as_ptr()) as _);
+            let ret = return_errno(libc::unlink(translate_path_cstr(pathname).as_ptr()) as _);
             if crate::get_flags().strace {
                 eprintln!("unlink({}) = {}", Escape(pathname.to_bytes()), ret);
             }
@@ -694,7 +707,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         abi::SYS_stat => {
             let pathname = CStr::from_ptr(arg0 as usize as _);
             let mut host_stat = std::mem::uninitialized();
-            let ret = return_errno(libc::stat(translate_path(pathname).as_ptr(), &mut host_stat) as _);
+            let ret = return_errno(libc::stat(translate_path_cstr(pathname).as_ptr(), &mut host_stat) as _);
 
             // When success, convert stat format to guest format.
             if ret == 0 {

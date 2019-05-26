@@ -4,8 +4,15 @@ use crate::io::virtio::{Mmio, Block, Rng};
 
 mod abi;
 mod syscall;
+pub mod loader;
 pub mod safe_memory;
 pub use syscall::syscall;
+
+// Type definition of guest sizes
+#[allow(non_camel_case_types)]
+pub type ureg = u64;
+#[allow(non_camel_case_types)]
+pub type ireg = i64;
 
 // The global PLIC
 pub static mut PLIC: Option<Plic> = None;

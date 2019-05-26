@@ -68,10 +68,10 @@ extern "C" flags_t& get_flags();
 }
 
 // Load elf, and setup auxillary vectors.
-reg_t load_elf(const char *filename, reg_t& sp);
+extern "C" reg_t load_elf(void* loader, reg_t& sp);
 
 // Load a binary to specified location
-reg_t load_bin(const char *filename, reg_t location);
+extern "C" reg_t load_bin(void* loader, reg_t location);
 
 }
 

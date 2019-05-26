@@ -17,7 +17,7 @@ extern "C" {
 
 extern "C" void rs_main(int argc, const char **argv);
 
-extern "C" void setup_mem(riscv::Context& context, const char *program_name, int argc, const char **argv) {
+extern "C" void setup_mem(riscv::Context& context, void* loader, int argc, const char **argv) {
     if (emu::state::get_flags().user_only) {
         // Set sp to be the highest possible address.
         emu::reg_t sp = 0x7fff0000;
@@ -71,7 +71,7 @@ extern "C" void setup_mem(riscv::Context& context, const char *program_name, int
         push(AT_NULL);
 
         // Initialize context, and set up ELF-specific auxillary vectors.
-        context.pc = emu::load_elf(program_name, sp);
+        context.pc = emu::load_elf(loader, sp);
 
         push(getuid());
         push(AT_UID);
@@ -111,8 +111,8 @@ extern "C" void setup_mem(riscv::Context& context, const char *program_name, int
         emu::guest_mmap_nofail(
             0x200000, 0x40000000 - 0x200000,
             PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
-        emu::reg_t size = emu::load_bin(program_name, 0x200000);
-        emu::load_bin("dt", 0x200000 + size);
+        emu::reg_t size = emu::load_bin(loader, 0x200000);
+        // emu::load_bin("dt", 0x200000 + size);
 
         // a0 is the current hartid
         context.registers[10] = 0;
