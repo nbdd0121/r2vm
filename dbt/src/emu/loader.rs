@@ -2,6 +2,7 @@ use std::path::Path;
 use std::fs::File;
 use std::os::unix::io::{IntoRawFd, AsRawFd, FromRawFd};
 use std::ffi::CStr;
+use rand::RngCore;
 use super::abi;
 use super::ureg;
 
@@ -269,13 +270,118 @@ impl Loader {
     }
 }
 
-#[no_mangle]
-unsafe extern "C" fn load_elf(file: &Loader, sp: &mut ureg) -> ureg {
-    file.load_elf(sp)
-}
+pub unsafe fn load(file: &Loader, ctx: &mut crate::riscv::interp::Context, args: &mut dyn Iterator<Item=String>) {
+    if crate::get_flags().user_only {
+        // Set sp to be the highest possible address.
+        let mut sp: ureg = 0x7fff0000;
+        let map = libc::mmap(
+            (sp - 0x800000) as usize as _,
+            0x800000,
+            libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED, -1, 0
+        );
+        if map == libc::MAP_FAILED {
+            panic!("mmap failed while loading");
+        }
 
-#[no_mangle]
-unsafe extern "C" fn load_bin(file: &Loader, loc: ureg) -> ureg {
-    file.load_bin(loc);
-    file.file_size
+        let sp_alloc = |sp: &mut ureg, size: usize| {
+            *sp -= size as ureg;
+            std::slice::from_raw_parts_mut(*sp as usize as _, size)
+        };
+
+        // This contains (guest) pointers to all argument strings annd environment variables.
+        let mut env_pointers = Vec::new();
+        let mut arg_pointers = Vec::new();
+
+        // Copy all environment variables into guest user space.
+        for (var_k, var_v) in std::env::vars() {
+            sp_alloc(&mut sp, 1)[0] = 0;
+            sp_alloc(&mut sp, var_v.len()).copy_from_slice(var_v.as_bytes());
+            sp_alloc(&mut sp, 1)[0] = '=' as u8;
+            sp_alloc(&mut sp, var_k.len()).copy_from_slice(var_k.as_bytes());
+            env_pointers.push(sp);
+        }
+
+        // Copy all arguments into guest user space.
+        for arg in args {
+            sp_alloc(&mut sp, 1)[0] = 0;
+            sp_alloc(&mut sp, arg.len()).copy_from_slice(arg.as_bytes());
+            arg_pointers.push(sp);
+        }
+
+        // Align the stack to 8-byte boundary.
+        sp &= !7;
+
+        let push = |sp: &mut ureg, value: ureg| {
+            *sp -= std::mem::size_of::<ureg>() as ureg;
+            *(*sp as usize as *mut ureg) = value;
+        };
+
+        // Random data
+        let mut rng = rand::rngs::OsRng::new().unwrap();
+        push(&mut sp, rng.next_u64());
+        push(&mut sp, rng.next_u64());
+        push(&mut sp, rng.next_u64());
+        push(&mut sp, rng.next_u64());
+        let random_data = sp;
+
+        // Setup auxillary vectors.
+        push(&mut sp, 0);
+        push(&mut sp, abi::AT_NULL);
+
+        // Initialize context, and set up ELF-specific auxillary vectors.
+        ctx.pc = file.load_elf(&mut sp);
+
+        push(&mut sp, libc::getuid() as _);
+        push(&mut sp, abi::AT_UID);
+        push(&mut sp, libc::geteuid() as _);
+        push(&mut sp, abi::AT_EUID);
+        push(&mut sp, libc::getgid() as _);
+        push(&mut sp, abi::AT_GID);
+        push(&mut sp, libc::getegid() as _);
+        push(&mut sp, abi::AT_EGID);
+        push(&mut sp, 0);
+        push(&mut sp, abi::AT_HWCAP);
+        push(&mut sp, 100);
+        push(&mut sp, abi::AT_CLKTCK);
+        push(&mut sp, random_data);
+        push(&mut sp, abi::AT_RANDOM);
+
+        // fill in environ, last is nullptr
+        push(&mut sp, 0);
+        for v in env_pointers.into_iter().rev() { push(&mut sp, v) };
+
+        // fill in argv, last is nullptr
+        push(&mut sp, 0);
+        for &v in arg_pointers.iter().rev() { push(&mut sp, v) };
+
+        // set argc
+        push(&mut sp, arg_pointers.len() as _);
+
+        // sp
+        ctx.registers[2] = sp;
+        // libc adds this value into exit hook, so we need to make sure it is zero.
+        ctx.registers[10] = 0;
+        ctx.prv = 0;
+    } else {
+        // Allocate a 1G memory for physical address, starting at 0x200000.
+        let map = libc::mmap(
+            0x200000 as _,
+            0x40000000 - 0x200000,
+            libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED, -1, 0
+        );
+        if map == libc::MAP_FAILED {
+            panic!("mmap failed while loading");
+        }
+
+        let size = file.file_size;
+        file.load_bin(0x200000);
+        Loader::new("dt".as_ref()).unwrap().load_bin(0x200000 + size);
+
+        // a0 is the current hartid
+        ctx.registers[10] = 0;
+        // a1 should be the device tree
+        ctx.registers[11] = 0x200000 + size;
+        ctx.pc = 0x200000;
+        ctx.prv = 1;
+    }
 }
