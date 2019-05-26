@@ -316,8 +316,7 @@ pub fn translate_path(path: &Path) -> Cow<Path> {
     // We assume relative paths cannot point to sysroot
     if path.is_relative() { return Cow::Borrowed(path) }
     // TODO: Replace this once we get proper type for sysroot
-    let sysroot = unsafe{Path::new(CStr::from_ptr(crate::get_flags().sysroot).to_str().unwrap())};
-    let newpath = sysroot.join(path.strip_prefix("/").unwrap());
+    let newpath = Path::new(crate::get_flags().sysroot.as_ref().unwrap()).join(path.strip_prefix("/").unwrap());
     if !newpath.exists() { return Cow::Borrowed(path) }
     if crate::get_flags().strace {
         eprintln!("Translate {} to {}", path.display(), newpath.display());
@@ -432,7 +431,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             if crate::get_flags().strace {
                 eprintln!("read({}, {}, {}) = {}",
                     arg0,
-                    Escape(std::slice::from_raw_parts(buffer as _, arg2 as usize)),
+                    Escape(std::slice::from_raw_parts(buffer as _, if ret >= 0 { ret as usize } else { arg2 as usize })),
                     arg2,
                     ret
                 );

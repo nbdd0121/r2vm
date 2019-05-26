@@ -35,7 +35,6 @@ Options:
   --help                Display this help message.
 ")}
 
-#[repr(C)]
 pub struct Flags {
 
     // Whether direct memory access or call to helper should be generated for guest memory access.
@@ -64,7 +63,7 @@ pub struct Flags {
 
     // Path of sysroot. When the guest application tries to open a file, and the corresponding file exists in sysroot,
     // it will be redirected.
-    sysroot: *const i8,
+    sysroot: Option<String>,
 
     // Upper limit of number of blocks that can be placed in a region.
     region_limit: u32,
@@ -85,10 +84,10 @@ pub static mut FLAGS: Flags = Flags {
     enable_phi: false,
     monitor_performance: false,
     exec_path: ptr::null(),
-    sysroot: ptr::null(),
+    sysroot: None,
     region_limit: 16,
     compile_threshold: 0,
-    user_only: false,
+    user_only: true,
 };
 
 #[no_mangle]
@@ -233,11 +232,7 @@ pub extern "C" fn main(argc: i32, argv: *const *const i8) {
         FLAGS.exec_path = cprogram_name.as_ptr();
     }
     std::mem::forget(cprogram_name);
-    let csysroot = CString::new(sysroot.as_str()).unwrap();
-    unsafe {
-        FLAGS.sysroot = csysroot.as_ptr();
-    }
-    std::mem::forget(csysroot);
+    unsafe { FLAGS.sysroot = Some(sysroot) };
 
     // Top priority: set up page fault handlers so safe_memory features will work.
     emu::safe_memory::init();
