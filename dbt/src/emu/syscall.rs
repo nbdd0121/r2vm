@@ -222,14 +222,14 @@ fn convert_errno_from_host(number: libc::c_int) -> abi::c_int {
 
 extern "C" fn convert_open_flags_to_host(flags: abi::c_int) -> libc::c_int {
     let mut ret = 0;
-    if flags & 01 != 0 { ret |= libc::O_WRONLY }
-    if flags & 02 != 0 { ret |= libc::O_RDWR }
-    if flags & 0100 != 0 { ret |= libc::O_CREAT }
-    if flags & 0200 != 0 { ret |= libc::O_EXCL }
-    if flags & 01000 != 0 { ret |= libc::O_TRUNC }
-    if flags & 02000 != 0 { ret |= libc::O_APPEND }
-    if flags & 04000 != 0 { ret |= libc::O_NONBLOCK }
-    if flags & 04010000 != 0 { ret |= libc::O_SYNC }
+    if flags & 0o1 != 0 { ret |= libc::O_WRONLY }
+    if flags & 0o2 != 0 { ret |= libc::O_RDWR }
+    if flags & 0o100 != 0 { ret |= libc::O_CREAT }
+    if flags & 0o200 != 0 { ret |= libc::O_EXCL }
+    if flags & 0o1000 != 0 { ret |= libc::O_TRUNC }
+    if flags & 0o2000 != 0 { ret |= libc::O_APPEND }
+    if flags & 0o4000 != 0 { ret |= libc::O_NONBLOCK }
+    if flags & 0o4010000 != 0 { ret |= libc::O_SYNC }
     ret
 }
 
@@ -728,7 +728,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             ret
         }
         _ => {
-            eprintln!("illegal syscall {}({}, {})\n", nr, arg0, arg1);
+            eprintln!("illegal syscall {}({}, {})", nr, arg0, arg1);
             -abi::ENOSYS as i64
         }
     };
