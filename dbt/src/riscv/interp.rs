@@ -1,5 +1,6 @@
 use super::csr::Csr;
 use super::op::{LegacyOp, Op};
+use crate::util::softfp::{self, F32, F64};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -315,6 +316,13 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             ctx.registers[rs]
         }}
     }
+    macro_rules! read_32 {
+        ($rs: expr) => {{
+            let rs = $rs as usize;
+            if rs >= 32 { unsafe { std::hint::unreachable_unchecked() } }
+            ctx.registers[rs] as u32
+        }}
+    }
     macro_rules! write_reg {
         ($rd: expr, $expression:expr) => {{
             let rd = $rd as usize;
@@ -323,41 +331,59 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             if rd != 0 { ctx.registers[rd] = value }
         }}
     }
+    macro_rules! write_32 {
+        ($rd: expr, $expression:expr) => {{
+            let rd = $rd as usize;
+            let value: u32 = $expression;
+            if rd >= 32 { unsafe { std::hint::unreachable_unchecked() } }
+            if rd != 0 { ctx.registers[rd] = value as i32 as u64 }
+        }}
+    }
     macro_rules! read_fs {
         ($rs: expr) => {{
             let rs = $rs as usize;
             if rs >= 32 { unsafe { std::hint::unreachable_unchecked() } }
-            ctx.fp_registers[rs] as u32
+            F32::new(ctx.fp_registers[rs] as u32)
         }}
     }
     macro_rules! read_fd {
         ($rs: expr) => {{
             let rs = $rs as usize;
             if rs >= 32 { unsafe { std::hint::unreachable_unchecked() } }
-            ctx.fp_registers[rs]
+            F64::new(ctx.fp_registers[rs])
         }}
     }
     macro_rules! write_fs {
         ($frd: expr, $expression:expr) => {{
             let frd = $frd as usize;
-            let value: u32 = $expression;
+            let value: F32 = $expression;
             if frd >= 32 { unsafe { std::hint::unreachable_unchecked() } }
-            ctx.fp_registers[frd] = value as u64 | 0xffffffff00000000
+            ctx.fp_registers[frd] = value.0 as u64 | 0xffffffff00000000
         }}
     }
     macro_rules! write_fd {
         ($frd: expr, $expression:expr) => {{
             let frd = $frd as usize;
-            let value: u64 = $expression;
+            let value: F64 = $expression;
             if frd >= 32 { unsafe { std::hint::unreachable_unchecked() } }
-            ctx.fp_registers[frd] = value
+            ctx.fp_registers[frd] = value.0
         }}
+    }
+    macro_rules! clear_flags {
+        () => {
+            softfp::clear_exception_flag()
+        };
+    }
+    macro_rules! update_flags {
+        () => {
+            ctx.fcsr |= softfp::get_exception_flag() as u64;
+        };
     }
     macro_rules! trap {
         ($cause: expr, $tval: expr) => {{
             ctx.scause = $cause;
             ctx.stval = $tval;
-            return Err(())  
+            return Err(())
         }}
     }
     macro_rules! len {
@@ -554,24 +580,67 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         Op::Flw { frd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(4, vaddr) }
-            write_fs!(frd, read_vaddr::<u32>(ctx, vaddr)?);
+            write_fs!(frd, F32::new(read_vaddr::<u32>(ctx, vaddr)?));
         }
         Op::Fsw { rs1, frs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(5, vaddr) }
-            write_vaddr(ctx, vaddr, read_fs!(frs2))?
+            write_vaddr(ctx, vaddr, read_fs!(frs2).0)?
         }
-
+        Op::FmvXW { rd, frs1 } => {
+            write_32!(rd, read_fs!(frs1).0);
+        }
+        Op::FclassS { rd, frs1 } => {
+            write_reg!(rd, 1 << read_fs!(frs1).classify());
+        }
+        Op::FeqS { rd, frs1, frs2 } => {
+            write_reg!(rd, (read_fs!(frs1) == read_fs!(frs2)) as u64)
+        }
+        Op::FltS { rd, frs1, frs2 } => {
+            clear_flags!();
+            write_reg!(rd, (read_fs!(frs1) < read_fs!(frs2)) as u64);
+            update_flags!();
+        }
+        Op::FleS { rd, frs1, frs2 } => {
+            clear_flags!();
+            write_reg!(rd, (read_fs!(frs1) <= read_fs!(frs2)) as u64);
+            update_flags!();
+        }
+        Op::FmvWX { frd, rs1 } => {
+            write_fs!(frd, F32::new(read_32!(rs1)));
+        }
         /* D-extension */
         Op::Fld { frd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(4, vaddr) }
-            write_fd!(frd, read_vaddr::<u64>(ctx, vaddr)?);
+            write_fd!(frd, F64::new(read_vaddr::<u64>(ctx, vaddr)?));
         }
         Op::Fsd { rs1, frs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 7 != 0 { trap!(5, vaddr) }
-            write_vaddr(ctx, vaddr, read_fd!(frs2))?
+            write_vaddr(ctx, vaddr, read_fd!(frs2).0)?
+        }
+        Op::FmvXD { rd, frs1 } => {
+            write_reg!(rd, read_fd!(frs1).0);
+        }
+        Op::FclassD { rd, frs1 } => {
+            write_reg!(rd, 1 << read_fd!(frs1).classify());
+        }
+        Op::FeqD { rd, frs1, frs2 } => {
+            write_reg!(rd, (read_fd!(frs1) == read_fd!(frs2)) as u64)
+        }
+        Op::FltD { rd, frs1, frs2 } => {
+            clear_flags!();
+            write_reg!(rd, (read_fd!(frs1) < read_fd!(frs2)) as u64);
+            update_flags!();
+        }
+        Op::FleD { rd, frs1, frs2 } => {
+            clear_flags!();
+            write_reg!(rd, (read_fd!(frs1) <= read_fd!(frs2)) as u64);
+            update_flags!();
+        }
+        Op::FmvDX { frd, rs1 } => {
+            write_fd!(frd, F64::new(read_reg!(rs1)));
         }
 
         /* M-extension */

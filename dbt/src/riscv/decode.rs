@@ -667,6 +667,45 @@ pub fn decode(bits: u32) -> Op {
         /* AUIPC */
         0b0010111 => Op::Auipc { rd, imm: u_imm(bits) },
 
+        /* OP-FP */
+        0b1010011 => {
+            let function7 = funct7(bits);
+            match function7 {
+                /* F-extension and D-extension */
+                0b1110000 => match (rs2, function) {
+                    (0b00000, 0b000) => Op::FmvXW { rd, frs1: rs1 },
+                    (0b00000, 0b001) => Op::FclassS { rd, frs1: rs1 },
+                    _ => Op::Illegal,
+                }
+                0b1110001 => match (rs2, function) {
+                    (0b00000, 0b000) => Op::FmvXD { rd, frs1: rs1 },
+                    (0b00000, 0b001) => Op::FclassD { rd, frs1: rs1 },
+                    _ => Op::Illegal,
+                }
+                0b1010000 => match function {
+                    0b000 => Op::FleS { rd, frs1: rs1, frs2: rs2 },
+                    0b001 => Op::FltS { rd, frs1: rs1, frs2: rs2 },
+                    0b010 => Op::FeqS { rd, frs1: rs1, frs2: rs2 },
+                    _ => Op::Illegal,
+                }
+                0b1010001 => match function {
+                    0b000 => Op::FleD { rd, frs1: rs1, frs2: rs2 },
+                    0b001 => Op::FltD { rd, frs1: rs1, frs2: rs2 },
+                    0b010 => Op::FeqD { rd, frs1: rs1, frs2: rs2 },
+                    _ => Op::Illegal,
+                }
+                0b1111000 => match (rs2, function) {
+                    (0b00000, 0b000) => Op::FmvWX { frd: rd, rs1 },
+                    _ => Op::Illegal,
+                }
+                0b1111001 => match (rs2, function) {
+                    (0b00000, 0b000) => Op::FmvDX { frd: rd, rs1 },
+                    _ => Op::Illegal,
+                }
+                _ => Op::Legacy(unsafe { legacy_decode(bits) }),
+            }
+        }
+
         /* BRANCH */
         0b1100011 => {
             let imm = b_imm(bits);

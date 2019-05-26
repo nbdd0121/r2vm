@@ -148,12 +148,26 @@ pub enum Op {
     Flw { frd: u8, rs1: u8, imm: i32 },
     /* Base Opcode = STORE-FP */
     Fsw { rs1: u8, frs2: u8, imm: i32 },
+    /* Base Opcode = OP-FP */
+    FmvXW { rd: u8, frs1: u8 },
+    FclassS { rd: u8, frs1: u8 },
+    FeqS { rd: u8, frs1: u8, frs2: u8 },
+    FltS { rd: u8, frs1: u8, frs2: u8 },
+    FleS { rd: u8, frs1: u8, frs2: u8 },
+    FmvWX { frd: u8, rs1: u8 },
 
     /* D extension */
     /* Base Opcode = LOAD-FP */
     Fld { frd: u8, rs1: u8, imm: i32 },
     /* Base Opcode = STORE-FP */
     Fsd { rs1: u8, frs2: u8, imm: i32 },
+    /* Base Opcode = OP-FP */
+    FmvXD { rd: u8, frs1: u8 },
+    FclassD { rd: u8, frs1: u8 },
+    FeqD { rd: u8, frs1: u8, frs2: u8 },
+    FltD { rd: u8, frs1: u8, frs2: u8 },
+    FleD { rd: u8, frs1: u8, frs2: u8 },
+    FmvDX { frd: u8, rs1: u8 },
 
     /* Privileged */
     Sret,
