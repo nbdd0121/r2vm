@@ -3,6 +3,7 @@
 use std::ops;
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU32, Ordering as MemOrder};
+use std::convert::{TryInto};
 use super::int::{CastFrom, CastTo, Int, UInt};
 
 // #region Rounding mode constant and manipulation
@@ -87,7 +88,28 @@ const CLASS_QUIET_NAN          : u32 = 9;
 pub trait FpDesc: Copy {
     const EXPONENT_WIDTH: u32;
     const SIGNIFICAND_WIDTH: u32;
+
+    // The exponent type need to be able to store exponent of a normalized subnormal number or
+    // biased exponent. Normalized subnormal number has range
+    // [minimum_exponent - significand_width, maximum_exponent]
+    // and biased exponent has range [0, infinity_biased_exponent].
+    // Normalized subnormal number calculation requires double the precision, so we add an extra bit.
+    // Combing with the sign bit, we therefore require a number with at least `EXPONENT_WIDTH + 2`
+    // bits wide. We observe that a u32 is enough for all types of float.
+
+    // The significand type need to be able to store intermediatary calculation results.
+    // for addition: significand + hidden bit + carry bit + two more bits precision for rounding.
+    // for subtract: significand + hidden bit + borrow bit + two more bits precision for rounding.
+    //
+    // Significand is majorly used to represent fixed point numbers.
+    // The decimal point will be placed between (significand_width + 1)th and (significand_width + 2)th bit,
+    // so "normalized" numbers will have 1 in its (significand_width + 2)th bit.
+    //
+    // We observe that `SIGNIFICAND_WIDTH + 4` is smaller than the width of the entire float, so we
+    // use the same integer type to represent both.
     type Holder: UInt + CastFrom<u32> + CastTo<u32> + CastTo<Self::DoubleHolder>;
+
+    // Need to contain the product of significand with hidden bits, plus two rounding bits.
     type DoubleHolder: UInt + CastTo<Self::Holder>;
 }
 
@@ -157,8 +179,8 @@ impl<Desc: FpDesc> Fp<Desc> {
 
     /// Normalized the significand while preserving rounding property.
     fn normalize<T: UInt + CastTo<Desc::Holder>>(exponent: i32, significand: T) -> (i32, Desc::Holder) {
-        let width = significand.log2_floor() - 2;
-        let width_diff = width as i32 - Desc::SIGNIFICAND_WIDTH as i32;
+        let width = significand.log2_floor() as i32 - 2;
+        let width_diff = width - Desc::SIGNIFICAND_WIDTH as i32;
         let exponent = exponent + width_diff;
         let significand = if width_diff <= 0 {
             // For left-shift, convert before shift, in case it is smaller than Desc::Holder
@@ -775,6 +797,166 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         return Self::normalize_and_round(sign_product, product_exponent, product);
     }
+
+    //
+    // #endregion
+
+    // #region conversions
+    //
+
+    fn convert_from_int_with_sign<T: UInt + CastTo<Desc::Holder>>(sign: bool, value: T) -> Self {
+        if value == T::zero() {
+            return Self::zero(false);
+        }
+
+        Self::normalize_and_round(sign, Desc::SIGNIFICAND_WIDTH as i32 + 2, value)
+    }
+
+    pub fn convert_from_uint<T: UInt + CastTo<Desc::Holder>>(value: T) -> Self {
+        Self::convert_from_int_with_sign(false, value)
+    }
+
+    pub fn convert_from_sint<T: UInt + CastTo<Desc::Holder>>(value: T) -> Self {
+        // Check the sign bit
+        if value >> (T::bit_width() - 1) != T::zero() {
+            let abs = !value + T::one();
+            Self::convert_from_int_with_sign(true, abs)
+        } else {
+            Self::convert_from_int_with_sign(false, value)
+        }
+    }
+
+    fn convert_to_int<T: UInt + CastFrom<Desc::Holder> + std::convert::TryFrom<Desc::Holder>>(&self, positive_max: T, negative_max: T) -> (bool, T) {
+        // Round NaN to the maximum value
+        if self.is_nan() {
+            set_exception_flag(EX_INVALID_OPERATION);
+            return (false, positive_max);
+        }
+
+        // Multiplex the correct maximum value based on sign
+        let sign = self.sign();
+        let max = if sign { negative_max } else { positive_max };
+
+        // Round positive/negative infinities to max/min, respectively.
+        if self.is_infinite() {
+            set_exception_flag(EX_INVALID_OPERATION);
+            return (sign, max);
+        }
+
+        if self.is_zero() {
+            return (false, T::zero());
+        }
+
+        let (exponent, mut significand) = self.get_normalized_significand();
+
+        // In case we need to round, since the last two bits are for rounding only,
+        // we want 0b100 in signicand to represent integer 1.
+        // So the effective exponent here will be significand_width. Tthis is the exponent when we
+        // move the decimal point before the last 2 bits, which are reserved for rounding. We
+        // basically just need to left-shift by this amount and round off the last two bits.
+        let effective_exponent = exponent - Desc::SIGNIFICAND_WIDTH as i32;
+
+        if effective_exponent < 0 {
+            // If effective_exponent < 0, we indeed should do right-shift. So just perform the
+            // shift and round.
+            significand = Self::right_shift(significand, -effective_exponent as u32);
+            let (inexact, significand) = Self::round_significand(sign, significand);
+
+            // We will produce zero but it's not zero (we checked for zero previously), i.e. inexact.
+            // We does not merge this with the normal case, as negative zero should be made possible
+            // before returning.
+            if significand == Desc::Holder::zero() {
+                set_exception_flag(EX_INEXACT);
+                return (false, T::zero());
+            }
+
+            // Try convert the significand to the target integer type. Note that the target integer
+            // type might be smaller so we need to use TryInto here.
+            let significand = match TryInto::<T>::try_into(significand) {
+                Ok(v) if v <= max => v,
+                _ => {
+                    // Either it does not fit into T, or it exceeds max.
+                    set_exception_flag(EX_INVALID_OPERATION);
+                    return (sign, max);
+                }
+            };
+
+            if inexact { set_exception_flag(EX_INEXACT) }
+            return (sign, significand);
+        }
+
+        // When we land here, then the number we are dealing with is actually an integer. Since
+        // we haven't actually do any shifts, the rounding bits are always 0, so get rid of the rounding bits.
+        significand >>= 2;
+
+        // We are going to left shift by `effective_exponent`.
+        // However the target type may not have enough bits for that. Check we have enough remaining bits.
+        // Also, if the remaining_bits is negative following if will always be true.
+        // However we added explicit check to hint compiler optimizations (especially in lower optimization modes).
+        let remaining_bits = T::bit_width() as i32 - Desc::SIGNIFICAND_WIDTH as i32 + 1;
+        if remaining_bits < 0 || effective_exponent > remaining_bits {
+
+            // Overflow case.
+            set_exception_flag(EX_INVALID_OPERATION);
+            return (sign, max);
+        }
+
+        // Make sure the value is casted to the target type, as the target type maybe larger.
+        // If target type is smaller, than remaining_bits should be negative value and this will be never reached.
+        let result = CastTo::<T>::cast_to(significand) << effective_exponent as u32;
+
+        // Do bound check and return.
+        if result > max {
+            set_exception_flag(EX_INVALID_OPERATION);
+            return (sign, max);
+        }
+
+        return (sign, result)
+    }
+
+    pub fn convert_to_uint<T: UInt + CastFrom<Desc::Holder> + std::convert::TryFrom<Desc::Holder>>(&self) -> T {
+        let max = T::max_value();
+        self.convert_to_int(max, T::zero()).1
+    }
+
+    pub fn convert_to_sint<T: UInt + CastFrom<Desc::Holder> + std::convert::TryFrom<Desc::Holder>>(&self) -> T {
+        let max = T::max_value() >> 1;
+        let min = !max;
+        let (sign, value) = self.convert_to_int(max, min);
+        if sign {
+            !value + T::one()
+        } else {
+            value
+        }
+    }
+
+    // IEEE 754-2008 5.4.2 formatOf general-computational operations > Conversion operations
+    pub fn convert_format<TDesc: FpDesc>(&self) -> Fp<TDesc> where Desc::Holder: CastTo<TDesc::Holder> {
+        // type T = Fp<TDesc>;
+
+        // Handle NaN, infinity and zero
+        if self.is_nan() {
+            if self.is_signaling() {
+                set_exception_flag(EX_INVALID_OPERATION);
+            }
+            return Fp::<TDesc>::quiet_nan();
+        }
+
+        let sign = self.sign();
+
+        if self.is_infinite() {
+            return Fp::<TDesc>::infinity(sign);
+        }
+
+        if self.is_zero() {
+            return Fp::<TDesc>::zero(sign);
+        }
+
+        let (exponent, signficand) = self.get_normalized_significand();
+        Fp::<TDesc>::normalize_and_round(sign, exponent - Desc::SIGNIFICAND_WIDTH as i32 + TDesc::SIGNIFICAND_WIDTH as i32, signficand)
+    }
+
+    // #endregion
 
     // #region sign bit operations
     // IEEE 754-2008 5.5.1 Quiet-computational operations > Sign bit operations
