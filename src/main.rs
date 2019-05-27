@@ -90,8 +90,7 @@ pub static mut FLAGS: Flags = Flags {
     user_only: true,
 };
 
-#[no_mangle]
-pub extern fn get_flags() -> &'static Flags {
+pub fn get_flags() -> &'static Flags {
     unsafe {
         return &FLAGS;
     }

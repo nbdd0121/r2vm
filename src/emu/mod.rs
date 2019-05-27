@@ -65,8 +65,7 @@ pub unsafe fn write_memory<T: Copy>(addr: u64, value: T) {
     *ptr = value;
 }
 
-#[no_mangle]
-pub extern "C" fn phys_read(addr: ureg, size: u32) -> ureg {
+pub fn phys_read(addr: ureg, size: u32) -> ureg {
     if addr >= unsafe { IO_BOUNDARY } {
         let addr = (addr - 0x80000000) as usize;
         unsafe {if addr >= 0x100000 {
@@ -89,8 +88,7 @@ pub extern "C" fn phys_read(addr: ureg, size: u32) -> ureg {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn phys_write(addr: ureg, value: ureg, size: u32) {
+pub fn phys_write(addr: ureg, value: ureg, size: u32) {
     if addr >= unsafe { IO_BOUNDARY } {
         let addr = (addr - 0x80000000) as usize;
         unsafe {if addr >= 0x100000 {

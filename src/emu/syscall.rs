@@ -220,7 +220,7 @@ fn convert_errno_from_host(number: libc::c_int) -> abi::c_int {
     }
 }
 
-extern "C" fn convert_open_flags_to_host(flags: abi::c_int) -> libc::c_int {
+fn convert_open_flags_to_host(flags: abi::c_int) -> libc::c_int {
     let mut ret = 0;
     if flags & 0o1 != 0 { ret |= libc::O_WRONLY }
     if flags & 0o2 != 0 { ret |= libc::O_RDWR }
@@ -233,7 +233,7 @@ extern "C" fn convert_open_flags_to_host(flags: abi::c_int) -> libc::c_int {
     ret
 }
 
-extern "C" fn convert_stat_from_host(guest_stat: &mut abi::stat, host_stat: &libc::stat) {
+fn convert_stat_from_host(guest_stat: &mut abi::stat, host_stat: &libc::stat) {
     guest_stat.st_dev        = host_stat.st_dev;
     guest_stat.st_ino        = host_stat.st_ino;
     guest_stat.st_mode       = host_stat.st_mode;
@@ -259,8 +259,7 @@ fn convert_iovec_to_host(guest_iov: &abi::iovec) -> libc::iovec {
     }
 }
 
-#[no_mangle]
-extern "C" fn convert_mmap_prot_to_host(prot: abi::c_int) -> libc::c_int {
+fn convert_mmap_prot_to_host(prot: abi::c_int) -> libc::c_int {
     let mut ret = 0;
     if (prot & abi::PROT_READ) != 0 { ret |= libc::PROT_READ }
     if (prot & abi::PROT_WRITE) != 0 { ret |= libc::PROT_WRITE }
@@ -269,8 +268,7 @@ extern "C" fn convert_mmap_prot_to_host(prot: abi::c_int) -> libc::c_int {
     ret
 }
 
-#[no_mangle]
-extern "C" fn convert_mmap_flags_to_host(flags: abi::c_int) -> libc::c_int {
+fn convert_mmap_flags_to_host(flags: abi::c_int) -> libc::c_int {
     let mut ret = 0;
     if (flags & abi::MAP_SHARED) != 0 { ret |= libc::MAP_SHARED }
     if (flags & abi::MAP_PRIVATE) != 0 { ret |= libc::MAP_PRIVATE }
@@ -283,8 +281,7 @@ extern "C" fn convert_mmap_flags_to_host(flags: abi::c_int) -> libc::c_int {
 /// number. Library functions, on the other hand, usually return -1 and set errno instead.
 /// Helper for converting library functions which use state variable `errno` to carry error
 /// information to a linux syscall style which returns a negative value representing the errno.
-#[no_mangle]
-extern "C" fn return_errno(val: i64) -> i64 {
+fn return_errno(val: i64) -> i64 {
     if val != -1 { return val }
     return -convert_errno_from_host(unsafe { *libc::__errno_location() }) as _;
 }
