@@ -1,4 +1,4 @@
-RUST_FILES = $(shell find dbt/src -type f -name '*')
+RUST_FILES = $(shell find src -type f -name '*')
 
 default: all
 
@@ -8,17 +8,17 @@ all: codegen
 
 clean:
 
-codegen: dbt/target/debug/dbt
+codegen: target/debug/dbt
 	cp $< $@
 
-release: dbt/target/release/dbt
+release: target/release/dbt
 	cp $< $@
 
-dbt/target/debug/dbt: $(RUST_FILES)
-	cd dbt; cargo build
+target/debug/dbt: $(RUST_FILES)
+	cargo build
 
-dbt/target/release/dbt: $(RUST_FILES)
-	cd dbt; cargo build --release
+target/release/dbt: $(RUST_FILES)
+	cargo build --release
 
 register: codegen
 	sudo bash -c "echo ':riscv:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xf3\x00:\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff:$(shell realpath codegen):' > /proc/sys/fs/binfmt_misc/register"

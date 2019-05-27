@@ -1,6 +1,5 @@
-bin/
 .vscode/
-dbt/target
-dbt/Cargo.lock
+target
+Cargo.lock
 /release
 /codegen
