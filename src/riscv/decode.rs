@@ -863,10 +863,16 @@ pub fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
         };
         let bits = (hi_bits as u32) << 16 | bits as u32;
         let (op, c) = (decode(bits), false);
+        if crate::get_flags().disassemble {
+            super::disasm::print_instr(*pc, bits, &op);
+        }
         *pc += 4;
         (op, c)
     } else {
         let (op, c) = (decode_compressed(bits), true);
+        if crate::get_flags().disassemble {
+            super::disasm::print_instr(*pc, bits as u32, &op);
+        }
         *pc += 2;
         (op, c)
     }
@@ -875,6 +881,11 @@ pub fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
 pub fn decode_block(mut pc: u64, pc_next: u64) -> (Vec<(Op, bool)>, u64, u64) {
     let start_pc = pc;
     let mut vec = Vec::new();
+
+    if crate::get_flags().disassemble {
+        eprintln!("Decoding {:x}", pc);
+    }
+
     loop {
         let (op, c) = decode_instr(&mut pc, pc_next);
         if op.can_change_control_flow() || (pc &! 4095) != (start_pc &! 4095) {

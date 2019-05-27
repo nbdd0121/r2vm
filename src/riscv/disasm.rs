@@ -180,24 +180,24 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
     let mnemonic = mnemonic(inst);
 
     if (pc & 0xFFFFFFFF) == pc {
-        print!("{:8x}:       ", pc);
+        eprint!("{:8x}:       ", pc);
     } else {
-        print!("{:16x}:       ", pc);
+        eprint!("{:16x}:       ", pc);
     }
 
     if bits & 3 == 3 {
-        print!("{:08x}", bits);
+        eprint!("{:08x}", bits);
     } else {
-        print!("{:04x}    ", bits & 0xFFFF);
+        eprint!("{:04x}    ", bits & 0xFFFF);
     }
 
-    print!("        {:-7} ", mnemonic);
+    eprint!("        {:-7} ", mnemonic);
 
     match *inst {
         Op::Illegal => (),
         Op::Lui { rd, imm } |
         Op::Auipc { rd, imm } =>
-            print!("{}, {:#x}",  register_name(rd), (imm as u32) >> 12),
+            eprint!("{}, {:#x}",  register_name(rd), (imm as u32) >> 12),
         Op::Jal { rd, imm } => {
             let target_pc = pc.wrapping_add(imm as u64);
             let (sign, imm) = if imm < 0 {
@@ -205,7 +205,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
             } else {
                 ('+', imm)
             };
-            print!("{}, pc {} {} <{:x}>",  register_name(rd), sign, imm, target_pc)
+            eprint!("{}, pc {} {} <{:x}>",  register_name(rd), sign, imm, target_pc)
         }
         Op::Beq { rs1, rs2, imm } |
         Op::Bne { rs1, rs2, imm } |
@@ -219,7 +219,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
             } else {
                 ('+', imm)
             };
-            print!("{}, {}, pc {} {} <{:x}>",  register_name(rs1), register_name(rs2), sign, imm, target_pc)
+            eprint!("{}, {}, pc {} {} <{:x}>",  register_name(rs1), register_name(rs2), sign, imm, target_pc)
         }
         Op::Lb { rd, rs1, imm } |
         Op::Lh { rd, rs1, imm } |
@@ -230,7 +230,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::Lwu { rd, rs1, imm } |
         // jalr has same string representation as load instructions.
         Op::Jalr { rd, rs1, imm } =>
-            print!("{}, {}({})", register_name(rd), imm, register_name(rs1)),
+            eprint!("{}, {}({})", register_name(rd), imm, register_name(rs1)),
         // TODO: display the arguments of fence/sfence.vma?
         Op::Fence |
         Op::FenceI |
@@ -243,7 +243,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::Sh { rs1, rs2, imm } |
         Op::Sw { rs1, rs2, imm } |
         Op::Sd { rs1, rs2, imm } =>
-            print!("{}, {}({})", register_name(rs2), imm, register_name(rs1)),
+            eprint!("{}, {}({})", register_name(rs2), imm, register_name(rs1)),
         Op::Addi { rd, rs1, imm } |
         Op::Slti { rd, rs1, imm } |
         Op::Sltiu { rd, rs1, imm } |
@@ -259,7 +259,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::Slliw { rd, rs1, imm } |
         Op::Srliw { rd, rs1, imm } |
         Op::Sraiw { rd, rs1, imm } =>
-            print!("{}, {}, {}", register_name(rd), register_name(rs1), imm),
+            eprint!("{}, {}, {}", register_name(rd), register_name(rs1), imm),
         Op::Add { rd, rs1, rs2 } |
         Op::Sub { rd, rs1, rs2 } |
         Op::Sll { rd, rs1, rs2 } |
@@ -288,20 +288,20 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::Divuw { rd, rs1, rs2 } |
         Op::Remw { rd, rs1, rs2 } |
         Op::Remuw { rd, rs1, rs2 } =>
-            print!("{}, {}, {}", register_name(rd), register_name(rs1), register_name(rs2)),
+            eprint!("{}, {}, {}", register_name(rd), register_name(rs1), register_name(rs2)),
         // CSR instructions store immediates differently.
         Op::Csrrw { rd, rs1, csr } |
         Op::Csrrs { rd, rs1, csr } |
         Op::Csrrc { rd, rs1, csr } =>
-            print!("{}, #{}, {}", register_name(rd), csr, register_name(rs1)),
+            eprint!("{}, #{}, {}", register_name(rd), csr, register_name(rs1)),
         Op::Csrrwi { rd, imm, csr } |
         Op::Csrrsi { rd, imm, csr } |
         Op::Csrrci { rd, imm, csr } =>
-            print!("{}, #{}, {}", register_name(rd), csr, imm),
+            eprint!("{}, #{}, {}", register_name(rd), csr, imm),
         // TODO: For atomic instructions we may want to display their aq, rl arguments?
         Op::LrW { rd, rs1 } |
         Op::LrD { rd, rs1} =>
-            print!("{}, ({})", register_name(rd), register_name(rs1)),
+            eprint!("{}, ({})", register_name(rd), register_name(rs1)),
         Op::ScW { rd, rs1, rs2 } |
         Op::ScD { rd, rs1, rs2 } |
         Op::AmoswapW { rd, rs1, rs2 } |
@@ -322,14 +322,14 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::AmominuD { rd, rs1, rs2 } |
         Op::AmomaxuW { rd, rs1, rs2 } |
         Op::AmomaxuD { rd, rs1, rs2 } =>
-            print!("{}, {}, ({})", register_name(rd), register_name(rs2), register_name(rs1)),
+            eprint!("{}, {}, ({})", register_name(rd), register_name(rs2), register_name(rs1)),
         // TODO: For floating point arguments we may want to display their r/m arguments?
         Op::Flw { frd, rs1, imm } |
         Op::Fld { frd, rs1, imm } =>
-            print!("f{}, {}({})", frd, imm, register_name(rs1)),
+            eprint!("f{}, {}({})", frd, imm, register_name(rs1)),
         Op::Fsw { rs1, frs2, imm } |
         Op::Fsd { rs1, frs2, imm } =>
-            print!("f{}, {}({})", frs2, imm, register_name(rs1)),
+            eprint!("f{}, {}({})", frs2, imm, register_name(rs1)),
         Op::FaddS { frd, frs1, frs2, ..} |
         Op::FsubS { frd, frs1, frs2, ..} |
         Op::FmulS { frd, frs1, frs2, ..} |
@@ -348,12 +348,12 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::FsgnjxD { frd, frs1, frs2 } |
         Op::FminD { frd, frs1, frs2 } |
         Op::FmaxD { frd, frs1, frs2 } =>
-            print!("f{}, f{}, f{}", frd, frs1, frs2),
+            eprint!("f{}, f{}, f{}", frd, frs1, frs2),
         Op::FsqrtS { frd, frs1, ..} |
         Op::FsqrtD { frd, frs1, ..} |
         Op::FcvtSD { frd, frs1, ..} |
         Op::FcvtDS { frd, frs1, ..} =>
-            print!("f{}, f{}", frd, frs1),
+            eprint!("f{}, f{}", frd, frs1),
         Op::FcvtWS { rd, frs1, ..} |
         Op::FcvtWuS { rd, frs1, ..} |
         Op::FcvtLS { rd, frs1, ..} |
@@ -366,7 +366,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::FcvtLuD { rd, frs1, ..} |
         Op::FmvXD { rd, frs1 } |
         Op::FclassD { rd, frs1 } =>
-            print!("{}, f{}", register_name(rd), frs1),
+            eprint!("{}, f{}", register_name(rd), frs1),
         Op::FcvtSW { frd, rs1, ..} |
         Op::FcvtSWu { frd, rs1, ..} |
         Op::FcvtSL { frd, rs1, ..} |
@@ -377,14 +377,14 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::FcvtDL { frd, rs1, ..} |
         Op::FcvtDLu { frd, rs1, ..} |
         Op::FmvDX { frd, rs1 } =>
-            print!("f{}, {}", frd, register_name(rs1)),
+            eprint!("f{}, {}", frd, register_name(rs1)),
         Op::FeqS { rd, frs1, frs2 } |
         Op::FltS { rd, frs1, frs2 } |
         Op::FleS { rd, frs1, frs2 } |
         Op::FeqD { rd, frs1, frs2 } |
         Op::FltD { rd, frs1, frs2 } |
         Op::FleD { rd, frs1, frs2 } =>
-            print!("{}, f{}, f{}", register_name(rd), frs1, frs2),
+            eprint!("{}, f{}, f{}", register_name(rd), frs1, frs2),
         Op::FmaddS { frd, frs1, frs2, frs3, ..} |
         Op::FmsubS { frd, frs1, frs2, frs3, ..} |
         Op::FnmsubS { frd, frs1, frs2, frs3, ..} |
@@ -393,7 +393,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::FmsubD { frd, frs1, frs2, frs3, ..} |
         Op::FnmsubD { frd, frs1, frs2, frs3, ..} |
         Op::FnmaddD { frd, frs1, frs2, frs3, ..} =>
-            print!("f{}, f{}, f{}, f{}", frd, frs1, frs2, frs3),
+            eprint!("f{}, f{}, f{}, f{}", frd, frs1, frs2, frs3),
     }
     println!()
 }
