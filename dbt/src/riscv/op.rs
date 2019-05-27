@@ -149,6 +149,11 @@ pub enum Op {
     /* Base Opcode = STORE-FP */
     Fsw { rs1: u8, frs2: u8, imm: i32 },
     /* Base Opcode = OP-FP */
+    FaddS { frd: u8, frs1: u8, frs2: u8, rm: u8 },
+    FsubS { frd: u8, frs1: u8, frs2: u8, rm: u8 },
+    FmulS { frd: u8, frs1: u8, frs2: u8, rm: u8 },
+    FdivS { frd: u8, frs1: u8, frs2: u8, rm: u8 },
+    FsqrtS { frd: u8, frs1: u8, rm: u8 },
     FsgnjS { frd: u8, frs1: u8, frs2: u8 },
     FsgnjnS { frd: u8, frs1: u8, frs2: u8 },
     FsgnjxS { frd: u8, frs1: u8, frs2: u8 },
@@ -160,6 +165,14 @@ pub enum Op {
     FltS { rd: u8, frs1: u8, frs2: u8 },
     FleS { rd: u8, frs1: u8, frs2: u8 },
     FmvWX { frd: u8, rs1: u8 },
+    /* Base Opcode = MADD */
+    FmaddS { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
+    /* Base Opcode = MSUB */
+    FmsubS { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
+    /* Base Opcode = NMSUB */
+    FnmsubS { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
+    /* Base Opcode = NMADD */
+    FnmaddS { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
 
     /* D extension */
     /* Base Opcode = LOAD-FP */
@@ -167,6 +180,11 @@ pub enum Op {
     /* Base Opcode = STORE-FP */
     Fsd { rs1: u8, frs2: u8, imm: i32 },
     /* Base Opcode = OP-FP */
+    FaddD { frd: u8, frs1: u8, frs2: u8, rm: u8 },
+    FsubD { frd: u8, frs1: u8, frs2: u8, rm: u8 },
+    FmulD { frd: u8, frs1: u8, frs2: u8, rm: u8 },
+    FdivD { frd: u8, frs1: u8, frs2: u8, rm: u8 },
+    FsqrtD { frd: u8, frs1: u8, rm: u8 },
     FsgnjD { frd: u8, frs1: u8, frs2: u8 },
     FsgnjnD { frd: u8, frs1: u8, frs2: u8 },
     FsgnjxD { frd: u8, frs1: u8, frs2: u8 },
@@ -178,6 +196,14 @@ pub enum Op {
     FltD { rd: u8, frs1: u8, frs2: u8 },
     FleD { rd: u8, frs1: u8, frs2: u8 },
     FmvDX { frd: u8, rs1: u8 },
+    /* Base Opcode = MADD */
+    FmaddD { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
+    /* Base Opcode = MSUB */
+    FmsubD { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
+    /* Base Opcode = NMSUB */
+    FnmsubD { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
+    /* Base Opcode = NMADD */
+    FnmaddD { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
 
     /* Privileged */
     Sret,

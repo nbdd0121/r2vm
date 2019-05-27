@@ -4,6 +4,37 @@ use std::ops;
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU32, Ordering as MemOrder};
 
+// #region Rounding mode constant and manipulation
+//
+
+const RM_TIES_TO_EVEN    : u32 = 0b000;
+const RM_TOWARD_ZERO     : u32 = 0b001;
+const RM_TOWARD_NEGATIVE : u32 = 0b010;
+const RM_TOWARD_POSITIVE : u32 = 0b011;
+const RM_TIES_TO_AWAY    : u32 = 0b100;
+
+thread_local!(
+    /// We use atomic here merely to avoid the cost of RefCell. So we should use relaxed ordering.
+    static ROUNDING_MODE: AtomicU32 = AtomicU32::new(0)
+);
+
+#[inline]
+fn get_rounding_mode() -> u32 {
+    ROUNDING_MODE.with(|flags| {
+        flags.load(MemOrder::Relaxed)
+    })
+}
+
+#[inline]
+pub fn set_rounding_mode(flag: u32) {
+    ROUNDING_MODE.with(|flags| {
+        flags.store(flag, MemOrder::Relaxed);
+    })
+}
+
+//
+// #endregion
+
 // #region Exception flags constant and manipulation
 
 const EX_INEXACT           : u32 = 1;
@@ -57,8 +88,13 @@ pub trait Int: Sized + Ord + Eq + Copy +
     ops::Shl<u32, Output=Self> +
     ops::Add<Self, Output=Self> +
     ops::Sub<Self, Output=Self> +
+    ops::Mul<Self, Output=Self> +
     ops::BitAnd<Self, Output=Self> +
     ops::BitOr<Self, Output=Self> +
+    ops::ShrAssign<u32> +
+    ops::ShlAssign<u32> +
+    ops::AddAssign<Self> +
+    ops::SubAssign<Self> +
     ops::BitAndAssign<Self> +
     ops::BitOrAssign<Self> +
     ops::Not<Output=Self> +
@@ -77,6 +113,9 @@ pub trait FpDesc: Copy {
     const EXPONENT_WIDTH: u32;
     const SIGNIFICAND_WIDTH: u32;
     type Holder: Int;
+    type DoubleHolder: Int;
+    fn to_double(v: Self::Holder) -> Self::DoubleHolder;
+    fn from_double(v: Self::DoubleHolder) -> Self::Holder;
 }
 
 #[derive(Clone, Copy)]
@@ -85,11 +124,12 @@ pub struct Fp<Desc: FpDesc>(pub Desc::Holder);
 impl<Desc: FpDesc> Fp<Desc> {
 
     // Special exponent values
+    // All biased exponents have type u32, and unbiased exponents have type i32.
     const INFINITY_BIASED_EXPONENT: u32 = (1 << Desc::EXPONENT_WIDTH) - 1;
     const MAXIMUM_BIASED_EXPONENT : u32 = Self::INFINITY_BIASED_EXPONENT - 1;
-    const EXPONENT_BIAS           : u32 = (1 << (Desc::EXPONENT_WIDTH - 1)) - 1;
-    const MINIMUM_EXPONENT        : u32 = 1 - Self::EXPONENT_BIAS;
-    const MAXIMUM_EXPONENT        : u32 = Self::MAXIMUM_BIASED_EXPONENT - Self::EXPONENT_BIAS;
+    const EXPONENT_BIAS           : i32 = (1 << (Desc::EXPONENT_WIDTH - 1)) - 1;
+    const MINIMUM_EXPONENT        : i32 = 1 - Self::EXPONENT_BIAS;
+    const MAXIMUM_EXPONENT        : i32 = Self::MAXIMUM_BIASED_EXPONENT as i32 - Self::EXPONENT_BIAS;
 
     #[inline]
     pub fn new(value: Desc::Holder) -> Self {
@@ -106,7 +146,201 @@ impl<Desc: FpDesc> Fp<Desc> {
         value
     }
 
+    pub fn infinity(sign: bool) -> Self {
+        let mut value = Self(Desc::Holder::zero());
+        value.set_sign(sign);
+        value.set_biased_exponent(Self::INFINITY_BIASED_EXPONENT);
+        value
+    }
+
+    pub fn zero(sign: bool) -> Self {
+        let mut value = Self(Desc::Holder::zero());
+        value.set_sign(sign);
+        value
+    }
+
     //
+    // #endregion
+
+    // #region shifting and rounding helper functions
+    //
+
+    /// Shift while preserving rounding property.
+    /// The last bit is the OR of all bits shifted away.
+    /// For details check the comment of round()
+    fn right_shift<T: Int>(significand: T, shift_amount: u32) -> T {
+        let (mut value, residue) = if shift_amount >= std::mem::size_of::<T>() as u32 * 8 {
+            // If shift amount is large enough, then the entire significand is residue
+            (T::zero(), significand)
+        } else {
+            let residue =  significand & ((T::one() << shift_amount) - T::one());
+            (significand >> shift_amount, residue)
+        };
+        if residue != T::zero() {
+            value |= T::one();
+        }
+        value
+    }
+
+    /// Normalized the significand while preserving rounding property.
+    fn normalize(exponent: i32, significand: Desc::Holder) -> (i32, Desc::Holder) {
+        let width = significand.log2_floor() - 2;
+        if width < Desc::SIGNIFICAND_WIDTH {
+            let width_diff = Desc::SIGNIFICAND_WIDTH - width;
+            return (exponent - width_diff as i32, significand << width_diff);
+        } else if width > Desc::SIGNIFICAND_WIDTH {
+            let width_diff = width - Desc::SIGNIFICAND_WIDTH;
+            return (exponent + width_diff as i32, Self::right_shift(significand, width_diff));
+        }
+        (exponent, significand)
+    }
+
+    /// Normalized the significand while preserving rounding property.
+    fn normalize_dbl(exponent: i32, significand: Desc::DoubleHolder) -> (i32, Desc::Holder) {
+        let width = significand.log2_floor() - 2;
+        if width < Desc::SIGNIFICAND_WIDTH {
+            let width_diff = Desc::SIGNIFICAND_WIDTH - width;
+            return (exponent - width_diff as i32, Desc::from_double(significand << width_diff));
+        } else if width > Desc::SIGNIFICAND_WIDTH {
+            let width_diff = width - Desc::SIGNIFICAND_WIDTH;
+            return (exponent + width_diff as i32, Desc::from_double(Self::right_shift(significand, width_diff)));
+        }
+        (exponent, Desc::from_double(significand))
+    }
+
+    /// Round the significand based on current rounding mode and last two bits.
+    fn round_significand(sign: bool, mut significand: Desc::Holder) -> (bool, Desc::Holder) {
+        let mut inexact = false;
+
+        if (significand & 3u32.into()) != Desc::Holder::zero() {
+            inexact = true;
+
+            match get_rounding_mode() {
+                RM_TIES_TO_EVEN =>
+                    significand += ((significand >> 2) & Desc::Holder::one()) + Desc::Holder::one(),
+                RM_TOWARD_ZERO => (),
+                RM_TOWARD_NEGATIVE => if sign { significand += 3u32.into() }
+                RM_TOWARD_POSITIVE => if !sign { significand += 3u32.into() }
+                RM_TIES_TO_AWAY =>
+                    // If last two bits are 10 or 11, then round up.
+                    significand += 2u32.into(),
+                _ => unreachable!(),
+            }
+        }
+
+        (inexact, significand >> 2)
+    }
+
+    /// Get the finite number overflowing result in current rounding mode.
+    fn round_overflow(sign: bool) -> Self {
+        set_exception_flag(EX_OVERFLOW | EX_INEXACT);
+
+        // When we are rounding away from the Infinity, we set the result
+        // to be the largest finite number.
+        let mut value = Self::infinity(sign);
+
+        let rm = get_rounding_mode();
+        if (sign && rm == RM_TOWARD_POSITIVE) || (!sign && rm == RM_TOWARD_NEGATIVE) || rm == RM_TOWARD_ZERO {
+
+            // Decrement by one will shift value from infinity to max finite number
+            value.0 -= Desc::Holder::one();
+        }
+
+        value
+    }
+
+    /// Principle about rounding: to round correctly, we need two piece of information:
+    /// 1. the first bit beyond target precision
+    /// 2. whether we discard any bits after that bit.
+    /// * If a=0, b=0, then the remainder is 0.
+    /// * If a=0, b=1, then the remainder is in range (0, 0.5)
+    /// * If a=1, b=0, then the remainder is 0.5.
+    /// * If a=1, b=1, then the remainder is in range (0.5, 1).
+    /// Therefore we require signicand to contain two more bits beyond precision.
+    /// Input must be normal.
+    fn round(sign: bool, mut exponent: i32, significand: Desc::Holder) -> Self {
+        if exponent > Self::MAXIMUM_EXPONENT { return Self::round_overflow(sign) }
+
+        let mut value = Self(Desc::Holder::zero());
+        value.set_sign(sign);
+
+        // To yield correct result, we need to first subnormalize the number before rounding.
+        let mut rounded = significand;
+        if exponent < Self::MINIMUM_EXPONENT {
+            rounded = Self::right_shift(rounded, (Self::MINIMUM_EXPONENT - exponent) as u32);
+        }
+
+        let (inexact, mut rounded) = Self::round_significand(sign, rounded);
+        if inexact {
+            set_exception_flag(EX_INEXACT);
+
+            // When the significand is all 1 and rounding causes it to round up.
+            // Since when this happens, resulting significand should be all zero.
+            // In this case casting significand to "Significand" will yield correct
+            // result, but we need to increment exponent.
+            if rounded == Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 1) {
+                exponent += 1;
+                rounded >>= 1;
+            }
+        }
+
+        // Underflow or subnormal
+        if exponent < Self::MINIMUM_EXPONENT {
+
+            // The border between subnormal and normal.
+            if rounded == Desc::Holder::one() << Desc::SIGNIFICAND_WIDTH {
+
+                // In this special case, we need to deal with underflow flag very carefully.
+                // IEEE specifies that the underflow flag should only be set if rounded result
+                // in *unbounded* exponent will yield to an overflow.
+                if Self::round_significand(sign, significand).1 !=
+                    Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 1) {
+
+                    set_exception_flag(EX_UNDERFLOW);
+                }
+
+                value.set_biased_exponent(1);
+                value.set_trailing_significand(Desc::Holder::zero());
+                return value;
+            }
+
+            if inexact {
+                set_exception_flag(EX_UNDERFLOW);
+            }
+
+            value.set_biased_exponent(0);
+            value.set_trailing_significand(rounded);
+            return value;
+        }
+
+        if exponent > Self::MAXIMUM_EXPONENT { return Self::round_overflow(sign) }
+
+        value.set_biased_exponent((exponent + Self::EXPONENT_BIAS) as u32);
+        value.set_trailing_significand(rounded);
+        value
+    }
+
+    fn normalize_and_round(sign: bool, exponent: i32, significand: Desc::Holder) -> Self {
+        let (exponent, final_significand) = Self::normalize(exponent, significand);
+        Self::round(sign, exponent, final_significand)
+    }
+
+    fn normalize_and_round_dbl(sign: bool, exponent: i32, significand: Desc::DoubleHolder) -> Self {
+        let (exponent, final_significand) = Self::normalize_dbl(exponent, significand);
+        Self::round(sign, exponent, final_significand)
+    }
+
+    fn propagate_nan(a: Self, b: Self) -> Self {
+        if a.is_signaling() || b.is_signaling() {
+            set_exception_flag(EX_INVALID_OPERATION);
+        }
+        Self::quiet_nan()
+    }
+
+    fn cancellation_zero() -> Self {
+        Self::zero(get_rounding_mode() == RM_TOWARD_NEGATIVE)
+    }
+
     // #endregion
 
     // #region Component accessors
@@ -149,10 +383,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         self.0 = (self.0 &! mask) | (value & mask);
     }
 
-    //
-    // #endregion
-
-    fn get_normalized_significand(&self) -> (u32, Desc::Holder) {
+    fn get_normalized_significand(&self) -> (i32, Desc::Holder) {
         let biased_exponent = self.biased_exponent();
         let trailing_significand = self.trailing_significand();
 
@@ -162,15 +393,15 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         if biased_exponent == 0 {
             let width_diff = Desc::SIGNIFICAND_WIDTH - trailing_significand.log2_floor();
-            return (Self::MINIMUM_EXPONENT - width_diff, trailing_significand << (width_diff + 2));
+            return (Self::MINIMUM_EXPONENT - width_diff as i32, trailing_significand << (width_diff + 2));
         }
 
-        let exponent = biased_exponent - Self::EXPONENT_BIAS;
+        let exponent = biased_exponent as i32 - Self::EXPONENT_BIAS;
         let significand = trailing_significand | (Desc::Holder::one() << Desc::SIGNIFICAND_WIDTH);
         (exponent, significand << 2)
     }
 
-    fn get_significand(&self) -> (u32, Desc::Holder)  {
+    fn get_significand(&self) -> (i32, Desc::Holder)  {
         let biased_exponent = self.biased_exponent();
         let trailing_significand = self.trailing_significand();
 
@@ -182,9 +413,407 @@ impl<Desc: FpDesc> Fp<Desc> {
             return (Self::MINIMUM_EXPONENT, trailing_significand << 2);
         }
 
-        let exponent = biased_exponent - Self::EXPONENT_BIAS;
+        let exponent = biased_exponent as i32 - Self::EXPONENT_BIAS;
         let significand = trailing_significand | (Desc::Holder::one() << Desc::SIGNIFICAND_WIDTH);
         (exponent, significand << 2)
+    }
+
+    //
+    // #endregion
+
+    // #region arithmetic operations
+    // IEEE 754-2008 5.4.1 formatOf general-computational operations > Arithmetic operations
+    //
+
+    /// Magnitude add. a and b must have the same sign and not NaN.
+    /// a must have greater magnitude.
+    fn add_magnitude(a: Self, b: Self) -> Self {
+
+        // Handling for Infinity
+        if a.is_infinite() { return a }
+
+        // If both are subnormal, then neither signifcand we retrieved below will be normal.
+        // So we handle them specially here.
+        if a.biased_exponent() == 0 {
+            let significand_sum = a.trailing_significand() + b.trailing_significand();
+            let mut ret = Self(significand_sum);
+            ret.set_sign(a.sign());
+            return ret;
+        }
+
+        let (mut exponent_a, significand_a) = a.get_significand();
+        let (exponent_b, mut significand_b) = b.get_significand();
+
+        // Align a and b so they share the same exponent.
+        if exponent_a != exponent_b {
+            significand_b = Self::right_shift(significand_b, (exponent_a - exponent_b) as u32);
+        }
+
+        // Add significands and take care of the carry bit
+        let mut significand_sum = significand_a + significand_b;
+        if (significand_sum & (Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 3))) != Desc::Holder::zero() {
+            exponent_a += 1;
+            significand_sum = Self::right_shift(significand_sum, 1);
+        }
+
+        Self::round(a.sign(), exponent_a, significand_sum)
+    }
+
+    /// Magnitude subtract. a and b must have the same sign and not NaN.
+    /// a must have greater magnitude.
+    fn subtract_magnitude(a: Self, b: Self) -> Self {
+
+        // Special handling for infinity
+        if a.is_infinite() {
+
+            // Subtracting two infinities
+            if b.is_infinite() {
+                set_exception_flag(EX_INVALID_OPERATION);
+                return Self::quiet_nan();
+            }
+
+            return a;
+        }
+
+        let (exponent_a, mut significand_a) = a.get_significand();
+        let (exponent_b, mut significand_b) = b.get_significand();
+
+        if exponent_a == exponent_b {
+            let significand_difference = significand_a - significand_b;
+
+            // Special treatment on zero
+            if significand_difference == Desc::Holder::zero() {
+                return Self::cancellation_zero();
+            }
+
+            return Self::normalize_and_round(a.sign(), exponent_a, significand_difference);
+        }
+
+        // When we subtract two numbers, we might lose significance.
+        // In order to still yield correct rounded result, we need one more bit to account for this.
+        significand_a <<= 1;
+        significand_b <<= 1;
+
+        // Align a and b for substraction
+        significand_b = Self::right_shift(significand_b, (exponent_a - exponent_b) as u32);
+
+        let significand_difference = significand_a - significand_b;
+
+        // Need to reduce exponent_a by 1 to account for the shift.
+        return Self::normalize_and_round(a.sign(), exponent_a - 1, significand_difference);
+    }
+
+    fn multiply(a: Self, b: Self) -> Self {
+
+        // Enforce |a| > |b| for easier handling.
+        let (mut a, mut b) = if Self::total_order_magnitude(a, b) == Ordering::Less { (b, a) } else { (a, b) };
+
+        if a.is_nan() { return Self::propagate_nan(a, b) }
+
+        let sign = a.sign() ^ b.sign();
+
+        // Handling infinities
+        if a.is_infinite() {
+            if b.is_zero() {
+                set_exception_flag(EX_INVALID_OPERATION);
+                return Self::quiet_nan();
+            }
+            a.set_sign(sign);
+            return a;
+        }
+
+        // If either is zero
+        if b.is_zero() {
+            b.set_sign(sign);
+            return b;
+        }
+
+        let (exponent_a, significand_a) = a.get_normalized_significand();
+        let (exponent_b, significand_b) = b.get_normalized_significand();
+
+        let product_exponent = exponent_a + exponent_b - Desc::SIGNIFICAND_WIDTH as i32;
+
+        // Normalized significand reserve 2 bits for rounding for both significand_a and significand_b
+        // and we only need 2 bits, so shift one of them back by 2.
+        let product = Desc::to_double(significand_a >> 2) * Desc::to_double(significand_b);
+
+        Self::normalize_and_round_dbl(sign, product_exponent, product)
+    }
+
+    fn divide(a: Self, b: Self) -> Self {
+
+        // Handling NaN
+        if a.is_nan() || b.is_nan() { return Self::propagate_nan(a, b) }
+
+        let sign = a.sign() ^ b.sign();
+
+        // Handling Infinities
+        if a.is_infinite() {
+
+            // inf / inf = NaN
+            if b.is_infinite() {
+                set_exception_flag(EX_INVALID_OPERATION);
+                return Self::quiet_nan();
+            }
+
+            return Self::infinity(sign);
+        }
+
+        if b.is_infinite()  {
+            return Self::zero(sign);
+        }
+
+        // Handling zeroes
+        if a.is_zero() {
+
+            // 0 / 0 = NaN
+            if b.is_zero() {
+                set_exception_flag(EX_INVALID_OPERATION);
+                return Self::quiet_nan();
+            }
+
+            return Self::zero(sign);
+        }
+
+        // finite / 0, signaling divide_by_zero exception
+        if b.is_zero() {
+            set_exception_flag(EX_DIVIDE_BY_ZERO);
+            return Self::infinity(sign);
+        }
+
+        let (exponent_a, mut significand_a) = a.get_normalized_significand();
+        let (exponent_b, significand_b) = b.get_normalized_significand();
+
+        let mut quotient_exponent = exponent_a - exponent_b;
+
+        // Adjust exponent in some cases so the quotient will always be in range [1, 2)
+        if significand_a < significand_b {
+            significand_a <<= 1;
+            quotient_exponent -= 1;
+        }
+
+        // Digit-by-digit algorithm is (psuedo-code):
+        //
+        // quotient = 1 (since we know the quotient will be normal)
+        // for (bit = 0.5; bit != 1ulp; bit /= 2) {
+        //     if (significand_a >= (quotient + bit) * significand_b) {
+        //         quotient += bit;
+        //     }
+        // }
+        // if (significand_a >= quotient * significand_b) quotient += 1ulp
+        //
+        // As an optimization, we also keep variable
+        //     remainder_over_bit = (significand_a - quotient * significand_b) / bit
+        //         This value will always be smaller than (significand_b << 1), so it can always fit in Significand.
+        //         The initial value of this variable will be (significand_a - significand_b) << 1.
+        let mut quotient = Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 2);
+        let mut bit = Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 1);
+        let mut remainder_over_bit = (significand_a - significand_b) << 1;
+
+        while bit != Desc::Holder::one() {
+            // significand_a >= (quotient + bit) * significand_b <=>
+            // significand_a - quotient * significand_b >= bit * significand_b <=>
+            // (significand_a - quotient * significand_b) / bit >= significand_b <=>
+            if remainder_over_bit >= significand_b {
+
+                // we need to update the new value to (significand_a - (quotient + bit) * significand_b) / bit
+                // so decrement by significand_b
+                remainder_over_bit -= significand_b;
+                quotient += bit;
+            }
+
+            // update bit' = bit >> 1;
+            bit >>= 1;
+            remainder_over_bit <<= 1;
+        }
+
+        // We still need to take action to make sure rounding is correct.
+        if remainder_over_bit != Desc::Holder::zero() {
+            quotient |= Desc::Holder::one();
+        }
+
+        // Since the result is in range [1, 2), it will always stay normalized.
+        Self::round(sign, quotient_exponent, quotient)
+    }
+
+    pub fn square_root(self) -> Self {
+
+        // Handling NaN
+        if self.is_nan() {
+            if self.is_signaling() {
+                set_exception_flag(EX_DIVIDE_BY_ZERO);
+                return Self::quiet_nan();
+            }
+
+            return Self::quiet_nan();
+        }
+
+        // Zero always return as is
+        if self.is_zero() { return self }
+
+        // For non-zero negative number, sqrt is not defined
+        if self.sign() {
+            set_exception_flag(EX_INVALID_OPERATION);
+            return Self::quiet_nan();
+        }
+
+        if self.is_infinite() { return self }
+
+        let (mut exponent, mut significand) = self.get_normalized_significand();
+
+        // Consider the number of form (1 + x) * (2 ** exponent)
+        // Then if exponent is odd, the sqrt is sqrt(1 + x) * (2 ** (exponent / 2))
+        // Otherwise the result is sqrt(2 * (1 + x)) * (2 ** ((exponet - 1) / 2))
+        // So make sure the exponent is even.
+        // After this we have to deal with calculating the square root of 1 + x or 2 * (1 + x)
+        // which is in range [1, 4), so the result will be in range [1, 2). This is fine
+        // since the result will remain normal.
+        if exponent % 2 != 0 {
+            exponent -= 1;
+            significand <<= 1;
+        }
+
+        // Digit-by-digit algorithm is (psuedo-code):
+        //
+        // result = 1 (since we know the result will be normal)
+        // for (bit = 0.5; bit != 1ulp; bit /= 2) {
+        //     if (significand >= (result + bit) ** 2) {
+        //         result += bit;
+        //     }
+        // }
+        // if (significand >= result ** 2) result += 1ulp
+        //
+        // As an optimization, we also keep variable
+        //     half_bit = bit / 2 (since the last bit will always be zero)
+        //     half_significand_minus_result_squared_over_bit = (significand - result ** 2) / bit / 2
+        //         horrible name, but since it multiplies by (1 / bit), the last bit will always be zero.
+        //         By not including the bit, the result will be bounded by [0, 4) and thus can fit in Significand.
+        //         and even better, given initial value of bit is 0.5, and initial value of result is 1,
+        //         initial value of this variable will be exactly significand - result!
+        let mut result = Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 2);
+        let mut half_bit = Desc::Holder::one() << Desc::SIGNIFICAND_WIDTH;
+        let mut half_significand_minus_result_squared_over_bit = significand - result;
+
+        while half_bit != Desc::Holder::zero() {
+            // significand >= (result + bit) ** 2 <=>
+            // significand >= result ** 2 + 2 * result * bit + bit ** 2 <=>
+            // signicand - result ** 2 >= 2 * result * bit + bit ** 2 <=>
+            // (signicand - result ** 2) / bit / 2 >= result + bit / 2 <=>
+            if half_significand_minus_result_squared_over_bit >= result + half_bit {
+
+                // we need to update the new value to (significand - (result + bit) ** 2) / bit / 2
+                // so decrement by (significand - result**2) / bit / 2 - (significand - (result + bit)**2) / 2 which is
+                // ((result + bit) ** 2 - result ** 2) / bit / 2 = result + bit / 2
+                // so update half_significand_minus_result_squared_over_bit accordingly.
+                half_significand_minus_result_squared_over_bit -= result + half_bit;
+                result += half_bit << 1;
+            }
+
+            // update bit' = bit >> 1;
+            half_bit >>= 1;
+            half_significand_minus_result_squared_over_bit <<= 1;
+        }
+
+        // We still need to take action to make sure rounding is correct.
+        if half_significand_minus_result_squared_over_bit != Desc::Holder::zero() {
+            result |= Desc::Holder::one();
+        }
+
+        // Since the result is in range [1, 2), it will always stay normalized.
+        return Self::round(false, exponent / 2, result);
+    }
+
+    pub fn fused_multiply_add(a: Self, b: Self, c: Self) -> Self {
+
+        // Enforce |a| > |b| for easier handling.
+        let (a, b) = if Self::total_order_magnitude(a, b) == Ordering::Less { (b, a) } else { (a, b) };
+
+        // Handle NaNs.
+        if a.is_nan() { return Self::propagate_nan(Self::propagate_nan(a, b), c) }
+
+        let mut sign_product = a.sign() ^ b.sign();
+
+        // Handle Infinity cases
+        if a.is_infinite() {
+
+            // If Infinity * 0, then invalid operation
+            if b.is_zero() {
+                set_exception_flag(EX_INVALID_OPERATION);
+                return Self::quiet_nan();
+            }
+
+            // Infinity + NaN
+            if c.is_nan() { return Self::propagate_nan(c, c) }
+
+            // Infinity - Infinity
+            if c.is_infinite() && c.sign() != sign_product {
+                set_exception_flag(EX_INVALID_OPERATION);
+                return Self::quiet_nan();
+            }
+
+            return Self::infinity(sign_product);
+        }
+
+        // NaN and Infinity handling for the addition
+        if c.is_nan() { return Self::propagate_nan(c, c) }
+        if c.is_infinite() { return c }
+
+        // The product gives a zero
+        if b.is_zero() {
+            // 0 - 0, special treatment
+            if c.is_zero() { return Self::cancellation_zero() }
+            return c;
+        }
+
+        // The following is similar to the multiplication code
+        let (exponent_a, significand_a) = a.get_normalized_significand();
+        let (exponent_b, significand_b) = b.get_normalized_significand();
+
+        let mut product_exponent = exponent_a + exponent_b - Desc::SIGNIFICAND_WIDTH as i32;
+        let mut product = Desc::to_double(significand_a >> 2) * Desc::to_double(significand_b);
+
+        // a * b + 0, we can return early.
+        if c.is_zero() {
+            return Self::normalize_and_round_dbl(sign_product, product_exponent, product);
+        }
+
+        let (mut exponent_c, significand_c) = c.get_normalized_significand();
+        let mut significand_c = Desc::to_double(significand_c);
+
+        // Adjust significand of c, so when the values are cancelling each other we have enough significand.
+        // Note that since the last two bit of product is always zero, the shift amount can be modified to be
+        // significand_width +- 1.
+        exponent_c -= Desc::SIGNIFICAND_WIDTH as i32;
+        significand_c <<= Desc::SIGNIFICAND_WIDTH;
+
+        // Align product and c.
+        if exponent_c < product_exponent {
+            significand_c = Self::right_shift(significand_c, (product_exponent - exponent_c) as u32);
+        } else if exponent_c > product_exponent {
+            product = Self::right_shift(product, (exponent_c - product_exponent) as u32);
+            product_exponent = exponent_c;
+        }
+
+        // a * b + c
+        if c.sign() == sign_product {
+            product += significand_c;
+        } else {
+
+            // Cancellation
+            if product == significand_c {
+                return Self::cancellation_zero();
+            }
+
+            // Make sure it is BIG - small
+            if product < significand_c {
+                sign_product = !sign_product;
+                product = significand_c - product
+            } else {
+                product -= significand_c;
+            }
+        }
+
+        return Self::normalize_and_round_dbl(sign_product, product_exponent, product);
     }
 
     // #region sign bit operations
@@ -388,6 +1017,44 @@ impl<Desc: FpDesc> std::cmp::PartialOrd for Fp<Desc> {
     }
 }
 
+impl<Desc: FpDesc> ops::Add<Self> for Fp<Desc> {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+
+        // Enforce |a| > |b| for easier handling.
+        let (a, b) = if Self::total_order_magnitude(self, rhs) == Ordering::Less { (rhs, self) } else { (self, rhs) };
+
+        if a.is_nan() { return Self::propagate_nan(a, b) }
+
+        if a.sign() == b.sign() {
+            Self::add_magnitude(a, b)
+        } else {
+            Self::subtract_magnitude(a, -b)
+        }
+    }
+}
+
+impl<Desc: FpDesc> ops::Sub<Self> for Fp<Desc> {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        self + -rhs
+    }
+}
+
+impl<Desc: FpDesc> ops::Mul<Self> for Fp<Desc> {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self {
+        Self::multiply(self, rhs)
+    }
+}
+
+impl<Desc: FpDesc> ops::Div<Self> for Fp<Desc> {
+    type Output = Self;
+    fn div(self, rhs: Self) -> Self {
+        Self::divide(self, rhs)
+    }
+}
+
 impl<Desc: FpDesc> ops::Neg for Fp<Desc> {
     type Output = Self;
     fn neg(self) -> Self {
@@ -402,6 +1069,10 @@ impl FpDesc for F32Desc {
     const EXPONENT_WIDTH: u32 = 8;
     const SIGNIFICAND_WIDTH: u32 = 23;
     type Holder = u32;
+    type DoubleHolder = u64;
+
+    fn to_double(v: u32) -> u64 { v as u64 }
+    fn from_double(v: u64) -> u32 { v as u32 }
 }
 
 impl Int for u32 {
@@ -418,6 +1089,10 @@ impl FpDesc for F64Desc {
     const EXPONENT_WIDTH: u32 = 11;
     const SIGNIFICAND_WIDTH: u32 = 52;
     type Holder = u64;
+    type DoubleHolder = u128;
+
+    fn to_double(v: u64) -> u128 { v as u128 }
+    fn from_double(v: u128) -> u64 { v as u64 }
 }
 
 impl Int for u64 {
@@ -425,6 +1100,13 @@ impl Int for u64 {
     fn one() -> u64 { 1 }
     fn as_u32(self) -> u32 { self as u32 }
     fn log2_floor(self) -> u32 { 63 - self.leading_zeros() }
+}
+
+impl Int for u128 {
+    fn zero() -> u128 { 0 }
+    fn one() -> u128 { 1 }
+    fn as_u32(self) -> u32 { self as u32 }
+    fn log2_floor(self) -> u32 { 127 - self.leading_zeros() }
 }
 
 pub type F32 = Fp<F32Desc>;

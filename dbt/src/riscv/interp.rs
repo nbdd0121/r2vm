@@ -369,6 +369,13 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             ctx.fp_registers[frd] = value.0
         }}
     }
+    macro_rules! set_rm {
+        ($rm: expr) => {{
+            let rm = if $rm == 0b111 { (ctx.fcsr >> 5) as u32 } else { $rm as u32 };
+            if rm >= 5 { trap!(2, 0) }
+            softfp::set_rounding_mode(rm);
+        }}
+    }
     macro_rules! clear_flags {
         () => {
             softfp::clear_exception_flag()
@@ -587,6 +594,36 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             if vaddr & 3 != 0 { trap!(5, vaddr) }
             write_vaddr(ctx, vaddr, read_fs!(frs2).0)?
         }
+        Op::FaddS { frd, frs1, frs2, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, read_fs!(frs1) + read_fs!(frs2));
+            update_flags!();
+        }
+        Op::FsubS { frd, frs1, frs2, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, read_fs!(frs1) - read_fs!(frs2));
+            update_flags!();
+        }
+        Op::FmulS { frd, frs1, frs2, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, read_fs!(frs1) * read_fs!(frs2));
+            update_flags!();
+        }
+        Op::FdivS { frd, frs1, frs2, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, read_fs!(frs1) / read_fs!(frs2));
+            update_flags!();
+        }
+        Op::FsqrtS { frd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, read_fs!(frs1).square_root());
+            update_flags!();
+        }
         Op::FsgnjS { frd, frs1, frs2 } => write_fs!(frd, read_fs!(frs1).copy_sign(read_fs!(frs2))),
         Op::FsgnjnS { frd, frs1, frs2 } => write_fs!(frd, read_fs!(frs1).copy_sign_negated(read_fs!(frs2))),
         Op::FsgnjxS { frd, frs1, frs2 } => write_fs!(frd, read_fs!(frs1).copy_sign_xored(read_fs!(frs2))),
@@ -622,6 +659,31 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         Op::FmvWX { frd, rs1 } => {
             write_fs!(frd, F32::new(read_32!(rs1)));
         }
+        Op::FmaddS { frd, frs1, frs2, frs3, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, F32::fused_multiply_add(read_fs!(frs1), read_fs!(frs2), read_fs!(frs3)));
+            update_flags!();
+        }
+        Op::FmsubS { frd, frs1, frs2, frs3, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, F32::fused_multiply_add(read_fs!(frs1), read_fs!(frs2), -read_fs!(frs3)));
+            update_flags!();
+        }
+        Op::FnmsubS { frd, frs1, frs2, frs3, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, F32::fused_multiply_add(-read_fs!(frs1), read_fs!(frs2), read_fs!(frs3)));
+            update_flags!();
+        }
+        Op::FnmaddS { frd, frs1, frs2, frs3, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, -F32::fused_multiply_add(read_fs!(frs1), read_fs!(frs2), read_fs!(frs3)));
+            update_flags!();
+        }
+
         /* D-extension */
         Op::Fld { frd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
@@ -632,6 +694,36 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 7 != 0 { trap!(5, vaddr) }
             write_vaddr(ctx, vaddr, read_fd!(frs2).0)?
+        }
+        Op::FaddD { frd, frs1, frs2, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, read_fd!(frs1) + read_fd!(frs2));
+            update_flags!();
+        }
+        Op::FsubD { frd, frs1, frs2, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, read_fd!(frs1) - read_fd!(frs2));
+            update_flags!();
+        }
+        Op::FmulD { frd, frs1, frs2, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, read_fd!(frs1) * read_fd!(frs2));
+            update_flags!();
+        }
+        Op::FdivD { frd, frs1, frs2, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, read_fd!(frs1) / read_fd!(frs2));
+            update_flags!();
+        }
+        Op::FsqrtD { frd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, read_fd!(frs1).square_root());
+            update_flags!();
         }
         Op::FsgnjD { frd, frs1, frs2 } => write_fd!(frd, read_fd!(frs1).copy_sign(read_fd!(frs2))),
         Op::FsgnjnD { frd, frs1, frs2 } => write_fd!(frd, read_fd!(frs1).copy_sign_negated(read_fd!(frs2))),
@@ -667,6 +759,30 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         }
         Op::FmvDX { frd, rs1 } => {
             write_fd!(frd, F64::new(read_reg!(rs1)));
+        }
+        Op::FmaddD { frd, frs1, frs2, frs3, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, F64::fused_multiply_add(read_fd!(frs1), read_fd!(frs2), read_fd!(frs3)));
+            update_flags!();
+        }
+        Op::FmsubD { frd, frs1, frs2, frs3, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, F64::fused_multiply_add(read_fd!(frs1), read_fd!(frs2), -read_fd!(frs3)));
+            update_flags!();
+        }
+        Op::FnmsubD { frd, frs1, frs2, frs3, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, F64::fused_multiply_add(-read_fd!(frs1), read_fd!(frs2), read_fd!(frs3)));
+            update_flags!();
+        }
+        Op::FnmaddD { frd, frs1, frs2, frs3, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, -F64::fused_multiply_add(read_fd!(frs1), read_fd!(frs2), read_fd!(frs3)));
+            update_flags!();
         }
 
         /* M-extension */
