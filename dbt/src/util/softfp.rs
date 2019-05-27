@@ -3,6 +3,7 @@
 use std::ops;
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU32, Ordering as MemOrder};
+use super::int::{CastFrom, CastTo, Int, UInt};
 
 // #region Rounding mode constant and manipulation
 //
@@ -83,39 +84,11 @@ const CLASS_POSITIVE_INFINITY  : u32 = 7;
 const CLASS_SIGNALING_NAN      : u32 = 8;
 const CLASS_QUIET_NAN          : u32 = 9;
 
-pub trait Int: Sized + Ord + Eq + Copy +
-    ops::Shr<u32, Output=Self> +
-    ops::Shl<u32, Output=Self> +
-    ops::Add<Self, Output=Self> +
-    ops::Sub<Self, Output=Self> +
-    ops::Mul<Self, Output=Self> +
-    ops::BitAnd<Self, Output=Self> +
-    ops::BitOr<Self, Output=Self> +
-    ops::ShrAssign<u32> +
-    ops::ShlAssign<u32> +
-    ops::AddAssign<Self> +
-    ops::SubAssign<Self> +
-    ops::BitAndAssign<Self> +
-    ops::BitOrAssign<Self> +
-    ops::Not<Output=Self> +
-    std::fmt::LowerHex +
-    From<u32> {
-
-    fn zero() -> Self;
-    fn one() -> Self;
-    /// Convert into u32. Necessary for extracting exponent.
-    fn as_u32(self) -> u32;
-
-    fn log2_floor(self) -> u32;
-}
-
 pub trait FpDesc: Copy {
     const EXPONENT_WIDTH: u32;
     const SIGNIFICAND_WIDTH: u32;
-    type Holder: Int;
-    type DoubleHolder: Int;
-    fn to_double(v: Self::Holder) -> Self::DoubleHolder;
-    fn from_double(v: Self::DoubleHolder) -> Self::Holder;
+    type Holder: UInt + CastFrom<u32> + CastTo<u32> + CastTo<Self::DoubleHolder>;
+    type DoubleHolder: UInt + CastTo<Self::Holder>;
 }
 
 #[derive(Clone, Copy)]
@@ -168,8 +141,8 @@ impl<Desc: FpDesc> Fp<Desc> {
     /// Shift while preserving rounding property.
     /// The last bit is the OR of all bits shifted away.
     /// For details check the comment of round()
-    fn right_shift<T: Int>(significand: T, shift_amount: u32) -> T {
-        let (mut value, residue) = if shift_amount >= std::mem::size_of::<T>() as u32 * 8 {
+    fn right_shift<T: UInt>(significand: T, shift_amount: u32) -> T {
+        let (mut value, residue) = if shift_amount >= T::bit_width() {
             // If shift amount is large enough, then the entire significand is residue
             (T::zero(), significand)
         } else {
@@ -183,47 +156,37 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     /// Normalized the significand while preserving rounding property.
-    fn normalize(exponent: i32, significand: Desc::Holder) -> (i32, Desc::Holder) {
+    fn normalize<T: UInt + CastTo<Desc::Holder>>(exponent: i32, significand: T) -> (i32, Desc::Holder) {
         let width = significand.log2_floor() - 2;
-        if width < Desc::SIGNIFICAND_WIDTH {
-            let width_diff = Desc::SIGNIFICAND_WIDTH - width;
-            return (exponent - width_diff as i32, significand << width_diff);
-        } else if width > Desc::SIGNIFICAND_WIDTH {
-            let width_diff = width - Desc::SIGNIFICAND_WIDTH;
-            return (exponent + width_diff as i32, Self::right_shift(significand, width_diff));
-        }
+        let width_diff = width as i32 - Desc::SIGNIFICAND_WIDTH as i32;
+        let exponent = exponent + width_diff;
+        let significand = if width_diff <= 0 {
+            // For left-shift, convert before shift, in case it is smaller than Desc::Holder
+            significand.cast_to() << (-width_diff as u32)
+        } else {
+            // For right-shift, keep the original type first before shift, in case where it is
+            // larger than Desc::Holder.
+            Self::right_shift(significand, width_diff as u32).cast_to()
+        };
         (exponent, significand)
-    }
-
-    /// Normalized the significand while preserving rounding property.
-    fn normalize_dbl(exponent: i32, significand: Desc::DoubleHolder) -> (i32, Desc::Holder) {
-        let width = significand.log2_floor() - 2;
-        if width < Desc::SIGNIFICAND_WIDTH {
-            let width_diff = Desc::SIGNIFICAND_WIDTH - width;
-            return (exponent - width_diff as i32, Desc::from_double(significand << width_diff));
-        } else if width > Desc::SIGNIFICAND_WIDTH {
-            let width_diff = width - Desc::SIGNIFICAND_WIDTH;
-            return (exponent + width_diff as i32, Desc::from_double(Self::right_shift(significand, width_diff)));
-        }
-        (exponent, Desc::from_double(significand))
     }
 
     /// Round the significand based on current rounding mode and last two bits.
     fn round_significand(sign: bool, mut significand: Desc::Holder) -> (bool, Desc::Holder) {
         let mut inexact = false;
 
-        if (significand & 3u32.into()) != Desc::Holder::zero() {
+        if (significand & 3u32.cast_to()) != Desc::Holder::zero() {
             inexact = true;
 
             match get_rounding_mode() {
                 RM_TIES_TO_EVEN =>
                     significand += ((significand >> 2) & Desc::Holder::one()) + Desc::Holder::one(),
                 RM_TOWARD_ZERO => (),
-                RM_TOWARD_NEGATIVE => if sign { significand += 3u32.into() }
-                RM_TOWARD_POSITIVE => if !sign { significand += 3u32.into() }
+                RM_TOWARD_NEGATIVE => if sign { significand += 3u32.cast_to() }
+                RM_TOWARD_POSITIVE => if !sign { significand += 3u32.cast_to() }
                 RM_TIES_TO_AWAY =>
                     // If last two bits are 10 or 11, then round up.
-                    significand += 2u32.into(),
+                    significand += 2u32.cast_to(),
                 _ => unreachable!(),
             }
         }
@@ -320,13 +283,8 @@ impl<Desc: FpDesc> Fp<Desc> {
         value
     }
 
-    fn normalize_and_round(sign: bool, exponent: i32, significand: Desc::Holder) -> Self {
+    fn normalize_and_round<T: UInt + CastTo<Desc::Holder>>(sign: bool, exponent: i32, significand: T) -> Self {
         let (exponent, final_significand) = Self::normalize(exponent, significand);
-        Self::round(sign, exponent, final_significand)
-    }
-
-    fn normalize_and_round_dbl(sign: bool, exponent: i32, significand: Desc::DoubleHolder) -> Self {
-        let (exponent, final_significand) = Self::normalize_dbl(exponent, significand);
         Self::round(sign, exponent, final_significand)
     }
 
@@ -361,14 +319,14 @@ impl<Desc: FpDesc> Fp<Desc> {
 
     fn biased_exponent(&self) -> u32 {
         let mask = (Desc::Holder::one() << Desc::EXPONENT_WIDTH) - Desc::Holder::one();
-        ((self.0 >> Desc::SIGNIFICAND_WIDTH) & mask).as_u32()
+        CastTo::<u32>::cast_to((self.0 >> Desc::SIGNIFICAND_WIDTH) & mask)
     }
 
     /// Set the biased exponent of the floating pointer number.
     /// Only up to exponent_width bits are respected and all other bits are ignored.
     fn set_biased_exponent(&mut self, exp: u32) {
         let mask = ((Desc::Holder::one() << Desc::EXPONENT_WIDTH) - Desc::Holder::one()) << Desc::SIGNIFICAND_WIDTH;
-        self.0 = (self.0 &! mask) | ((Into::<Desc::Holder>::into(exp) << Desc::SIGNIFICAND_WIDTH) & mask);
+        self.0 = (self.0 &! mask) | ((CastTo::<Desc::Holder>::cast_to(exp) << Desc::SIGNIFICAND_WIDTH) & mask);
     }
 
     fn trailing_significand(&self) -> Desc::Holder {
@@ -535,9 +493,10 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         // Normalized significand reserve 2 bits for rounding for both significand_a and significand_b
         // and we only need 2 bits, so shift one of them back by 2.
-        let product = Desc::to_double(significand_a >> 2) * Desc::to_double(significand_b);
+        let product = CastTo::<Desc::DoubleHolder>::cast_to(significand_a >> 2) *
+                      CastTo::<Desc::DoubleHolder>::cast_to(significand_b);
 
-        Self::normalize_and_round_dbl(sign, product_exponent, product)
+        Self::normalize_and_round(sign, product_exponent, product)
     }
 
     fn divide(a: Self, b: Self) -> Self {
@@ -770,15 +729,16 @@ impl<Desc: FpDesc> Fp<Desc> {
         let (exponent_b, significand_b) = b.get_normalized_significand();
 
         let mut product_exponent = exponent_a + exponent_b - Desc::SIGNIFICAND_WIDTH as i32;
-        let mut product = Desc::to_double(significand_a >> 2) * Desc::to_double(significand_b);
+        let mut product = CastTo::<Desc::DoubleHolder>::cast_to(significand_a >> 2) *
+                          CastTo::<Desc::DoubleHolder>::cast_to(significand_b);
 
         // a * b + 0, we can return early.
         if c.is_zero() {
-            return Self::normalize_and_round_dbl(sign_product, product_exponent, product);
+            return Self::normalize_and_round(sign_product, product_exponent, product);
         }
 
         let (mut exponent_c, significand_c) = c.get_normalized_significand();
-        let mut significand_c = Desc::to_double(significand_c);
+        let mut significand_c = CastTo::<Desc::DoubleHolder>::cast_to(significand_c);
 
         // Adjust significand of c, so when the values are cancelling each other we have enough significand.
         // Note that since the last two bit of product is always zero, the shift amount can be modified to be
@@ -813,7 +773,7 @@ impl<Desc: FpDesc> Fp<Desc> {
             }
         }
 
-        return Self::normalize_and_round_dbl(sign_product, product_exponent, product);
+        return Self::normalize_and_round(sign_product, product_exponent, product);
     }
 
     // #region sign bit operations
@@ -1070,16 +1030,6 @@ impl FpDesc for F32Desc {
     const SIGNIFICAND_WIDTH: u32 = 23;
     type Holder = u32;
     type DoubleHolder = u64;
-
-    fn to_double(v: u32) -> u64 { v as u64 }
-    fn from_double(v: u64) -> u32 { v as u32 }
-}
-
-impl Int for u32 {
-    fn zero() -> u32 { 0 }
-    fn one() -> u32 { 1 }
-    fn as_u32(self) -> u32 { self }
-    fn log2_floor(self) -> u32 { 31 - self.leading_zeros() }
 }
 
 #[derive(Clone, Copy)]
@@ -1090,23 +1040,6 @@ impl FpDesc for F64Desc {
     const SIGNIFICAND_WIDTH: u32 = 52;
     type Holder = u64;
     type DoubleHolder = u128;
-
-    fn to_double(v: u64) -> u128 { v as u128 }
-    fn from_double(v: u128) -> u64 { v as u64 }
-}
-
-impl Int for u64 {
-    fn zero() -> u64 { 0 }
-    fn one() -> u64 { 1 }
-    fn as_u32(self) -> u32 { self as u32 }
-    fn log2_floor(self) -> u32 { 63 - self.leading_zeros() }
-}
-
-impl Int for u128 {
-    fn zero() -> u128 { 0 }
-    fn one() -> u128 { 1 }
-    fn as_u32(self) -> u32 { self as u32 }
-    fn log2_floor(self) -> u32 { 127 - self.leading_zeros() }
 }
 
 pub type F32 = Fp<F32Desc>;
