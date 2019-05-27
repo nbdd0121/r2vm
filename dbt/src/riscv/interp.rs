@@ -1,5 +1,5 @@
 use super::csr::Csr;
-use super::op::{LegacyOp, Op};
+use super::op::Op;
 use crate::util::softfp::{self, F32, F64};
 
 #[repr(C)]
@@ -278,7 +278,6 @@ fn icache() -> &'static mut FnvHashMap<u64, Block> {
 }
 
 extern {
-    fn legacy_step(ctx: &mut Context, op: LegacyOp) -> Trap;
 }
 
 fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
@@ -400,10 +399,6 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
     }
 
     match *op {
-        Op::Legacy(op) => {
-            let ex = unsafe{legacy_step(ctx, op)};
-            if ex != 0 { trap!(ex, 0) }
-        }
         Op::Illegal => { trap!(2, 0) }
         /* LOAD */
         Op::Lb { rd, rs1, imm } => {
@@ -637,6 +632,30 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             write_fs!(frd, F32::max(read_fs!(frs1), read_fs!(frs2)));
             update_flags!();
         }
+        Op::FcvtWS { rd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_32!(rd, read_fs!(frs1).convert_to_sint::<u32>());
+            update_flags!();
+        }
+        Op::FcvtWuS { rd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_32!(rd, read_fs!(frs1).convert_to_uint::<u32>());
+            update_flags!();
+        }
+        Op::FcvtLS { rd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_reg!(rd, read_fs!(frs1).convert_to_sint::<u64>());
+            update_flags!();
+        }
+        Op::FcvtLuS { rd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_reg!(rd, read_fs!(frs1).convert_to_uint::<u64>());
+            update_flags!();
+        }
         Op::FmvXW { rd, frs1 } => {
             write_32!(rd, read_fs!(frs1).0);
         }
@@ -654,6 +673,30 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         Op::FleS { rd, frs1, frs2 } => {
             clear_flags!();
             write_reg!(rd, (read_fs!(frs1) <= read_fs!(frs2)) as u64);
+            update_flags!();
+        }
+        Op::FcvtSW { frd, rs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, F32::convert_from_sint::<u32>(read_32!(rs1)));
+            update_flags!();
+        }
+        Op::FcvtSWu { frd, rs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, F32::convert_from_uint::<u32>(read_32!(rs1)));
+            update_flags!();
+        }
+        Op::FcvtSL { frd, rs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, F32::convert_from_sint::<u64>(read_reg!(rs1)));
+            update_flags!();
+        }
+        Op::FcvtSLu { frd, rs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, F32::convert_from_uint::<u64>(read_reg!(rs1)));
             update_flags!();
         }
         Op::FmvWX { frd, rs1 } => {
@@ -738,6 +781,41 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             write_fd!(frd, F64::max(read_fd!(frs1), read_fd!(frs2)));
             update_flags!();
         }
+        Op::FcvtSD { frd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fs!(frd, read_fd!(frs1).convert_format());
+            update_flags!();
+        }
+        Op::FcvtDS { frd, frs1, .. } => {
+            clear_flags!();
+            write_fd!(frd, read_fs!(frs1).convert_format());
+            update_flags!();
+        }
+        Op::FcvtWD { rd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_32!(rd, read_fd!(frs1).convert_to_sint::<u32>());
+            update_flags!();
+        }
+        Op::FcvtWuD { rd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_32!(rd, read_fd!(frs1).convert_to_uint::<u32>());
+            update_flags!();
+        }
+        Op::FcvtLD { rd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_reg!(rd, read_fd!(frs1).convert_to_sint::<u64>());
+            update_flags!();
+        }
+        Op::FcvtLuD { rd, frs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_reg!(rd, read_fd!(frs1).convert_to_uint::<u64>());
+            update_flags!();
+        }
         Op::FmvXD { rd, frs1 } => {
             write_reg!(rd, read_fd!(frs1).0);
         }
@@ -755,6 +833,30 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         Op::FleD { rd, frs1, frs2 } => {
             clear_flags!();
             write_reg!(rd, (read_fd!(frs1) <= read_fd!(frs2)) as u64);
+            update_flags!();
+        }
+        Op::FcvtDW { frd, rs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, F64::convert_from_sint::<u32>(read_32!(rs1)));
+            update_flags!();
+        }
+        Op::FcvtDWu { frd, rs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, F64::convert_from_uint::<u32>(read_32!(rs1)));
+            update_flags!();
+        }
+        Op::FcvtDL { frd, rs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, F64::convert_from_sint::<u64>(read_reg!(rs1)));
+            update_flags!();
+        }
+        Op::FcvtDLu { frd, rs1, rm } => {
+            set_rm!(rm);
+            clear_flags!();
+            write_fd!(frd, F64::convert_from_uint::<u64>(read_reg!(rs1)));
             update_flags!();
         }
         Op::FmvDX { frd, rs1 } => {

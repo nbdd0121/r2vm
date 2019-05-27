@@ -1,15 +1,5 @@
 use super::Csr;
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct LegacyOp {
-    opcode: u8,
-    rd: u8,
-    rs1: u8,
-    rs2: u8,
-    imm: i32,
-}
-
 /// This includes all supported RISC-V ops.
 /// Ops are sorted in the following order
 /// * Canonical order of extension
@@ -17,7 +7,6 @@ pub struct LegacyOp {
 /// * Increasing funct3 and then funct7, or their ordering in RISC-V spec
 #[derive(Clone, Copy)]
 pub enum Op {
-    Legacy(LegacyOp),
     Illegal,
     /* RV64I */
     /* Base Opcode = LOAD */
@@ -159,11 +148,19 @@ pub enum Op {
     FsgnjxS { frd: u8, frs1: u8, frs2: u8 },
     FminS { frd: u8, frs1: u8, frs2: u8 },
     FmaxS { frd: u8, frs1: u8, frs2: u8 },
+    FcvtWS { rd: u8, frs1: u8, rm: u8 },
+    FcvtWuS { rd: u8, frs1: u8, rm: u8 },
+    FcvtLS { rd: u8, frs1: u8, rm: u8 },
+    FcvtLuS { rd: u8, frs1: u8, rm: u8 },
     FmvXW { rd: u8, frs1: u8 },
     FclassS { rd: u8, frs1: u8 },
     FeqS { rd: u8, frs1: u8, frs2: u8 },
     FltS { rd: u8, frs1: u8, frs2: u8 },
     FleS { rd: u8, frs1: u8, frs2: u8 },
+    FcvtSW { frd: u8, rs1: u8, rm: u8 },
+    FcvtSWu { frd: u8, rs1: u8, rm: u8 },
+    FcvtSL { frd: u8, rs1: u8, rm: u8 },
+    FcvtSLu { frd: u8, rs1: u8, rm: u8 },
     FmvWX { frd: u8, rs1: u8 },
     /* Base Opcode = MADD */
     FmaddS { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
@@ -190,11 +187,21 @@ pub enum Op {
     FsgnjxD { frd: u8, frs1: u8, frs2: u8 },
     FminD { frd: u8, frs1: u8, frs2: u8 },
     FmaxD { frd: u8, frs1: u8, frs2: u8 },
+    FcvtSD { frd: u8, frs1: u8, rm: u8 },
+    FcvtDS { frd: u8, frs1: u8, rm: u8 },
+    FcvtWD { rd: u8, frs1: u8, rm: u8 },
+    FcvtWuD { rd: u8, frs1: u8, rm: u8 },
+    FcvtLD { rd: u8, frs1: u8, rm: u8 },
+    FcvtLuD { rd: u8, frs1: u8, rm: u8 },
     FmvXD { rd: u8, frs1: u8 },
     FclassD { rd: u8, frs1: u8 },
     FeqD { rd: u8, frs1: u8, frs2: u8 },
     FltD { rd: u8, frs1: u8, frs2: u8 },
     FleD { rd: u8, frs1: u8, frs2: u8 },
+    FcvtDW { frd: u8, rs1: u8, rm: u8 },
+    FcvtDWu { frd: u8, rs1: u8, rm: u8 },
+    FcvtDL { frd: u8, rs1: u8, rm: u8 },
+    FcvtDLu { frd: u8, rs1: u8, rm: u8 },
     FmvDX { frd: u8, rs1: u8 },
     /* Base Opcode = MADD */
     FmaddD { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
@@ -214,7 +221,6 @@ pub enum Op {
 impl Op {
     pub fn can_change_control_flow(&self) -> bool {
         match self {
-            Op::Legacy(op) => op.opcode == 0,
             // Branch and jump instructions will definitely disrupt the control flow.
             Op::Beq {..} |
             Op::Bne {..} |

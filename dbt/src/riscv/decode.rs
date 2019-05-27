@@ -1,9 +1,5 @@
-use super::op::{LegacyOp, Op};
+use super::op::Op;
 use super::Csr;
-
-extern {
-    fn legacy_decode(inst: u32) -> LegacyOp;
-}
 
 // #region: decoding helpers for 32-bit instructions
 //
@@ -738,6 +734,28 @@ pub fn decode(bits: u32) -> Op {
                     0b001 => Op::FmaxD { frd: rd, frs1: rs1, frs2: rs2 },
                     _ => Op::Illegal,
                 }
+                0b0100000 => match rs2 {
+                    0b00001 => Op::FcvtSD { frd: rd, frs1: rs1, rm: function as u8 },
+                    _ => Op::Illegal,
+                }
+                0b0100001 => match rs2 {
+                    0b00000 => Op::FcvtDS { frd: rd, frs1: rs1, rm: function as u8 },
+                    _ => Op::Illegal,
+                }
+                0b1100000 => match rs2 {
+                    0b00000 => Op::FcvtWS { rd, frs1: rs1, rm: function as u8 },
+                    0b00001 => Op::FcvtWuS { rd, frs1: rs1, rm: function as u8 },
+                    0b00010 => Op::FcvtLS { rd, frs1: rs1, rm: function as u8 },
+                    0b00011 => Op::FcvtLuS { rd, frs1: rs1, rm: function as u8 },
+                    _ => Op::Illegal,
+                }
+                0b1100001 => match rs2 {
+                    0b00000 => Op::FcvtWD { rd, frs1: rs1, rm: function as u8 },
+                    0b00001 => Op::FcvtWuD { rd, frs1: rs1, rm: function as u8 },
+                    0b00010 => Op::FcvtLD { rd, frs1: rs1, rm: function as u8 },
+                    0b00011 => Op::FcvtLuD { rd, frs1: rs1, rm: function as u8 },
+                    _ => Op::Illegal,
+                }
                 0b1110000 => match (rs2, function) {
                     (0b00000, 0b000) => Op::FmvXW { rd, frs1: rs1 },
                     (0b00000, 0b001) => Op::FclassS { rd, frs1: rs1 },
@@ -760,6 +778,20 @@ pub fn decode(bits: u32) -> Op {
                     0b010 => Op::FeqD { rd, frs1: rs1, frs2: rs2 },
                     _ => Op::Illegal,
                 }
+                0b1101000 => match rs2 {
+                    0b00000 => Op::FcvtSW { frd: rd, rs1, rm: function as u8 },
+                    0b00001 => Op::FcvtSWu { frd: rd, rs1, rm: function as u8 },
+                    0b00010 => Op::FcvtSL { frd: rd, rs1, rm: function as u8 },
+                    0b00011 => Op::FcvtSLu { frd: rd, rs1, rm: function as u8 },
+                    _ => Op::Illegal,
+                }
+                0b1101001 => match rs2 {
+                    0b00000 => Op::FcvtDW { frd: rd, rs1, rm: function as u8 },
+                    0b00001 => Op::FcvtDWu { frd: rd, rs1, rm: function as u8 },
+                    0b00010 => Op::FcvtDL { frd: rd, rs1, rm: function as u8 },
+                    0b00011 => Op::FcvtDLu { frd: rd, rs1, rm: function as u8 },
+                    _ => Op::Illegal,
+                }
                 0b1111000 => match (rs2, function) {
                     (0b00000, 0b000) => Op::FmvWX { frd: rd, rs1 },
                     _ => Op::Illegal,
@@ -768,7 +800,7 @@ pub fn decode(bits: u32) -> Op {
                     (0b00000, 0b000) => Op::FmvDX { frd: rd, rs1 },
                     _ => Op::Illegal,
                 }
-                _ => Op::Legacy(unsafe { legacy_decode(bits) }),
+                _ => Op::Illegal,
             }
         }
 
@@ -817,7 +849,7 @@ pub fn decode(bits: u32) -> Op {
                 _ => Op::Illegal,
             }
         }
-        _ => Op::Legacy(unsafe { legacy_decode(bits) }),
+        _ => Op::Illegal,
     }
 }
 

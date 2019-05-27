@@ -14,7 +14,6 @@ use super::op::{Op};
 pub fn mnemonic(op: &Op) -> &'static str {
     match *op {
         Op::Illegal {..} => "illegal",
-        Op::Legacy {..} => "(fp)",
         Op::Lb {..} => "lb",
         Op::Lh {..} => "lh",
         Op::Lw {..} => "lw",
@@ -121,11 +120,19 @@ pub fn mnemonic(op: &Op) -> &'static str {
         Op::FsgnjxS {..} => "fsgnjx.s",
         Op::FminS {..} => "fmin.s",
         Op::FmaxS {..} => "fmax.s",
+        Op::FcvtWS {..} => "fcvt.w.s",
+        Op::FcvtWuS {..} => "fcvt.wu.s",
+        Op::FcvtLS {..} => "fcvt.l.s",
+        Op::FcvtLuS {..} => "fcvt.lu.s",
         Op::FmvXW {..} => "fmv.x.w",
         Op::FclassS {..} => "fclass.s",
         Op::FeqS {..} => "feq.s",
         Op::FltS {..} => "flt.s",
         Op::FleS {..} => "fle.s",
+        Op::FcvtSW {..} => "fcvt.s.w",
+        Op::FcvtSWu {..} => "fcvt.s.wu",
+        Op::FcvtSL {..} => "fcvt.s.l",
+        Op::FcvtSLu {..} => "fcvt.s.lu",
         Op::FmvWX {..} => "fmv.w.x",
         Op::FmaddS {..} => "fmadd.s",
         Op::FmsubS {..} => "fmsub.s",
@@ -143,11 +150,21 @@ pub fn mnemonic(op: &Op) -> &'static str {
         Op::FsgnjxD {..} => "fsgnjx.d",
         Op::FminD {..} => "fmin.d",
         Op::FmaxD {..} => "fmax.d",
+        Op::FcvtSD {..} => "fcvt.s.d",
+        Op::FcvtDS {..} => "fcvt.d.s",
+        Op::FcvtWD {..} => "fcvt.w.d",
+        Op::FcvtWuD {..} => "fcvt.wu.d",
+        Op::FcvtLD {..} => "fcvt.l.d",
+        Op::FcvtLuD {..} => "fcvt.lu.d",
         Op::FmvXD {..} => "fmv.x.d",
         Op::FclassD {..} => "fclass.d",
         Op::FeqD {..} => "feq.d",
         Op::FltD {..} => "flt.d",
         Op::FleD {..} => "fle.d",
+        Op::FcvtDW {..} => "fcvt.d.w",
+        Op::FcvtDWu {..} => "fcvt.d.wu",
+        Op::FcvtDL {..} => "fcvt.d.l",
+        Op::FcvtDLu {..} => "fcvt.d.lu",
         Op::FmvDX {..} => "fmv.d.x",
         Op::FmaddD {..} => "fmadd.d",
         Op::FmsubD {..} => "fmsub.d",
@@ -178,7 +195,6 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
 
     match *inst {
         Op::Illegal => (),
-        Op::Legacy {..} => (),
         Op::Lui { rd, imm } |
         Op::Auipc { rd, imm } =>
             print!("{}, {:#x}",  register_name(rd), (imm as u32) >> 12),
@@ -334,14 +350,32 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::FmaxD { frd, frs1, frs2 } =>
             print!("f{}, f{}, f{}", frd, frs1, frs2),
         Op::FsqrtS { frd, frs1, ..} |
-        Op::FsqrtD { frd, frs1, ..} =>
+        Op::FsqrtD { frd, frs1, ..} |
+        Op::FcvtSD { frd, frs1, ..} |
+        Op::FcvtDS { frd, frs1, ..} =>
             print!("f{}, f{}", frd, frs1),
+        Op::FcvtWS { rd, frs1, ..} |
+        Op::FcvtWuS { rd, frs1, ..} |
+        Op::FcvtLS { rd, frs1, ..} |
+        Op::FcvtLuS { rd, frs1, ..} |
         Op::FmvXW { rd, frs1 } |
         Op::FclassS { rd, frs1 } |
+        Op::FcvtWD { rd, frs1, ..} |
+        Op::FcvtWuD { rd, frs1, ..} |
+        Op::FcvtLD { rd, frs1, ..} |
+        Op::FcvtLuD { rd, frs1, ..} |
         Op::FmvXD { rd, frs1 } |
         Op::FclassD { rd, frs1 } =>
             print!("{}, f{}", register_name(rd), frs1),
+        Op::FcvtSW { frd, rs1, ..} |
+        Op::FcvtSWu { frd, rs1, ..} |
+        Op::FcvtSL { frd, rs1, ..} |
+        Op::FcvtSLu { frd, rs1, ..} |
         Op::FmvWX { frd, rs1 } |
+        Op::FcvtDW { frd, rs1, ..} |
+        Op::FcvtDWu { frd, rs1, ..} |
+        Op::FcvtDL { frd, rs1, ..} |
+        Op::FcvtDLu { frd, rs1, ..} |
         Op::FmvDX { frd, rs1 } =>
             print!("f{}, {}", frd, register_name(rs1)),
         Op::FeqS { rd, frs1, frs2 } |

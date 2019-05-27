@@ -17,10 +17,12 @@ pub trait Int: Sized + Ord + Eq + Copy +
     ops::SubAssign<Self> +
     ops::BitAndAssign<Self> +
     ops::BitOrAssign<Self> +
-    ops::Not<Output=Self> {
+    ops::Not<Output=Self> +
+    std::fmt::Debug {
 
     fn zero() -> Self;
     fn one() -> Self;
+    fn max_value() -> Self;
     fn bit_width() -> u32 {
         std::mem::size_of::<Self>() as u32 * 8
     }
@@ -29,16 +31,19 @@ pub trait Int: Sized + Ord + Eq + Copy +
 impl Int for u32 {
     fn zero() -> u32 { 0 }
     fn one() -> u32 { 1 }
+    fn max_value() -> u32 { u32::max_value() }
 }
 
 impl Int for u64 {
     fn zero() -> u64 { 0 }
     fn one() -> u64 { 1 }
+    fn max_value() -> u64 { u64::max_value() }
 }
 
 impl Int for u128 {
     fn zero() -> u128 { 0 }
     fn one() -> u128 { 1 }
+    fn max_value() -> u128 { u128::max_value() }
 }
 
 /// Trait for unsigned fixed-size integer types.
