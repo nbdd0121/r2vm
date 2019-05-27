@@ -14,10 +14,6 @@ libc = "0.2"
 rand = "0.6"
 fnv = "1.0"
 
-[lib]
-name = "dbt"
-crate-type = ["staticlib"]
-
 [profile.dev]
 opt-level = "z"
 panic = "abort"

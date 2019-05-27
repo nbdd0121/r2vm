@@ -9,7 +9,7 @@ pub mod io;
 pub mod util;
 pub mod emu;
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CString};
 use std::ptr;
 
 macro_rules! usage_string {() => ("Usage: {} [options] program [arguments...]
@@ -132,23 +132,12 @@ extern "C" fn interrupt() {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn main(argc: i32, argv: *const *const i8) {
+pub fn main() {
     // Top priority: set up page fault handlers so safe_memory features will work.
     emu::safe_memory::init();
     pretty_env_logger::init();
 
-    // Until we removed most out reliance on C++, we still build Rust code as a library -
-    // so we need to parse args ourselves.
-    let mut args_vec = Vec::with_capacity(argc as usize);
-    unsafe {
-        for i in 0..(argc as isize) {
-            args_vec.push(CStr::from_ptr(*argv.offset(i)).to_str().unwrap().to_owned());
-        }
-    }
-
-    // let mut args = env::args();
-    let mut args = args_vec.into_iter();
+    let mut args = std::env::args();
 
     // Ignore interpreter name
     let mut item = args.next();
