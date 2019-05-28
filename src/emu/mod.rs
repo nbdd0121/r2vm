@@ -12,7 +12,7 @@ pub use syscall::syscall;
 #[allow(non_camel_case_types)]
 pub type ureg = u64;
 #[allow(non_camel_case_types)]
-pub type ireg = i64;
+pub type sreg = i64;
 
 // The global PLIC
 pub static mut PLIC: Option<Plic> = None;

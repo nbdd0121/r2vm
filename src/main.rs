@@ -227,11 +227,11 @@ pub fn main() {
     unsafe { FLAGS.sysroot = Some(sysroot) };
 
     let loader = emu::loader::Loader::new(program_name.as_ref()).unwrap();
-    // Simple guess: If not elf, then we assume it is vmlinux
-    match loader.validate_elf() {
-        Ok(_) => (),
-        Err(_) => unsafe { FLAGS.user_only = false },
-    }
+    // Simple guess: If not elf, then we load it as if it is a flat binary kernel
+    unsafe { FLAGS.user_only = match loader.validate_elf() {
+        Ok(_) => !loader.guess_kernel(),
+        Err(_) => false,
+    }; }
 
     // These should only be initialised for full-system emulation
     if !get_flags().user_only {

@@ -4,7 +4,7 @@ use std::os::unix::io::{IntoRawFd, AsRawFd, FromRawFd};
 use std::ffi::CStr;
 use rand::RngCore;
 use super::abi;
-use super::ureg;
+use super::{sreg, ureg};
 
 const PF_R    : u32 = 0x4;
 const PF_W    : u32 = 0x2;
@@ -89,6 +89,12 @@ impl Loader {
         }
 
         Ok(())
+    }
+
+    /// Guest if the elf file is a user-space program or a kernel.
+    pub fn guess_kernel(&self) -> bool {
+        // We use a very simple heuristics here: user-space programs usually isn't located that high.
+        (self.ehdr().e_entry as sreg) < 0
     }
 
     fn find_interpreter(&self) -> Option<&str> {
@@ -212,6 +218,46 @@ impl Loader {
         *load_addr = bias + loaddr;
         *brk = bias + ((*brk + 4095) &! 4095);
         return bias + ehdr.e_entry;
+    }
+
+    unsafe fn load_kernel(&self, load_addr: ureg) -> ureg {
+        // Scan the bounds of the image.
+        let mut loaddr = ureg::max_value();
+        let mut hiaddr = 0;
+        for h in self.phdr() {
+            if h.p_type == libc::PT_LOAD {
+                loaddr = std::cmp::min(loaddr, h.p_vaddr);
+                hiaddr = std::cmp::max(hiaddr, h.p_vaddr + h.p_memsz);
+            }
+        }
+
+        loaddr &=! 4095;
+        hiaddr = (hiaddr + 4095) &! 4095;
+
+        for h in self.phdr() {
+            if h.p_type == libc::PT_LOAD {
+                // size in memory cannot be smaller than size in file
+                if h.p_filesz > h.p_memsz {
+                    panic!("invalid elf file: constraint p_filesz <= p_memsz is not satisified");
+                }
+
+                // Copy across.
+                libc::memcpy(
+                    (h.p_vaddr - loaddr + load_addr) as usize as _,
+                    (self.memory as usize + h.p_offset as usize) as _,
+                    h.p_filesz as usize
+                );
+
+                // Zero-out the rest
+                libc::memset(
+                    (h.p_vaddr + h.p_filesz - loaddr + load_addr) as usize as _,
+                    0,
+                    (h.p_memsz - h.p_filesz) as usize
+                );
+            }
+        }
+
+        hiaddr - loaddr
     }
 
     unsafe fn load_elf(&self, sp: &mut ureg) -> ureg {
@@ -371,8 +417,14 @@ pub unsafe fn load(file: &Loader, ctx: &mut crate::riscv::interp::Context, args:
             panic!("mmap failed while loading");
         }
 
-        let size = file.file_size;
-        file.load_bin(0x200000);
+        let size = match file.validate_elf() {
+            Ok(_) => file.load_kernel(0x200000),
+            Err(_) => {
+                file.load_bin(0x200000);
+                file.file_size
+            }
+        };
+
         Loader::new("dt".as_ref()).unwrap().load_bin(0x200000 + size);
 
         // a0 is the current hartid
