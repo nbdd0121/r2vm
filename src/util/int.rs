@@ -72,6 +72,14 @@ impl<T: Int> CastFrom<T> for T {
     fn cast_from(value: Self) -> Self { value }
 }
 
+impl CastFrom<u64> for u8 {
+    fn cast_from(value: u64) -> u8 { value as u8 }
+}
+
+impl CastFrom<u64> for u16 {
+    fn cast_from(value: u64) -> u16 { value as u16 }
+}
+
 impl CastFrom<u64> for u32 {
     fn cast_from(value: u64) -> u32 { value as u32 }
 }

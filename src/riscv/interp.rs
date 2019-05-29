@@ -1,5 +1,6 @@
 use super::csr::Csr;
 use super::op::Op;
+use crate::util::int::{CastFrom};
 use crate::util::softfp::{self, F32, F64};
 
 #[repr(C)]
@@ -22,7 +23,8 @@ pub struct Context {
     pub fcsr: u64,
 
     // For load reservation
-    pub lr: u64,
+    pub lr_addr: u64,
+    pub lr_value: u64,
 
     // S-mode CSRs
     pub sstatus: u64,
@@ -197,22 +199,6 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
     return Ok(out);
 }
 
-trait CastHelper: Copy + Into<u64> {
-    fn cast(v: u64) -> Self;
-}
-impl CastHelper for u64 {
-    fn cast(v: u64) -> u64 { v as u64 }
-}
-impl CastHelper for u32 {
-    fn cast(v: u64) -> u32 { v as u32 }
-}
-impl CastHelper for u16 {
-    fn cast(v: u64) -> u16 { v as u16 }
-}
-impl CastHelper for u8 {
-    fn cast(v: u64) -> u8 { v as u8 }
-}
-
 #[inline(never)]
 fn read_vaddr_slow(ctx: &mut Context, addr: u64, size: usize) -> Result<u64, ()> {
     let paddr = translate_cache_miss(ctx, addr, false)?;
@@ -220,11 +206,11 @@ fn read_vaddr_slow(ctx: &mut Context, addr: u64, size: usize) -> Result<u64, ()>
 }
 
 #[inline(never)]
-fn read_vaddr_x_slow(ctx: &mut Context, addr: u64, size: usize) -> Result<u64, ()> {
+fn read_vaddr_x_slow(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
     let paddr = translate_cache_miss(ctx, addr, true)?;
     // No atomics for I/O memory region
-    if !emu::is_ram(paddr) { panic!() }
-    Ok(crate::emu::phys_read(paddr, size as u32))
+    if !crate::emu::is_ram(paddr) { panic!() }
+    Ok(paddr)
 }
 
 #[inline(never)]
@@ -233,27 +219,39 @@ fn write_vaddr_slow(ctx: &mut Context, addr: u64, value: u64, size: usize) -> Re
     Ok(crate::emu::phys_write(paddr, value, size as u32))
 }
 
-fn read_vaddr<T: CastHelper>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
+fn read_vaddr<T: Copy + CastFrom<u64>>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
     if (line.tag >> 1) != idx {
-        return Ok(CastHelper::cast(read_vaddr_slow(ctx, addr, std::mem::size_of::<T>())?))
+        return Ok(CastFrom::cast_from(read_vaddr_slow(ctx, addr, std::mem::size_of::<T>())?))
     }
     let paddr = line.paddr ^ addr;
     Ok(unsafe { crate::emu::read_memory_unsafe(paddr) })
 }
 
-fn read_vaddr_x<T: CastHelper>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
+fn read_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
-    if line.tag != (idx << 1) {
-        return Ok(CastHelper::cast(read_vaddr_x_slow(ctx, addr, std::mem::size_of::<T>())?))
-    }
-    let paddr = line.paddr ^ addr;
+    let paddr = if line.tag != (idx << 1) {
+        read_vaddr_x_slow(ctx, addr)?
+    } else {
+        line.paddr ^ addr
+    };
     Ok(unsafe { crate::emu::read_memory_unsafe(paddr) })
 }
 
-fn write_vaddr<T: CastHelper>(ctx: &mut Context, addr: u64, value: T) -> Result<(), ()> {
+fn ptr_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
+    let idx = addr >> CACHE_LINE_LOG2_SIZE;
+    let line = &ctx.line[(idx & 1023) as usize];
+    let paddr = if line.tag != (idx << 1) {
+        read_vaddr_x_slow(ctx, addr)?
+    } else {
+        line.paddr ^ addr
+    };
+    Ok(unsafe { &mut *(paddr as *mut T) })
+}
+
+fn write_vaddr<T: Copy + Into<u64>>(ctx: &mut Context, addr: u64, value: T) -> Result<(), ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
     if line.tag != (idx << 1) {
@@ -974,32 +972,40 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         Op::LrW { rd, rs1 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
-            write_reg!(rd, read_vaddr_x::<u32>(ctx, addr)? as i32 as u64);
-            ctx.lr = addr;
+            let paddr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            let value = *paddr as i32 as u64;
+            write_reg!(rd, value);
+            ctx.lr_addr = addr;
+            ctx.lr_value = value;
         }
         Op::LrD { rd, rs1 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
-            write_reg!(rd, read_vaddr_x::<u64>(ctx, addr)?);
-            ctx.lr = addr;
+            let paddr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            let value = *paddr;
+            write_reg!(rd, value);
+            ctx.lr_addr = addr;
+            ctx.lr_value = value;
         }
         Op::ScW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
-            if addr != ctx.lr {
+            let paddr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            if addr != ctx.lr_addr || *paddr != ctx.lr_value as u32 {
                 write_reg!(rd, 1)
             } else {
-                write_vaddr::<u32>(ctx, addr, read_reg!(rs2) as u32)?;
+                *paddr = read_reg!(rs2) as u32;
                 write_reg!(rd, 0)
             }
         }
         Op::ScD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
-            if addr != ctx.lr {
+            let paddr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            if addr != ctx.lr_addr || *paddr != ctx.lr_value {
                 write_reg!(rd, 1)
             } else {
-                write_vaddr::<u64>(ctx, addr, read_reg!(rs2))?;
+                *paddr = read_reg!(rs2);
                 write_reg!(rd, 0)
             }
         }
