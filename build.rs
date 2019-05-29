@@ -2,7 +2,7 @@ extern crate cc;
 
 fn main() {
     cc::Build::new()
-        .cpp(true)
         .file("src/emu/safe_memory.s")
+        .file("src/fiber/fiber.s")
         .compile("foo");
 }

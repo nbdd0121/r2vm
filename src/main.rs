@@ -8,6 +8,7 @@ pub mod riscv;
 pub mod io;
 pub mod util;
 pub mod emu;
+pub mod fiber;
 
 use std::ffi::{CString};
 use std::ptr;
@@ -96,39 +97,32 @@ pub fn get_flags() -> &'static Flags {
     }
 }
 
-static mut CTX: riscv::interp::Context = riscv::interp::Context {
-    registers: [0xCCCCCCCCCCCCCCCC; 32],
-    fp_registers: [0xFFFFFFFFFFFFFFFF; 32],
-    fcsr: 0,
-    instret: 0,
-    lr: 0,
-    // UXL = 0b10, indicating 64-bit
-    sstatus: 0x200000000,
-    scause: 0,
-    sepc: 0,
-    stval: 0,
-    satp: 0,
-    sip: 0,
-    sie: 0,
-    sscratch: 0,
-    stvec: 0,
-    pending: 0,
-    timecmp: u64::max_value(),
-    // These are set by setup_mem, so we don't really care now.
-    pc: 0,
-    prv: 0,
-    line: [riscv::interp::CacheLine {
-        tag: i64::max_value() as u64,
-        paddr: 0
-    }; 1024]
-};
+pub static mut CONTEXTS: &'static mut [*mut riscv::interp::Context] = &mut [];
 
 #[no_mangle]
 extern "C" fn interrupt() {
-    unsafe {
-        CTX.sip |= 512;
-        CTX.pending = if (CTX.sstatus & 0x2) != 0 { CTX.sip & CTX.sie } else { 0 };
+    let ctx = unsafe { &mut *CONTEXTS[0] };
+    ctx.sip |= 512;
+    ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
+}
+
+#[no_mangle]
+unsafe extern "C" fn send_ipi(mask: u64) {
+    for i in 0..CONTEXTS.len() {
+        let actx = &mut *CONTEXTS[i];
+        if (mask & (1 << i)) == 0 { continue }
+        actx.sip |= 2;
+        actx.pending = if (actx.sstatus & 0x2) != 0 { actx.sip & actx.sie } else { 0 };
     }
+}
+
+#[no_mangle]
+extern "C" fn run_instr_ex(ctx: &mut riscv::interp::Context) {
+    riscv::interp::run_instr_ex(ctx);
+}
+
+extern {
+    fn fiber_interp_run();
 }
 
 pub fn main() {
@@ -239,13 +233,66 @@ pub fn main() {
         emu::init();
     }
 
+    let mut ctx = riscv::interp::Context {
+        registers: [0xCCCCCCCCCCCCCCCC; 32],
+        fp_registers: [0xFFFFFFFFFFFFFFFF; 32],
+        fcsr: 0,
+        instret: 0,
+        lr_addr: 0,
+        lr_value: 0,
+        // UXL = 0b10, indicating 64-bit
+        sstatus: 0x200000000,
+        scause: 0,
+        sepc: 0,
+        stval: 0,
+        satp: 0,
+        sip: 0,
+        sie: 0,
+        sscratch: 0,
+        stvec: 0,
+        pending: 0,
+        cycle: 0,
+        timecmp: u64::max_value(),
+        // These are set by setup_mem, so we don't really care now.
+        pc: 0,
+        prv: 0,
+        line: [riscv::interp::CacheLine {
+            tag: i64::max_value() as u64,
+            paddr: 0
+        }; 1024]
+    };
     // x0 must always be 0
-    unsafe { CTX.registers[0] = 0 };
-    unsafe { emu::loader::load(&loader, &mut CTX, &mut std::iter::once(program_name).chain(args)) };
+    ctx.registers[0] = 0;
 
-    loop {
-        unsafe {
-            riscv::interp::run_block_ex(&mut CTX)
-        }
+    // Load the program
+    unsafe { emu::loader::load(&loader, &mut ctx, &mut std::iter::once(program_name).chain(args)) };
+
+    // Create fibers for all threads
+    let mut fibers = Vec::new();
+    let mut contexts = Vec::new();
+
+    const NUM_CORES: usize = 4;
+
+    for i in 0..NUM_CORES {
+        let mut newctx = ctx;
+        newctx.registers[10] = i as u64;
+
+        let fiber = fiber::Fiber::new();
+        let ptr = fiber.data_pointer();
+        unsafe { *ptr = newctx }
+        fiber.set_fn(fiber_interp_run);
+        contexts.push(ptr);
+        fibers.push(fiber);
     }
+
+    // Chain fibers together
+    for i in 0..(NUM_CORES-1) {
+        let fiber = &fibers[i];
+        let fiber2 = &fibers[i + 1];
+        fiber.chain(fiber2);
+    }
+
+    unsafe { CONTEXTS = Box::leak(contexts.into_boxed_slice()) }
+
+    unsafe { fibers[0].enter() }
 }

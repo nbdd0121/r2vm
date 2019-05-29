@@ -278,6 +278,7 @@ fn icache() -> &'static mut FnvHashMap<u64, Block> {
 }
 
 extern {
+    fn send_ipi(mask: u64);
 }
 
 fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
@@ -291,8 +292,12 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
             0
         }
         2 => crate::io::console::console_getchar() as u64,
-        3 => panic!("Ignore clear_ipi"),
-        4 => panic!("Ignore send_ipi"),
+        3 => 0, //panic!("Ignore clear_ipi"),
+        4 => {
+            let mask: u64 = crate::emu::read_memory(translate(ctx, arg0, false).unwrap());
+            unsafe { send_ipi(mask) };
+            0
+        }
         5 | 6 | 7 => {
             for l in ctx.line.iter_mut() {
                 l.tag = i64::max_value() as u64;
