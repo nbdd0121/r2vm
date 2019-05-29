@@ -13,6 +13,7 @@ pub struct CacheLine {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Context {
     pub registers: [u64; 32],
     pub fp_registers: [u64; 32],
@@ -34,6 +35,7 @@ pub struct Context {
     pub sip: u64,
     pub satp: u64,
 
+    pub cycle: u64,
     pub timecmp: u64,
 
     // Current privilege level
@@ -58,7 +60,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> u64 {
         Csr::Frm => (ctx.fcsr >> 5) & 0b111,
         Csr::Fcsr => ctx.fcsr,
         // Pretend that we're 100MHz
-        Csr::Time => ctx.instret / 100,
+        Csr::Time => ctx.cycle / 100,
         // We assume the instret is incremented already
         Csr::Instret => ctx.instret - 1,
         Csr::Sstatus => ctx.sstatus,
@@ -150,20 +152,20 @@ fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
         return Ok(addr);
     }
     let mut ppn = ctx.satp & ((1u64 << 44) - 1);
-    let mut pte: u64 = unsafe { crate::emu::read_memory(ppn * 4096 + ((addr >> 30) & 511) * 8) };
+    let mut pte: u64 = crate::emu::read_memory(ppn * 4096 + ((addr >> 30) & 511) * 8);
     if (pte & 1) == 0 { return Err(fault_type); }
     let ret = loop {
         ppn = pte >> 10;
         if (pte & 0xf) != 1 {
             break (ppn << 12) | (addr & ((1<<30)-1));
         }
-        pte = unsafe { crate::emu::read_memory(ppn * 4096 + ((addr >> 21) & 511) * 8) };
+        pte = crate::emu::read_memory(ppn * 4096 + ((addr >> 21) & 511) * 8);
         if (pte & 1) == 0 { return Err(fault_type); }
         ppn = pte >> 10;
         if (pte & 0xf) != 1 {
             break (ppn << 12) | (addr & ((1<<21)-1));
         }
-        pte = unsafe { crate::emu::read_memory(ppn * 4096 + ((addr >> 12) & 511) * 8) };
+        pte = crate::emu::read_memory(ppn * 4096 + ((addr >> 12) & 511) * 8);
         if (pte & 1) == 0 { return Err(fault_type); }
 
         ppn = pte >> 10;
@@ -175,28 +177,24 @@ fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
 
 const CACHE_LINE_LOG2_SIZE: usize = 12;
 
-fn translate_cached(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
+fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let line: &mut CacheLine = unsafe{&mut *(&mut ctx.line[(idx & 1023) as usize] as *mut _)};
-    if (line.tag >> 1) != idx || (write && (line.tag & 1) != 0) {
-        let out = match translate(ctx, addr, write) {
-            Ok(addr) => addr,
-            Err(ex) => {
-                ctx.scause = ex;
-                ctx.stval = addr;
-                return Err(())
-            }
-        };
-        if out < 0x80000000 {
-            // Refill is only possible if reside in physical memory
-            line.tag = idx << 1;
-            line.paddr = out ^ addr;
-            if !write { line.tag |= 1 }
+    let out = match translate(ctx, addr, write) {
+        Ok(addr) => addr,
+        Err(ex) => {
+            ctx.scause = ex;
+            ctx.stval = addr;
+            return Err(())
         }
-        return Ok(out);
-    } else {
-        return Ok(line.paddr ^ addr);
+    };
+    if out < 0x80000000 {
+        // Refill is only possible if reside in physical memory
+        let line: &mut CacheLine = &mut ctx.line[(idx & 1023) as usize];
+        line.tag = idx << 1;
+        line.paddr = out ^ addr;
+        if !write { line.tag |= 1 }
     }
+    return Ok(out);
 }
 
 trait CastHelper: Copy + Into<u64> {
@@ -217,19 +215,21 @@ impl CastHelper for u8 {
 
 #[inline(never)]
 fn read_vaddr_slow(ctx: &mut Context, addr: u64, size: usize) -> Result<u64, ()> {
-    let paddr = translate_cached(ctx, addr, false)?;
+    let paddr = translate_cache_miss(ctx, addr, false)?;
     Ok(crate::emu::phys_read(paddr, size as u32))
 }
 
 #[inline(never)]
 fn read_vaddr_x_slow(ctx: &mut Context, addr: u64, size: usize) -> Result<u64, ()> {
-    let paddr = translate_cached(ctx, addr, true)?;
+    let paddr = translate_cache_miss(ctx, addr, true)?;
+    // No atomics for I/O memory region
+    if !emu::is_ram(paddr) { panic!() }
     Ok(crate::emu::phys_read(paddr, size as u32))
 }
 
 #[inline(never)]
 fn write_vaddr_slow(ctx: &mut Context, addr: u64, value: u64, size: usize) -> Result<(), ()> {
-    let paddr = translate_cached(ctx, addr, true)?;
+    let paddr = translate_cache_miss(ctx, addr, true)?;
     Ok(crate::emu::phys_write(paddr, value, size as u32))
 }
 
@@ -1181,6 +1181,37 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
     Ok(())
 }
 
+fn run_instr(ctx: &mut Context) -> Result<(), ()> {
+    let pc = ctx.pc;
+    let mut phys_pc = match translate(ctx, pc, false) {
+        Ok(pc) => pc,
+        Err(ex) => {
+            ctx.scause = ex;
+            ctx.stval = pc;
+            ctx.cycle += 1;
+            return Err(())
+        }
+    };
+    // Ignore error in this case
+    let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
+        Ok(pc) => pc,
+        Err(_) => 0,
+    };
+    let (op, c) = super::decode::decode_instr(&mut phys_pc, phys_pc_next);
+    ctx.pc += if c { 2 } else { 4 };
+    ctx.instret += 1;
+    ctx.cycle += 1;
+    match step(ctx, &op, c) {
+        Ok(()) => (),
+        Err(()) => {
+            ctx.pc -= if c { 2 } else { 4 };
+            ctx.instret -= 1;
+            return Err(());
+        }
+    }
+    Ok(())
+}
+
 fn run_block(ctx: &mut Context) -> Result<(), ()> {
     let pc = ctx.pc;
     let mut phys_pc = match translate(ctx, pc, false) {
@@ -1213,6 +1244,7 @@ fn run_block(ctx: &mut Context) -> Result<(), ()> {
 
     ctx.pc += *end - *start;
     ctx.instret += vec.len() as u64;
+    ctx.cycle += vec.len() as u64;
 
     for i in 0..vec.len() {
         let (ref inst, c) = vec[i];
@@ -1224,6 +1256,7 @@ fn run_block(ctx: &mut Context) -> Result<(), ()> {
                     ctx.pc -= if vec[j].1 { 2 } else { 4 };
                 }
                 ctx.instret -= (vec.len() - i) as u64;
+                ctx.cycle -= (vec.len() - i - 1) as u64;
                 return Err(());
             }
         }
@@ -1231,28 +1264,8 @@ fn run_block(ctx: &mut Context) -> Result<(), ()> {
     Ok(())
 }
 
-pub fn run_block_ex(ctx: &mut Context) {
-    loop {
-        match run_block(ctx) {
-            Ok(()) => (),
-            Err(()) => break,
-        }
-        if ctx.instret >= ctx.timecmp {
-            ctx.sip |= 32;
-            ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
-        }
-        if ctx.pending != 0 {
-            // The highest set bit of ctx.pending
-            let pending = 63 - ctx.pending.leading_zeros() as u64;
-            ctx.sip &= !(1 << pending);
-            // The highest bit of cause indicates this is an interrupt
-            ctx.scause = (1 << 63) | pending;
-            ctx.stval = 0;
-            break;
-        }
-        return;
-    };
-
+/// Trigger a trap. pc must be already adjusted properly before calling.
+pub fn trap(ctx: &mut Context) {
     if crate::get_flags().user_only {
         if ctx.scause == 8 {
             ctx.registers[10] = unsafe { crate::emu::syscall(
@@ -1299,4 +1312,44 @@ pub fn run_block_ex(ctx: &mut Context) {
     // Switch to S-mode
     ctx.prv = 1;
     ctx.pc = ctx.stvec;
+}
+
+pub fn run_instr_ex(ctx: &mut Context) {
+    match run_instr(ctx) {
+        Ok(()) => (),
+        Err(()) => return trap(ctx),
+    }
+    if ctx.cycle >= ctx.timecmp {
+        ctx.sip |= 32;
+        ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
+    }
+    if ctx.pending != 0 {
+        // The highest set bit of ctx.pending
+        let pending = 63 - ctx.pending.leading_zeros() as u64;
+        ctx.sip &= !(1 << pending);
+        // The highest bit of cause indicates this is an interrupt
+        ctx.scause = (1 << 63) | pending;
+        ctx.stval = 0;
+        trap(ctx);
+    }
+}
+
+pub fn run_block_ex(ctx: &mut Context) {
+    match run_block(ctx) {
+        Ok(()) => (),
+        Err(()) => return trap(ctx),
+    }
+    if ctx.cycle >= ctx.timecmp {
+        ctx.sip |= 32;
+        ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
+    }
+    if ctx.pending != 0 {
+        // The highest set bit of ctx.pending
+        let pending = 63 - ctx.pending.leading_zeros() as u64;
+        ctx.sip &= !(1 << pending);
+        // The highest bit of cause indicates this is an interrupt
+        ctx.scause = (1 << 63) | pending;
+        ctx.stval = 0;
+        trap(ctx);
+    }
 }

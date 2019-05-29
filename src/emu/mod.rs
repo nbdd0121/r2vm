@@ -32,7 +32,7 @@ pub fn init() {
                                     .unwrap();
     let file = crate::io::block::Shadow::new(file);
     unsafe {
-        PLIC = Some(Plic::new(2));
+        PLIC = Some(Plic::new(4));
         VIRTIO_BLK = Some(Mmio::new(Box::new(Block::new(Box::new(file)))));
         
         VIRTIO_RNG = Some(Mmio::new(Box::new(Rng::new_seeded())));
@@ -53,16 +53,25 @@ pub unsafe fn write_memory_unsafe<T: Copy>(addr: u64, value: T) {
     std::ptr::write_volatile(ptr, value)
 }
 
-pub unsafe fn read_memory<T: Copy>(addr: u64) -> T {
+pub fn read_memory<T: Copy>(addr: u64) -> T {
     let ptr = addr as usize as *const T;
     safe_memory::probe_read(ptr).unwrap();
-    *ptr
+    unsafe { *ptr }
 }
 
-pub unsafe fn write_memory<T: Copy>(addr: u64, value: T) {
+pub fn write_memory<T: Copy>(addr: u64, value: T) {
     let ptr = addr as usize as *mut T;
     safe_memory::probe_write(ptr).unwrap();
-    *ptr = value;
+    unsafe { *ptr = value }
+}
+
+pub fn is_ram(addr: ureg) -> bool {
+    if addr >= unsafe { IO_BOUNDARY } {
+        false
+    } else {
+        // XXX: we should probably test if safe using probe!
+        true
+    }
 }
 
 pub fn phys_read(addr: ureg, size: u32) -> ureg {

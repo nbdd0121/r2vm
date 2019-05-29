@@ -853,13 +853,23 @@ pub fn decode(bits: u32) -> Op {
     }
 }
 
+pub fn decode_iter(iter: &mut impl Iterator<Item=u16>) -> Option<(Op, bool)> {
+    let bits = iter.next()?;
+    if bits & 3 == 3 {
+        let hi_bits = iter.next()?;
+        Some((decode((hi_bits as u32) << 16 | bits as u32), false))
+    } else {
+        Some((decode_compressed(bits), true))
+    }
+}
+
 pub fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
-    let bits = unsafe { crate::emu::read_memory::<u16>(*pc) };
+    let bits = crate::emu::read_memory::<u16>(*pc);
     if bits & 3 == 3 {
         let hi_bits = if *pc & 4095 == 4094 {
-            unsafe { crate::emu::read_memory::<u16>(pc_next) }
+            crate::emu::read_memory::<u16>(pc_next)
         } else {
-            unsafe { crate::emu::read_memory::<u16>(*pc + 2) }
+            crate::emu::read_memory::<u16>(*pc + 2)
         };
         let bits = (hi_bits as u32) << 16 | bits as u32;
         let (op, c) = (decode(bits), false);
