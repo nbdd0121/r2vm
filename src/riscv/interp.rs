@@ -206,7 +206,7 @@ fn read_vaddr_slow(ctx: &mut Context, addr: u64, size: usize) -> Result<u64, ()>
 }
 
 #[inline(never)]
-fn read_vaddr_x_slow(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
+fn ptr_vaddr_x_slow(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
     let paddr = translate_cache_miss(ctx, addr, true)?;
     // No atomics for I/O memory region
     if !crate::emu::is_ram(paddr) { panic!() }
@@ -229,22 +229,11 @@ fn read_vaddr<T: Copy + CastFrom<u64>>(ctx: &mut Context, addr: u64) -> Result<T
     Ok(unsafe { crate::emu::read_memory_unsafe(paddr) })
 }
 
-fn read_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
-    let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let line = &ctx.line[(idx & 1023) as usize];
-    let paddr = if line.tag != (idx << 1) {
-        read_vaddr_x_slow(ctx, addr)?
-    } else {
-        line.paddr ^ addr
-    };
-    Ok(unsafe { crate::emu::read_memory_unsafe(paddr) })
-}
-
 fn ptr_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
     let paddr = if line.tag != (idx << 1) {
-        read_vaddr_x_slow(ctx, addr)?
+        ptr_vaddr_x_slow(ctx, addr)?
     } else {
         line.paddr ^ addr
     };
@@ -1013,149 +1002,165 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
+            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
             if rd != 0 {
-                let current = read_vaddr_x::<u32>(ctx, addr)?;
-                write_reg!(rd, current as i32 as u64);
+                write_reg!(rd, *ptr as i32 as u64);
             }
-            write_vaddr::<u32>(ctx, addr, src)?;
+            *ptr = src;
         }
         Op::AmoswapD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
+            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
             if rd != 0 {
-                let current = read_vaddr_x::<u64>(ctx, addr)?;
-                write_reg!(rd, current);
+                write_reg!(rd, *ptr);
             }
-            write_vaddr::<u64>(ctx, addr, src)?;
+            *ptr = src;
         }
         Op::AmoaddW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let current = read_vaddr_x::<u32>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current as i32 as u64);
-            write_vaddr::<u32>(ctx, addr, current.wrapping_add(src))?;
+            *ptr = current.wrapping_add(src);
         }
         Op::AmoaddD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let current = read_vaddr_x::<u64>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current);
-            write_vaddr::<u64>(ctx, addr, current.wrapping_add(src))?;
+            *ptr = current.wrapping_add(src);
         }
         Op::AmoandW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let current = read_vaddr_x::<u32>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current as i32 as u64);
-            write_vaddr::<u32>(ctx, addr, current & src)?;
+            *ptr = current & src;
         }
         Op::AmoandD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let current = read_vaddr_x::<u64>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current);
-            write_vaddr::<u64>(ctx, addr, current & src)?;
+            *ptr = current & src;
         }
         Op::AmoorW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let current = read_vaddr_x::<u32>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current as i32 as u64);
-            write_vaddr::<u32>(ctx, addr, current | src)?;
+            *ptr = current | src;
         }
         Op::AmoorD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let current = read_vaddr_x::<u64>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current);
-            write_vaddr::<u64>(ctx, addr, current | src)?;
+            *ptr = current | src;
         }
         Op::AmoxorW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let current = read_vaddr_x::<u32>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current as i32 as u64);
-            write_vaddr::<u32>(ctx, addr, current ^ src)?;
+            *ptr = current ^ src;
         }
         Op::AmoxorD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let current = read_vaddr_x::<u64>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current);
-            write_vaddr::<u64>(ctx, addr, current ^ src)?;
+            *ptr = current ^ src;
         }
         Op::AmominW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let current = read_vaddr_x::<u32>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current as i32 as u64);
-            write_vaddr::<u32>(ctx, addr, i32::min(current as i32, src as i32) as u32)?;
+            *ptr = i32::min(current as i32, src as i32) as u32;
         }
         Op::AmominD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let current = read_vaddr_x::<u64>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current);
-            write_vaddr::<u64>(ctx, addr, i64::min(current as i64, src as i64) as u64)?;
+            *ptr = i64::min(current as i64, src as i64) as u64;
         }
         Op::AmomaxW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let current = read_vaddr_x::<u32>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current as i32 as u64);
-            write_vaddr::<u32>(ctx, addr, i32::max(current as i32, src as i32) as u32)?;
+            *ptr = i32::max(current as i32, src as i32) as u32;
         }
         Op::AmomaxD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let current = read_vaddr_x::<u64>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current);
-            write_vaddr::<u64>(ctx, addr, i64::max(current as i64, src as i64) as u64)?;
+            *ptr = i64::max(current as i64, src as i64) as u64;
         }
         Op::AmominuW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let current = read_vaddr_x::<u32>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current as i32 as u64);
-            write_vaddr::<u32>(ctx, addr, u32::min(current, src))?;
+            *ptr = u32::min(current, src);
         }
         Op::AmominuD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let current = read_vaddr_x::<u64>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current);
-            write_vaddr::<u64>(ctx, addr, u64::min(current, src))?;
+            *ptr = u64::min(current, src);
         }
         Op::AmomaxuW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let current = read_vaddr_x::<u32>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current as i32 as u64);
-            write_vaddr::<u32>(ctx, addr, u32::max(current, src))?;
+            *ptr = u32::max(current, src);
         }
         Op::AmomaxuD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let current = read_vaddr_x::<u64>(ctx, addr)?;
+            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
+            let current = *ptr;
             write_reg!(rd, current);
-            write_vaddr::<u64>(ctx, addr, u64::max(current, src))?;
+            *ptr = u64::max(current, src);
         }
 
         /* Privileged */
