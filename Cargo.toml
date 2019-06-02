@@ -13,6 +13,8 @@ pretty_env_logger = "0.3"
 libc = "0.2"
 rand = "0.6"
 fnv = "1.0"
+num-traits = "0.2"
+num-derive = "0.2"
 
 [profile.dev]
 opt-level = "z"

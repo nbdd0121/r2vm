@@ -1,7 +1,9 @@
 use std::fmt;
+use std::convert::TryFrom;
+use num_traits::FromPrimitive;
 
 #[repr(u16)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, FromPrimitive)]
 pub enum Csr {
     Fflags = 0x001,
     Frm = 0x002,
@@ -33,9 +35,13 @@ pub enum Csr {
     __Nonexhaustive,
 }
 
-impl From<u16> for Csr {
-    fn from(value: u16) -> Csr {
-        unsafe { std::mem::transmute(value) }
+impl TryFrom<u16> for Csr {
+    type Error = ();
+    fn try_from(value: u16) -> Result<Csr, ()> {
+        match Csr::from_u64(value as u64) {
+            Some(v) => Ok(v),
+            None => Err(())
+        }
     }
 }
 

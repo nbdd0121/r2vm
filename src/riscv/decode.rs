@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use super::op::Op;
 use super::Csr;
 
@@ -28,8 +30,8 @@ fn funct7(bits: u32) -> u32 {
     (bits >> 25) & 0b1111111
 }
 
-fn csr(bits: u32) -> Csr {
-    ((bits >> 20) as u16).into()
+fn csr(bits: u32) -> u16 {
+    (bits >> 20) as u16
 }
 
 fn i_imm(bits: u32) -> i32 {
@@ -826,9 +828,6 @@ pub fn decode(bits: u32) -> Op {
 
         /* SYSTEM */
         0b1110011 => {
-            // CSR is encoded in the same place as I-imm.
-            let csr = csr(bits);
-
             match function {
                 0b000 => {
                     match bits {
@@ -840,13 +839,23 @@ pub fn decode(bits: u32) -> Op {
                         _ => Op::Illegal,
                     }
                 }
-                0b001 => Op::Csrrw { rd, rs1, csr },
-                0b010 => Op::Csrrs { rd, rs1, csr },
-                0b011 => Op::Csrrc { rd, rs1, csr },
-                0b101 => Op::Csrrwi { rd, imm: rs1, csr },
-                0b110 => Op::Csrrsi { rd, imm: rs1, csr },
-                0b111 => Op::Csrrci { rd, imm: rs1, csr },
-                _ => Op::Illegal,
+                0b100 => Op::Illegal,
+                _ => {
+                    // Otherwise this is CSR instruction
+                    let csr = match csr(bits).try_into() {
+                        Ok(csr) => csr,
+                        Err(_) => return Op::Illegal,
+                    };
+                    match function {
+                        0b001 => Op::Csrrw { rd, rs1, csr },
+                        0b010 => Op::Csrrs { rd, rs1, csr },
+                        0b011 => Op::Csrrc { rd, rs1, csr },
+                        0b101 => Op::Csrrwi { rd, imm: rs1, csr },
+                        0b110 => Op::Csrrsi { rd, imm: rs1, csr },
+                        0b111 => Op::Csrrci { rd, imm: rs1, csr },
+                        _ => unsafe { std::hint::unreachable_unchecked() },
+                    }
+                }
             }
         }
         _ => Op::Illegal,
