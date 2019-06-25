@@ -1,14 +1,14 @@
 // The register name is represented using an integer. The lower 4-bit represents the index, and the highest bits
 // represents types of the register.
-const REG_GPB: u8 = 0x10;
-const REG_GPW: u8 = 0x20;
-const REG_GPD: u8 = 0x30;
-const REG_GPQ: u8 = 0x40;
+pub const REG_GPB: u8 = 0x10;
+pub const REG_GPW: u8 = 0x20;
+pub const REG_GPD: u8 = 0x30;
+pub const REG_GPQ: u8 = 0x40;
 // This is for special spl, bpl, sil and dil
-const REG_GPB2: u8 = 0x50;
+pub const REG_GPB2: u8 = 0x50;
 
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Register {
     // General purpose registers
     AL   = 0  | REG_GPB, AX   = 0  | REG_GPW, EAX  = 0  | REG_GPD, RAX = 0  | REG_GPQ,
@@ -54,6 +54,22 @@ pub struct Memory {
     pub size: u8,
 }
 
+/// Represent a register or memory location. Can be used as left-value operand.
+pub enum Location {
+    Reg(Register),
+    Mem(Memory),
+}
+
+impl Location {
+    pub fn size(&self) -> u8 {
+        match self {
+            Location::Reg(reg) => reg.size(),
+            Location::Mem(mem) => mem.size,
+        }
+    }
+}
+
+/// Represent a register, memory or immediate value. Can be used as right-value operand.
 pub enum Operand {
     Reg(Register),
     Mem(Memory),
@@ -66,6 +82,14 @@ impl Operand {
             Operand::Reg(reg) => reg.size(),
             Operand::Mem(mem) => mem.size,
             Operand::Imm(_) => unreachable!(),
+        }
+    }
+
+    pub fn as_loc(self) -> Result<Location, u64> {
+        match self {
+            Operand::Reg(it) => Ok(Location::Reg(it)),
+            Operand::Mem(it) => Ok(Location::Mem(it)),
+            Operand::Imm(it) => Err(it),
         }
     }
 }
@@ -92,11 +116,11 @@ pub enum ConditionCode {
 
 pub enum Op {
     Illegal,
-    Add { dst: Operand, src: Operand },
-    And { dst: Operand, src: Operand },
+    Add { dst: Location, src: Operand },
+    And { dst: Location, src: Operand },
     Call { src: Operand },
     Cdqe,
-    Cmp { dst: Operand, src: Operand },
+    Cmp { dst: Location, src: Operand },
     Cdq,
     Cqo,
     Div { src: Operand },
@@ -107,29 +131,29 @@ pub enum Op {
     Jcc { src: Operand, cc: ConditionCode },
     Jmp { src: Operand },
     Lea { dst: Register, src: Memory },
-    Mov { dst: Operand, src: Operand },
-    Movabs { dst: Operand, src: Operand },
-    Movsx { dst: Operand, src: Operand },
-    Movzx { dst: Operand, src: Operand },
+    Mov { dst: Location, src: Operand },
+    Movabs { dst: Location, src: Operand },
+    Movsx { dst: Location, src: Operand },
+    Movzx { dst: Location, src: Operand },
     Mul { src: Operand },
     Neg { src: Operand },
     Nop,
     Not { src: Operand },
-    Or { dst: Operand, src: Operand },
-    Pop { dst: Operand },
+    Or { dst: Location, src: Operand },
+    Pop { dst: Location },
     Push { src: Operand },
     Ret,
     // ret with stack pop
     RetI { dst: u16 },
-    Sar { dst: Operand, src: Operand },
-    Sbb { dst: Operand, src: Operand },
-    Setcc { dst: Operand, cc: ConditionCode },
-    Shl { dst: Operand, src: Operand },
-    Shr { dst: Operand, src: Operand },
-    Sub { dst: Operand, src: Operand },
-    Test { dst: Operand, src: Operand },
-    Xchg { dst: Operand, src: Operand },
-    Xor { dst: Operand, src: Operand },
+    Sar { dst: Location, src: Operand },
+    Sbb { dst: Location, src: Operand },
+    Setcc { dst: Location, cc: ConditionCode },
+    Shl { dst: Location, src: Operand },
+    Shr { dst: Location, src: Operand },
+    Sub { dst: Location, src: Operand },
+    Test { dst: Location, src: Operand },
+    Xchg { dst: Location, src: Operand },
+    Xor { dst: Location, src: Operand },
 }
 
 // index * scale
