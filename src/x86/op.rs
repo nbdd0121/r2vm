@@ -1,3 +1,5 @@
+use std::fmt;
+
 // The register name is represented using an integer. The lower 4-bit represents the index, and the highest bits
 // represents types of the register.
 pub const REG_GPB: u8 = 0x10;
@@ -46,15 +48,63 @@ impl Register {
     }
 }
 
+impl fmt::Display for Register {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", super::disasm::register_name(*self as u8))
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct Memory {
-    pub displacement: u32,
+    pub displacement: i32,
     pub base: Register,
     pub index: Register,
     pub scale: u8,
     pub size: u8,
 }
 
+impl fmt::Display for Memory {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let qualifier = match self.size {
+            1 => "byte",
+            2 => "word",
+            4 => "dword",
+            8 => "qword",
+            _ => "(unknown)",
+        };
+        write!(f, "{} [", qualifier)?;
+        let mut first = true;
+
+        if let Register::None = self.base {
+            write!(f, "{}", self.base)?;
+            first = false;
+        }
+
+        if let Register::None = self.index {
+            if first {
+                first = false;
+            } else {
+                write!(f, "+")?;
+            }
+            write!(f, "{}", self.index)?;
+            if self.scale != 1 {
+                write!(f, "*{}", self.scale)?;
+            }
+        }
+
+        if first {
+            // Write out the full address in this case.
+            write!(f, "{:#x}", self.displacement as u64)?;
+        } else if self.displacement != 0 {
+            write!(f, "{:+#x}", self.displacement)?;
+        }
+
+        write!(f, "]")
+    }
+}
+
 /// Represent a register or memory location. Can be used as left-value operand.
+#[derive(Clone, Copy)]
 pub enum Location {
     Reg(Register),
     Mem(Memory),
@@ -69,7 +119,17 @@ impl Location {
     }
 }
 
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Location::Reg(it) => it.fmt(f),
+            Location::Mem(it) => it.fmt(f),
+        }
+    }
+}
+
 /// Represent a register, memory or immediate value. Can be used as right-value operand.
+#[derive(Clone, Copy)]
 pub enum Operand {
     Reg(Register),
     Mem(Memory),
@@ -94,7 +154,18 @@ impl Operand {
     }
 }
 
+impl fmt::Display for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Operand::Reg(it) => it.fmt(f),
+            Operand::Mem(it) => it.fmt(f),
+            &Operand::Imm(it) => write!(f, "{:#x}", it as i64),
+        }
+    }
+}
+
 #[repr(u8)]
+#[derive(Clone, Copy)]
 pub enum ConditionCode {
     Overflow = 0x0,
     NotOverflow = 0x1,
@@ -114,6 +185,31 @@ pub enum ConditionCode {
     Greater = 0xF, // NotLessEqual = 0xF,
 }
 
+impl fmt::Display for ConditionCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let str = match self {
+            ConditionCode::Overflow => "o",
+            ConditionCode::NotOverflow => "no",
+            ConditionCode::Below => "b",
+            ConditionCode::AboveEqual => "ae",
+            ConditionCode::Equal => "e",
+            ConditionCode::NotEqual => "ne",
+            ConditionCode::BelowEqual => "be",
+            ConditionCode::Above => "a",
+            ConditionCode::Sign => "s",
+            ConditionCode::NotSign => "ns",
+            ConditionCode::Parity => "p",
+            ConditionCode::NotParity => "np",
+            ConditionCode::Less => "l",
+            ConditionCode::GreaterEqual => "ge",
+            ConditionCode::LessEqual => "le",
+            ConditionCode::Greater => "g",
+        };
+        str.fmt(f)
+    }
+}
+
+#[derive(Clone, Copy)]
 pub enum Op {
     Illegal,
     Add(Location, Operand),
@@ -194,9 +290,9 @@ impl std::ops::Add<Register> for Register {
 }
 
 // base + displacement
-impl std::ops::Add<u32> for Register {
+impl std::ops::Add<i32> for Register {
     type Output = Memory;
-    fn add(self, rhs: u32) -> Memory {
+    fn add(self, rhs: i32) -> Memory {
         Memory {
             displacement: rhs,
             base: self,
@@ -208,11 +304,11 @@ impl std::ops::Add<u32> for Register {
 }
 
 // base - displacement
-impl std::ops::Sub<u32> for Register {
+impl std::ops::Sub<i32> for Register {
     type Output = Memory;
-    fn sub(self, rhs: u32) -> Memory {
+    fn sub(self, rhs: i32) -> Memory {
         Memory {
-            displacement: -(rhs as i32) as u32,
+            displacement: -rhs,
             base: self,
             index: Register::None,
             scale: 0,
@@ -222,18 +318,18 @@ impl std::ops::Sub<u32> for Register {
 }
 
 // [base +] index * scale + displacement
-impl std::ops::Add<u32> for Memory {
+impl std::ops::Add<i32> for Memory {
     type Output = Memory;
-    fn add(mut self, rhs: u32) -> Memory {
+    fn add(mut self, rhs: i32) -> Memory {
         self.displacement = rhs;
         self
     }
 }
 
-impl std::ops::Sub<u32> for Memory {
+impl std::ops::Sub<i32> for Memory {
     type Output = Memory;
-    fn sub(mut self, rhs: u32) -> Memory {
-        self.displacement = -(rhs as i32) as u32;
+    fn sub(mut self, rhs: i32) -> Memory {
+        self.displacement = -rhs;
         self
     }
 }
