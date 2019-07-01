@@ -1,4 +1,24 @@
-use std::fmt;
+use std::fmt::{self, Write};
+
+/// Helper for displaying signed hex
+struct Signed(i64);
+
+impl fmt::LowerHex for Signed {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let value = if self.0 < 0 {
+            let value = self.0.wrapping_neg() as u64;
+            f.write_char('-')?;
+            value
+        } else {
+            if f.sign_plus() { f.write_char('+')? }
+            self.0 as u64
+        };
+        if f.alternate() {
+            f.write_str("0x")?;
+        }
+        write!(f, "{:x}", value)
+    }
+}
 
 // The register name is represented using an integer. The lower 4-bit represents the index, and the highest bits
 // represents types of the register.
@@ -95,7 +115,7 @@ impl fmt::Display for Memory {
             // Write out the full address in this case.
             write!(f, "{:#x}", self.displacement as u64)?;
         } else if self.displacement != 0 {
-            write!(f, "{:+#x}", self.displacement)?;
+            write!(f, "{:+#x}", Signed(self.displacement as i64))?;
         }
 
         write!(f, "]")
@@ -158,7 +178,7 @@ impl fmt::Display for Operand {
         match self {
             Operand::Reg(it) => it.fmt(f),
             Operand::Mem(it) => it.fmt(f),
-            &Operand::Imm(it) => write!(f, "{:#x}", it as i64),
+            &Operand::Imm(it) => write!(f, "{:+#x}", Signed(it)),
         }
     }
 }
