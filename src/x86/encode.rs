@@ -8,12 +8,12 @@ pub struct Encoder {
 // For most instructions taking immediates:
 // If operation size is 64-bit, then imm must be int32.
 // If operation size is 8, 16 or 32-bit, then imm must be int8/int16/int32 or uint8/uint16/uint32.
-fn check_imm_size(size: u8, imm: u64) {
+fn check_imm_size(size: u8, imm: i64) {
     match size {
-        1 => assert!(i8::try_from(imm as i64).is_ok() || u8::try_from(imm).is_ok()),
-        2 => assert!(i16::try_from(imm as i64).is_ok() || u16::try_from(imm).is_ok()),
-        4 => assert!(i32::try_from(imm as i32).is_ok() || u32::try_from(imm).is_ok()),
-        8 => assert!(i32::try_from(imm as i64).is_ok()),
+        1 => assert!(i8::try_from(imm).is_ok() || u8::try_from(imm).is_ok()),
+        2 => assert!(i16::try_from(imm).is_ok() || u16::try_from(imm).is_ok()),
+        4 => assert!(i32::try_from(imm).is_ok() || u32::try_from(imm).is_ok()),
+        8 => assert!(i32::try_from(imm).is_ok()),
         _ => unreachable!(),
     }
 }
@@ -49,7 +49,7 @@ impl Encoder {
         self.buffer.push((value >> 56) as u8);
     }
 
-    fn emit_imm(&mut self, size: u8, value: u64) {
+    fn emit_imm(&mut self, size: u8, value: i64) {
         match size {
             1 => self.emit_u8(value as u8),
             2 => self.emit_u16(value as u16),
@@ -98,16 +98,16 @@ impl Encoder {
                 }
             }
             Location::Mem(it) => {
-                if it.base != Register::None {
+                if let Some(base) = it.base {
                     // REX.B
-                    if it.base as u8 & 8 != 0 {
+                    if base as u8 & 8 != 0 {
                         rex |= 0x1;
                     }
                 }
 
-                if it.index != Register::None {
+                if let Some(index) = it.index {
                     // REX.X
-                    if it.index as u8 & 8 != 0 {
+                    if index as u8 & 8 != 0 {
                         rex |= 0x2;
                     }
                 }
@@ -131,17 +131,15 @@ impl Encoder {
                 self.emit_u8(0xC0 | (reg_num << 3) | (it as u8 & 7));
             }
             Location::Mem(it) => {
-                let base_reg = it.base as u8 & 7;
-                let index_reg = it.index as u8 & 7;
                 let mut shift = 0;
 
                 // Sanity check that is valid and sp is not used as index register.
-                if it.index != Register::None {
+                if let Some(index) = it.index {
 
-                    assert!(it.index as u8 & 0xF0 == REG_GPQ);
+                    assert!(index as u8 & 0xF0 == REG_GPQ);
 
                     // index = RSP is invalid.
-                    assert!(it.index as u8 & 0xF != 0b101);
+                    assert!(index as u8 & 0xF != 0b101);
 
                     shift = match it.scale {
                         1 => 0,
@@ -154,29 +152,25 @@ impl Encoder {
                     assert!(it.scale == 0);
                 }
 
-                // No base, it can either be [disp32], or [index * scale + disp32]
-                if it.base == Register::None {
-
-                    self.emit_u8((reg_num << 3) | 0b100);
-
-                    if it.index != Register::None {
-                        self.emit_u8((shift << 6) | (index_reg << 3) | 0b101);
-                    } else {
+                match (it.base, it.index) {
+                    // [disp32]
+                    (None, None) => {
+                        self.emit_u8((reg_num << 3) | 0b100);
                         self.emit_u8(0x25);
+                        self.emit_u32(it.displacement as u32);
                     }
 
-                    self.emit_u32(it.displacement as u32);
-                    return;
-                }
+                    // [index * scale + disp32]
+                    (None, Some(index)) => {
+                        self.emit_u8((reg_num << 3) | 0b100);
+                        self.emit_u8((shift << 6) | ((index as u8 & 7) << 3) | 0b101);
+                        self.emit_u32(it.displacement as u32);
+                        return;
+                    }
 
-                assert!(it.base as u8 & 0xF0 == REG_GPQ);
-
-                // [base + disp] No SIB byte if base is not RSP
-                if it.index == Register::None {
-
-                    // [RSP/R12 + disp]. Unfortunately in this case we still need SIB byte.
-                    if base_reg == 0b100 {
-
+                    // [RSP/R12 + disp]. We need a SIB byte in this case
+                    (Some(Register::RSP), None) |
+                    (Some(Register::R12), None) => {
                         // [RSP/R12]
                         if it.displacement == 0 {
                             self.emit_u8((reg_num << 3) | 0b100);
@@ -196,48 +190,57 @@ impl Encoder {
                         self.emit_u8(0x80 | (reg_num << 3) | 0b100);
                         self.emit_u8(0x24);
                         self.emit_u32(it.displacement as u32);
-                        return;
                     }
 
-                    // [base]. No direct encoding of [RBP/R13] however.
-                    if it.displacement == 0 && base_reg != 0b101 {
-                        self.emit_u8((reg_num << 3) | base_reg);
-                        return;
+                    // [base + disp]. Excluding RSP/R12
+                    (Some(base), None) => {
+                        let base_reg = base as u8 & 7;
+                        assert!(base as u8 & 0xF0 == REG_GPQ);
+
+                        // [base]. No direct encoding of [RBP/R13] however.
+                        if it.displacement == 0 && base_reg != 0b101 {
+                            self.emit_u8((reg_num << 3) | base_reg);
+                            return;
+                        }
+
+                        // [base + disp8]
+                        if u8::try_from(it.displacement).is_ok() {
+                            self.emit_u8(0x40 | (reg_num << 3) | base_reg);
+                            self.emit_u8(it.displacement as u8);
+                            return;
+                        }
+
+                        // [base + disp32]
+                        self.emit_u8(0x80 | (reg_num << 3) | base_reg);
+                        self.emit_u32(it.displacement as u32);
                     }
 
-                    // [base + disp8]
-                    if u8::try_from(it.displacement).is_ok() {
-                        self.emit_u8(0x40 | (reg_num << 3) | base_reg);
-                        self.emit_u8(it.displacement as u8);
-                        return;
+                    (Some(base), Some(index)) => {
+                        let base_reg = base as u8 & 7;
+                        let index_reg = index as u8 & 7;
+                        assert!(base as u8 & 0xF0 == REG_GPQ);
+
+                        // [base + index * scale]. Similarly, base cannot be RBP/R13
+                        if it.displacement == 0 && base_reg != 0b101 {
+                            self.emit_u8((reg_num << 3) | 0b100);
+                            self.emit_u8((shift << 6) | (index_reg << 3) | base_reg);
+                            return;
+                        }
+
+                        // [base + index * scale + disp8]
+                        if u8::try_from(it.displacement).is_ok() {
+                            self.emit_u8(0x40 | (reg_num << 3) | 0b100);
+                            self.emit_u8((shift << 6) | (index_reg << 3) | base_reg);
+                            self.emit_u8(it.displacement as u8);
+                            return;
+                        }
+
+                        // [base + index * scale + disp32]
+                        self.emit_u8(0x80 | (reg_num << 3) | 0b100);
+                        self.emit_u8((shift << 6) | (index_reg << 3) | base_reg);
+                        self.emit_u32(it.displacement as u32);
                     }
-
-                    // [base + disp32]
-                    self.emit_u8(0x80 | (reg_num << 3) | base_reg);
-                    self.emit_u32(it.displacement as u32);
-                    return;
                 }
-
-                // [base + index * scale]. Similarly, base cannot be RBP/R13
-                if it.displacement == 0 && base_reg != 0b101 {
-                    self.emit_u8((reg_num << 3) | 0b100);
-                    self.emit_u8((shift << 6) | (index_reg << 3) | base_reg);
-                    return;
-                }
-
-                // [base + index * scale + disp8]
-                if u8::try_from(it.displacement).is_ok() {
-                    self.emit_u8(0x40 | (reg_num << 3) | 0b100);
-                    self.emit_u8((shift << 6) | (index_reg << 3) | base_reg);
-                    self.emit_u8(it.displacement as u8);
-                    return;
-                }
-
-                // [base + index * scale + disp32]
-                self.emit_u8(0x80 | (reg_num << 3) | 0b100);
-                self.emit_u8((shift << 6) | (index_reg << 3) | base_reg);
-                self.emit_u32(it.displacement as u32);
-                return;
             }
         }
     }
@@ -485,7 +488,7 @@ impl Encoder {
             (Operand::Imm(imm), Operand::Reg(reg)) => (imm, reg, 0xA2),
             _ => unreachable!(),
         };
-    
+
         // Register can only be RAX or subsize
         assert_eq!(reg as u8 & 0xF, 0);
 
@@ -630,7 +633,7 @@ impl Encoder {
             (dst, Location::Reg(src)) => (dst, src),
             _ => unreachable!(),
         };
-    
+
         let op_size = dst.size();
         assert_eq!(op_size, src.size());
 

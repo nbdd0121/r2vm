@@ -31,8 +31,6 @@ pub enum Register {
     R15B = 15 | REG_GPB, R15W = 15 | REG_GPW, R15D = 15 | REG_GPD, R15 = 15 | REG_GPQ,
     // Special register that requires REX prefix to access.
     SPL = 4 | REG_GPB2, BPL = 5 | REG_GPB2, SIL = 6 | REG_GPB2, DIL = 7 | REG_GPB2,
-
-    None = 0,
 }
 
 impl Register {
@@ -57,8 +55,9 @@ impl fmt::Display for Register {
 #[derive(Clone, Copy)]
 pub struct Memory {
     pub displacement: i32,
-    pub base: Register,
-    pub index: Register,
+    // We don't need to worry about the size, Rust can optimise it to 1 bytes
+    pub base: Option<Register>,
+    pub index: Option<Register>,
     pub scale: u8,
     pub size: u8,
 }
@@ -75,18 +74,18 @@ impl fmt::Display for Memory {
         write!(f, "{} [", qualifier)?;
         let mut first = true;
 
-        if let Register::None = self.base {
-            write!(f, "{}", self.base)?;
+        if let Some(base) = self.base {
+            write!(f, "{}", base)?;
             first = false;
         }
 
-        if let Register::None = self.index {
+        if let Some(index) = self.index {
             if first {
                 first = false;
             } else {
                 write!(f, "+")?;
             }
-            write!(f, "{}", self.index)?;
+            write!(f, "{}", index)?;
             if self.scale != 1 {
                 write!(f, "*{}", self.scale)?;
             }
@@ -133,7 +132,7 @@ impl fmt::Display for Location {
 pub enum Operand {
     Reg(Register),
     Mem(Memory),
-    Imm(u64),
+    Imm(i64),
 }
 
 impl Operand {
@@ -145,7 +144,7 @@ impl Operand {
         }
     }
 
-    pub fn as_loc(self) -> Result<Location, u64> {
+    pub fn as_loc(self) -> Result<Location, i64> {
         match self {
             Operand::Reg(it) => Ok(Location::Reg(it)),
             Operand::Mem(it) => Ok(Location::Mem(it)),
@@ -258,8 +257,8 @@ impl std::ops::Mul<u8> for Register {
     fn mul(self, rhs: u8) -> Memory {
         Memory {
             displacement: 0,
-            base: Register::None,
-            index: self,
+            base: None,
+            index: Some(self),
             scale: rhs,
             size: 0,
         }
@@ -270,7 +269,7 @@ impl std::ops::Mul<u8> for Register {
 impl std::ops::Add<Memory> for Register {
     type Output = Memory;
     fn add(self, mut rhs: Memory) -> Memory {
-        rhs.base = self;
+        rhs.base = Some(self);
         rhs
     }
 }
@@ -281,8 +280,8 @@ impl std::ops::Add<Register> for Register {
     fn add(self, rhs: Register) -> Memory {
         Memory {
             displacement: 0,
-            base: self,
-            index: rhs,
+            base: Some(self),
+            index: Some(rhs),
             scale: 1,
             size: 0,
         }
@@ -295,8 +294,8 @@ impl std::ops::Add<i32> for Register {
     fn add(self, rhs: i32) -> Memory {
         Memory {
             displacement: rhs,
-            base: self,
-            index: Register::None,
+            base: Some(self),
+            index: None,
             scale: 0,
             size: 0,
         }
@@ -309,8 +308,8 @@ impl std::ops::Sub<i32> for Register {
     fn sub(self, rhs: i32) -> Memory {
         Memory {
             displacement: -rhs,
-            base: self,
-            index: Register::None,
+            base: Some(self),
+            index: None,
             scale: 0,
             size: 0,
         }

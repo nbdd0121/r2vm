@@ -72,7 +72,7 @@ pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
         if i < code.len() {
             eprint!("{:02x}", code[i]);
         } else {
-            eprint!(" ");
+            eprint!("  ");
         }
     }
     eprint!("        ");
