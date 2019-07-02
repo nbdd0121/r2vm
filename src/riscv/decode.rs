@@ -320,17 +320,21 @@ pub fn decode_compressed(bits: u16) -> Op {
                 0b101 => {
                     // C.J
                     // translate to jal x0, imm
-                    Op::Jal { rd: 0, imm: cj_imm(bits) }
+
+                    // Need offset adjustment here as the offset will be based on `pc after - 4`,
+                    // which is `pc before - 2`, so an extra 2 need to be added.
+                    // Similar reasoning applies to C.BEQZ and C.BNEZ
+                    Op::Jal { rd: 0, imm: cj_imm(bits) + 2 }
                 }
                 0b110 => {
                     // C.BEQZ
                     // translate to beq rs1', x0, imm
-                    Op::Beq { rs1: c_rs1s(bits), rs2: 0, imm: cb_imm(bits) }
+                    Op::Beq { rs1: c_rs1s(bits), rs2: 0, imm: cb_imm(bits) + 2 }
                 }
                 0b111 => {
                     // C.BNEZ
                     // translate to bne rs1', x0, imm
-                    Op::Bne { rs1: c_rs1s(bits), rs2: 0, imm: cb_imm(bits) }
+                    Op::Bne { rs1: c_rs1s(bits), rs2: 0, imm: cb_imm(bits) + 2 }
                 }
                 // full case
                 _ => unsafe { std::hint::unreachable_unchecked() },

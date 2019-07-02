@@ -70,6 +70,10 @@ pub enum Op {
     /* Base Opcode = NMADD */
     /* Base Opcode = OP-FP */
     /* Base Opcode = BRANCH */
+    // Note: the immediate here is the offset from `pc after - 4`, instead of
+    // `pc before`. This will make `step` function simpler by not needing a
+    // op length as input.
+    // Similar reasoning applies to JAL as well.
     Beq { rs1: u8, rs2: u8, imm: i32 },
     Bne { rs1: u8, rs2: u8, imm: i32 },
     Blt { rs1: u8, rs2: u8, imm: i32 },

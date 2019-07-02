@@ -299,7 +299,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
     }
 }
 
-fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
+pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     macro_rules! read_reg {
         ($rs: expr) => {{
             let rs = $rs as usize;
@@ -383,11 +383,6 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             ctx.stval = $tval;
             return Err(())
         }}
-    }
-    macro_rules! len {
-        () => {
-            if compressed { 2 } else { 4 }
-        }
     }
 
     match *op {
@@ -483,37 +478,37 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         Op::Srlw { rd, rs1, rs2 } => write_reg!(rd, (((read_reg!(rs1) as u32) >> (read_reg!(rs2) & 31)) as i32) as u64),
         Op::Sraw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32) >> (read_reg!(rs2) & 31)) as u64),
         /* AUIPC */
-        Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64)),
+        Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc.wrapping_sub(4).wrapping_add(imm as u64)),
         /* BRANCH */
         // Same as auipc, PC-relative instructions are relative to the origin pc instead of the incremented one.
         Op::Beq { rs1, rs2, imm } => {
             if read_reg!(rs1) == read_reg!(rs2) {
-                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
             }
         }
         Op::Bne { rs1, rs2, imm } => {
             if read_reg!(rs1) != read_reg!(rs2) {
-                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
             }
         }
         Op::Blt { rs1, rs2, imm } => {
             if (read_reg!(rs1) as i64) < (read_reg!(rs2) as i64) {
-                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
             }
         }
         Op::Bge { rs1, rs2, imm } => {
             if (read_reg!(rs1) as i64) >= (read_reg!(rs2) as i64) {
-                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
             }
         }
         Op::Bltu { rs1, rs2, imm } => {
             if read_reg!(rs1) < read_reg!(rs2) {
-                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
             }
         }
         Op::Bgeu { rs1, rs2, imm } => {
             if read_reg!(rs1) >= read_reg!(rs2) {
-                ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
             }
         }
         /* JALR */
@@ -525,7 +520,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         /* JAL */
         Op::Jal { rd, imm } => {
             write_reg!(rd, ctx.pc);
-            ctx.pc = ctx.pc.wrapping_sub(len!()).wrapping_add(imm as u64);
+            ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
         }
         /* SYSTEM */
         Op::Ecall =>
@@ -1217,7 +1212,7 @@ fn run_instr(ctx: &mut Context) -> Result<(), ()> {
     ctx.pc += if c { 2 } else { 4 };
     ctx.instret += 1;
     ctx.cycle += 1;
-    match step(ctx, &op, c) {
+    match step(ctx, &op) {
         Ok(()) => (),
         Err(()) => {
             ctx.pc -= if c { 2 } else { 4 };
@@ -1263,8 +1258,8 @@ fn run_block(ctx: &mut Context) -> Result<(), ()> {
     ctx.cycle += vec.len() as u64;
 
     for i in 0..vec.len() {
-        let (ref inst, c) = vec[i];
-        match step(ctx, inst, c) {
+        let (ref inst, _) = vec[i];
+        match step(ctx, inst) {
             Ok(()) => (),
             Err(()) => {
                 // Adjust pc and instret by iterating through remaining instructions.

@@ -199,6 +199,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::Auipc { rd, imm } =>
             eprint!("{}, {:#x}",  register_name(rd), (imm as u32) >> 12),
         Op::Jal { rd, imm } => {
+            let imm = imm.wrapping_sub(if bits & 3 == 3 { 0 } else { 2 });
             let target_pc = pc.wrapping_add(imm as u64);
             let (sign, imm) = if imm < 0 {
                 ('-', -imm)
@@ -213,6 +214,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::Bge { rs1, rs2, imm } |
         Op::Bltu { rs1, rs2, imm } |
         Op::Bgeu { rs1, rs2, imm } => {
+            let imm = imm.wrapping_sub(if bits & 3 == 3 { 0 } else { 2 });
             let target_pc = pc.wrapping_add(imm as u64);
             let (sign, imm) = if imm < 0 {
                 ('-', -imm)
@@ -395,5 +397,5 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::FnmaddD { frd, frs1, frs2, frs3, ..} =>
             eprint!("f{}, f{}, f{}, f{}", frd, frs1, frs2, frs3),
     }
-    println!()
+    eprintln!()
 }
