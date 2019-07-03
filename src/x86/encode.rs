@@ -105,7 +105,7 @@ impl Encoder {
                     }
                 }
 
-                if let Some(index) = it.index {
+                if let Some((index, _)) = it.index {
                     // REX.X
                     if index as u8 & 8 != 0 {
                         rex |= 0x2;
@@ -134,22 +134,20 @@ impl Encoder {
                 let mut shift = 0;
 
                 // Sanity check that is valid and sp is not used as index register.
-                if let Some(index) = it.index {
+                if let Some((index, scale)) = it.index {
 
                     assert!(index as u8 & 0xF0 == REG_GPQ);
 
                     // index = RSP is invalid.
                     assert!(index as u8 & 0xF != 0b101);
 
-                    shift = match it.scale {
+                    shift = match scale {
                         1 => 0,
                         2 => 1,
                         4 => 2,
                         8 => 3,
                         _ => unreachable!(),
                     };
-                } else {
-                    assert!(it.scale == 0);
                 }
 
                 match (it.base, it.index) {
@@ -161,7 +159,7 @@ impl Encoder {
                     }
 
                     // [index * scale + disp32]
-                    (None, Some(index)) => {
+                    (None, Some((index, _))) => {
                         self.emit_u8((reg_num << 3) | 0b100);
                         self.emit_u8((shift << 6) | ((index as u8 & 7) << 3) | 0b101);
                         self.emit_u32(it.displacement as u32);
@@ -179,7 +177,7 @@ impl Encoder {
                         }
 
                         // [RSP/R12 + disp8]
-                        if u8::try_from(it.displacement).is_ok() {
+                        if i8::try_from(it.displacement).is_ok() {
                             self.emit_u8(0x40 | (reg_num << 3) | 0b100);
                             self.emit_u8(0x24);
                             self.emit_u8(it.displacement as u8);
@@ -204,7 +202,7 @@ impl Encoder {
                         }
 
                         // [base + disp8]
-                        if u8::try_from(it.displacement).is_ok() {
+                        if i8::try_from(it.displacement).is_ok() {
                             self.emit_u8(0x40 | (reg_num << 3) | base_reg);
                             self.emit_u8(it.displacement as u8);
                             return;
@@ -215,7 +213,7 @@ impl Encoder {
                         self.emit_u32(it.displacement as u32);
                     }
 
-                    (Some(base), Some(index)) => {
+                    (Some(base), Some((index, _))) => {
                         let base_reg = base as u8 & 7;
                         let index_reg = index as u8 & 7;
                         assert!(base as u8 & 0xF0 == REG_GPQ);
@@ -228,7 +226,7 @@ impl Encoder {
                         }
 
                         // [base + index * scale + disp8]
-                        if u8::try_from(it.displacement).is_ok() {
+                        if i8::try_from(it.displacement).is_ok() {
                             self.emit_u8(0x40 | (reg_num << 3) | 0b100);
                             self.emit_u8((shift << 6) | (index_reg << 3) | base_reg);
                             self.emit_u8(it.displacement as u8);

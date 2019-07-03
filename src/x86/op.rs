@@ -74,11 +74,10 @@ impl fmt::Display for Register {
 
 #[derive(Clone, Copy)]
 pub struct Memory {
-    pub displacement: i32,
     // We don't need to worry about the size, Rust can optimise it to 1 bytes
     pub base: Option<Register>,
-    pub index: Option<Register>,
-    pub scale: u8,
+    pub index: Option<(Register, u8)>,
+    pub displacement: i32,
     pub size: u8,
 }
 
@@ -99,15 +98,15 @@ impl fmt::Display for Memory {
             first = false;
         }
 
-        if let Some(index) = self.index {
+        if let Some((index, scale)) = self.index {
             if first {
                 first = false;
             } else {
                 write!(f, "+")?;
             }
             write!(f, "{}", index)?;
-            if self.scale != 1 {
-                write!(f, "*{}", self.scale)?;
+            if scale != 1 {
+                write!(f, "*{}", scale)?;
             }
         }
 
@@ -278,8 +277,7 @@ impl std::ops::Mul<u8> for Register {
         Memory {
             displacement: 0,
             base: None,
-            index: Some(self),
-            scale: rhs,
+            index: Some((self, rhs)),
             size: 0,
         }
     }
@@ -301,8 +299,7 @@ impl std::ops::Add<Register> for Register {
         Memory {
             displacement: 0,
             base: Some(self),
-            index: Some(rhs),
-            scale: 1,
+            index: Some((rhs, 1)),
             size: 0,
         }
     }
@@ -316,7 +313,6 @@ impl std::ops::Add<i32> for Register {
             displacement: rhs,
             base: Some(self),
             index: None,
-            scale: 0,
             size: 0,
         }
     }
@@ -330,7 +326,6 @@ impl std::ops::Sub<i32> for Register {
             displacement: -rhs,
             base: Some(self),
             index: None,
-            scale: 0,
             size: 0,
         }
     }
