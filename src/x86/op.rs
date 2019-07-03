@@ -20,6 +20,56 @@ impl fmt::LowerHex for Signed {
     }
 }
 
+/// Supported sizes of operands
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Size {
+    Byte = 0,
+    Word = 1,
+    Dword = 2,
+    Qword = 3,
+}
+
+impl PartialOrd for Size {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Size {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (*self as u8).cmp(&(*other as u8))
+    }
+}
+
+impl Size {
+    /// In AMD64, immediates are usually only dword-sized. Therefore it is quite often that we need
+    /// to cap size to dword.
+    pub fn cap_to_dword(self) -> Self {
+        match self {
+            Size::Qword => Size::Dword,
+            size => size,
+        }
+    }
+}
+
+impl fmt::Display for Size {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(match self {
+            Size::Byte => "byte",
+            Size::Word => "word",
+            Size::Dword => "dword",
+            Size::Qword => "qword",
+        })
+    }
+}
+
+impl fmt::Debug for Size {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 // The register name is represented using an integer. The lower 4-bit represents the index, and the highest bits
 // represents types of the register.
 pub const REG_GPB: u8 = 0x10;
@@ -54,13 +104,13 @@ pub enum Register {
 }
 
 impl Register {
-    pub fn size(self) -> u8 {
+    pub fn size(self) -> Size {
         let num = self as u8;
         match num & 0xF0 {
-            REG_GPB | REG_GPB2 => 1,
-            REG_GPW => 2,
-            REG_GPD => 4,
-            REG_GPQ => 8,
+            REG_GPB | REG_GPB2 => Size::Byte,
+            REG_GPW => Size::Word,
+            REG_GPD => Size::Dword,
+            REG_GPQ => Size::Qword,
             _ => unreachable!(),
         }
     }
@@ -78,19 +128,12 @@ pub struct Memory {
     pub base: Option<Register>,
     pub index: Option<(Register, u8)>,
     pub displacement: i32,
-    pub size: u8,
+    pub size: Size,
 }
 
 impl fmt::Display for Memory {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let qualifier = match self.size {
-            1 => "byte",
-            2 => "word",
-            4 => "dword",
-            8 => "qword",
-            _ => "(unknown)",
-        };
-        write!(f, "{} [", qualifier)?;
+        write!(f, "{} [", self.size)?;
         let mut first = true;
 
         if let Some(base) = self.base {
@@ -129,7 +172,7 @@ pub enum Location {
 }
 
 impl Location {
-    pub fn size(&self) -> u8 {
+    pub fn size(&self) -> Size {
         match self {
             Location::Reg(reg) => reg.size(),
             Location::Mem(mem) => mem.size,
@@ -155,7 +198,7 @@ pub enum Operand {
 }
 
 impl Operand {
-    pub fn size(&self) -> u8 {
+    pub fn size(&self) -> Size {
         match self {
             Operand::Reg(reg) => reg.size(),
             Operand::Mem(mem) => mem.size,
@@ -278,7 +321,7 @@ impl std::ops::Mul<u8> for Register {
             displacement: 0,
             base: None,
             index: Some((self, rhs)),
-            size: 0,
+            size: Size::Qword,
         }
     }
 }
@@ -300,7 +343,7 @@ impl std::ops::Add<Register> for Register {
             displacement: 0,
             base: Some(self),
             index: Some((rhs, 1)),
-            size: 0,
+            size: Size::Qword,
         }
     }
 }
@@ -313,7 +356,7 @@ impl std::ops::Add<i32> for Register {
             displacement: rhs,
             base: Some(self),
             index: None,
-            size: 0,
+            size: Size::Qword,
         }
     }
 }
@@ -326,7 +369,7 @@ impl std::ops::Sub<i32> for Register {
             displacement: -rhs,
             base: Some(self),
             index: None,
-            size: 0,
+            size: Size::Qword,
         }
     }
 }
@@ -350,22 +393,22 @@ impl std::ops::Sub<i32> for Memory {
 
 impl Memory {
     pub fn qword(mut self) -> Self {
-        self.size = 8;
+        self.size = Size::Qword;
         self
     }
 
     pub fn dword(mut self) -> Self {
-        self.size = 4;
+        self.size = Size::Dword;
         self
     }
 
     pub fn word(mut self) -> Self {
-        self.size = 2;
+        self.size = Size::Word;
         self
     }
 
     pub fn byte(mut self) -> Self {
-        self.size = 1;
+        self.size = Size::Byte;
         self
     }
 }
