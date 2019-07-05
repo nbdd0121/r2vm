@@ -51,6 +51,10 @@ impl Size {
             size => size,
         }
     }
+
+    pub fn bytes(self) -> usize {
+        1 << (self as u8)
+    }
 }
 
 impl fmt::Display for Size {
@@ -244,6 +248,20 @@ pub enum ConditionCode {
     GreaterEqual = 0xD, // NotLess = 0xD,
     LessEqual = 0xE, // NotGreater = 0xE,
     Greater = 0xF, // NotLessEqual = 0xF,
+}
+
+impl ConditionCode {
+    /// Get the condition code when the operands of `cmp` are arranged in the different order.
+    /// i.e. `<` is turned into `>`, `<=` into `>=`.
+    pub fn swap(self) -> Self {
+        match self {
+            ConditionCode::Less => ConditionCode::Greater,
+            ConditionCode::GreaterEqual => ConditionCode::LessEqual,
+            ConditionCode::Below => ConditionCode::Above,
+            ConditionCode::AboveEqual => ConditionCode::BelowEqual,
+            cc => cc,
+        }
+    }
 }
 
 impl fmt::Display for ConditionCode {
