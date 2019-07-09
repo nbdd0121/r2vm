@@ -184,6 +184,18 @@ impl Location {
     }
 }
 
+impl From<Register> for Location {
+    fn from(reg: Register) -> Self {
+        Location::Reg(reg)
+    }
+}
+
+impl From<Memory> for Location {
+    fn from(mem: Memory) -> Self {
+        Location::Mem(mem)
+    }
+}
+
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -215,6 +227,27 @@ impl Operand {
             Operand::Reg(it) => Ok(Location::Reg(it)),
             Operand::Mem(it) => Ok(Location::Mem(it)),
             Operand::Imm(it) => Err(it),
+        }
+    }
+}
+
+impl From<Register> for Operand {
+    fn from(reg: Register) -> Self {
+        Operand::Reg(reg)
+    }
+}
+
+impl From<Memory> for Operand {
+    fn from(mem: Memory) -> Self {
+        Operand::Mem(mem)
+    }
+}
+
+impl From<Location> for Operand {
+    fn from(loc: Location) -> Self {
+        match loc {
+            Location::Reg(it) => Operand::Reg(it),
+            Location::Mem(it) => Operand::Mem(it),
         }
     }
 }
