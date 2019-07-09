@@ -5,6 +5,7 @@ extern crate rand;
 extern crate fnv;
 
 pub mod riscv;
+pub mod x86;
 pub mod io;
 pub mod util;
 pub mod emu;
@@ -127,7 +128,7 @@ extern {
 
 pub fn main() {
     // Top priority: set up page fault handlers so safe_memory features will work.
-    emu::safe_memory::init();
+    emu::signal::init();
     pretty_env_logger::init();
 
     let mut args = std::env::args();

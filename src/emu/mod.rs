@@ -4,6 +4,7 @@ use crate::io::virtio::{Mmio, Block, Rng};
 
 mod abi;
 mod syscall;
+pub mod signal;
 pub mod loader;
 pub mod safe_memory;
 pub use syscall::syscall;
