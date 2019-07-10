@@ -39,6 +39,14 @@ pub fn init() {
         VIRTIO_RNG = Some(Mmio::new(Box::new(Rng::new_seeded())));
 
         IO_BOUNDARY = 0x7fffffff;
+
+        let result = libc::mmap(
+            0x8000000 as *mut libc::c_void, 0x8000000,
+            libc::PROT_NONE,
+            libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
+            -1, 0
+        );
+        assert_ne!(result, libc::MAP_FAILED);
     }
 }
 

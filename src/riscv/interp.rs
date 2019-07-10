@@ -179,53 +179,27 @@ fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
 
 const CACHE_LINE_LOG2_SIZE: usize = 12;
 
+#[inline(never)]
+#[export_name = "translate_cache_miss"]
 fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let out = match translate(ctx, addr, write) {
-        Ok(addr) => addr,
-        Err(ex) => {
-            ctx.scause = ex;
-            ctx.stval = addr;
-            return Err(())
-        }
-    };
-    if out < 0x80000000 {
+    let out = unsafe { &mut *ctx.cache }.access(ctx, addr, if write { AccessType::Write } else { AccessType::Read })?;
         // Refill is only possible if reside in physical memory
         let line: &mut CacheLine = &mut ctx.line[(idx & 1023) as usize];
         line.tag = idx << 1;
         line.paddr = out ^ addr;
         if !write { line.tag |= 1 }
+    Ok(out)
     }
-    return Ok(out);
-}
-
-#[inline(never)]
-fn read_vaddr_slow(ctx: &mut Context, addr: u64, size: usize) -> Result<u64, ()> {
-    let paddr = translate_cache_miss(ctx, addr, false)?;
-    Ok(crate::emu::phys_read(paddr, size as u32))
-}
-
-#[inline(never)]
-fn ptr_vaddr_x_slow(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
-    let paddr = translate_cache_miss(ctx, addr, true)?;
-    // No atomics for I/O memory region
-    if !crate::emu::is_ram(paddr) { panic!() }
-    Ok(paddr)
-}
-
-#[inline(never)]
-fn write_vaddr_slow(ctx: &mut Context, addr: u64, value: u64, size: usize) -> Result<(), ()> {
-    let paddr = translate_cache_miss(ctx, addr, true)?;
-    Ok(crate::emu::phys_write(paddr, value, size as u32))
-}
 
 fn read_vaddr<T: Copy + CastFrom<u64>>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
-    if (line.tag >> 1) != idx {
-        return Ok(CastFrom::cast_from(read_vaddr_slow(ctx, addr, std::mem::size_of::<T>())?))
-    }
-    let paddr = line.paddr ^ addr;
+    let paddr = if (line.tag >> 1) != idx {
+        translate_cache_miss(ctx, addr, false)?
+    } else {
+        line.paddr ^ addr
+    };
     Ok(unsafe { crate::emu::read_memory_unsafe(paddr) })
 }
 
@@ -233,7 +207,7 @@ fn ptr_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, 
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
     let paddr = if line.tag != (idx << 1) {
-        ptr_vaddr_x_slow(ctx, addr)?
+        translate_cache_miss(ctx, addr, true)?
     } else {
         line.paddr ^ addr
     };
@@ -243,10 +217,11 @@ fn ptr_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, 
 fn write_vaddr<T: Copy + Into<u64>>(ctx: &mut Context, addr: u64, value: T) -> Result<(), ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
-    if line.tag != (idx << 1) {
-        return Ok(write_vaddr_slow(ctx, addr, value.into(), std::mem::size_of::<T>())?)
-    }
-    let paddr = line.paddr ^ addr;
+    let paddr = if line.tag != (idx << 1) {
+        translate_cache_miss(ctx, addr, true)?
+    } else {
+        line.paddr ^ addr
+    };
     Ok(unsafe { crate::emu::write_memory_unsafe(paddr, value) })
 }
 
