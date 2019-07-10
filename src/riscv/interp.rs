@@ -259,6 +259,14 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
     match nr {
         0 => {
             ctx.timecmp = arg0 * 100;
+            let ctx_ptr = ctx as *mut Context;
+            (unsafe { &*crate::EVENT_LOOP }).queue(arg0 * 100, Box::new(move || {
+                let ctx = unsafe{ &mut *ctx_ptr };
+                if unsafe { &*crate::EVENT_LOOP }.cycle() >= ctx.timecmp {
+                    ctx.sip |= 32;
+                    ctx.update_pending();
+                }
+            }));
             0
         }
         1 => {
@@ -1323,10 +1331,6 @@ pub fn run_instr_ex(ctx: &mut Context) {
         Ok(()) => (),
         Err(()) => return trap(ctx),
     }
-    if ctx.cycle >= ctx.timecmp {
-        ctx.sip |= 32;
-        ctx.update_pending();
-    }
     if ctx.pending != 0 {
         let pending = ctx.pending &! (1 << 63);
         // TODO: This is a hack, fix it!
@@ -1341,10 +1345,6 @@ pub fn run_block_ex(ctx: &mut Context) {
     match run_block(ctx) {
         Ok(()) => (),
         Err(()) => return trap(ctx),
-    }
-    if ctx.cycle >= ctx.timecmp {
-        ctx.sip |= 32;
-        ctx.update_pending();
     }
     if ctx.pending != 0 {
         let pending = ctx.pending &! (1 << 63);
