@@ -214,17 +214,6 @@ fn ptr_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, 
     Ok(unsafe { &mut *(paddr as *mut T) })
 }
 
-fn write_vaddr<T: Copy + Into<u64>>(ctx: &mut Context, addr: u64, value: T) -> Result<(), ()> {
-    let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let line = &ctx.line[(idx & 1023) as usize];
-    let paddr = if line.tag != (idx << 1) {
-        translate_cache_miss(ctx, addr, true)?
-    } else {
-        line.paddr ^ addr
-    };
-    Ok(unsafe { crate::emu::write_memory_unsafe(paddr, value) })
-}
-
 use fnv::FnvHashMap;
 type Block = (Vec<(Op, bool)>, u64, u64);
 
@@ -417,22 +406,26 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         /* STORE */
         Op::Sb { rs1, rs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            write_vaddr(ctx, vaddr, read_reg!(rs2) as u8)?
+            let paddr = ptr_vaddr_x(ctx, vaddr)?;
+            *paddr = read_reg!(rs2) as u8;
         }
         Op::Sh { rs1, rs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 1 != 0 { trap!(5, vaddr) }
-            write_vaddr(ctx, vaddr, read_reg!(rs2) as u16)?
+            let paddr = ptr_vaddr_x(ctx, vaddr)?;
+            *paddr = read_reg!(rs2) as u16;
         }
         Op::Sw { rs1, rs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(5, vaddr) }
-            write_vaddr(ctx, vaddr, read_reg!(rs2) as u32)?
+            let paddr = ptr_vaddr_x(ctx, vaddr)?;
+            *paddr = read_reg!(rs2) as u32;
         }
         Op::Sd { rs1, rs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 7 != 0 { trap!(5, vaddr) }
-            write_vaddr(ctx, vaddr, read_reg!(rs2) as u64)?
+            let paddr = ptr_vaddr_x(ctx, vaddr)?;
+            *paddr = read_reg!(rs2) as u64;
         }
         /* OP */
         Op::Add { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_add(read_reg!(rs2))),
@@ -549,7 +542,8 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Fsw { rs1, frs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(5, vaddr) }
-            write_vaddr(ctx, vaddr, read_fs!(frs2).0)?
+            let paddr = ptr_vaddr_x(ctx, vaddr)?;
+            *paddr = read_fs!(frs2).0;
         }
         Op::FaddS { frd, frs1, frs2, rm } => {
             set_rm!(rm);
@@ -698,7 +692,8 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Fsd { rs1, frs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 7 != 0 { trap!(5, vaddr) }
-            write_vaddr(ctx, vaddr, read_fd!(frs2).0)?
+            let paddr = ptr_vaddr_x(ctx, vaddr)?;
+            *paddr = read_fd!(frs2).0;
         }
         Op::FaddD { frd, frs1, frs2, rm } => {
             set_rm!(rm);

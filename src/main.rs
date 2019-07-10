@@ -117,10 +117,7 @@ unsafe extern "C" fn send_ipi(mask: u64) {
     }
 }
 
-#[no_mangle]
-extern "C" fn run_instr_ex(ctx: &mut riscv::interp::Context) {
-    riscv::interp::run_instr_ex(ctx);
-}
+pub static mut EVENT_LOOP: *mut emu::EventLoop = std::ptr::null_mut();
 
 extern {
     fn fiber_interp_run();
@@ -272,9 +269,15 @@ pub fn main() {
     let mut fibers = Vec::new();
     let mut contexts = Vec::new();
 
-    const NUM_CORES: usize = 4;
+    let num_cores = if get_flags().user_only { 1 } else { 4 };
 
-    for i in 0..NUM_CORES {
+    // Create a fiber for event-driven simulation, e.g. timer, I/O
+    let event_loop = emu::EventLoop::new();
+    let event_fiber = event_loop.create_fiber();
+    unsafe { EVENT_LOOP = event_fiber.data_pointer() }
+    fibers.push(event_fiber);
+
+    for i in 0..num_cores {
         let mut newctx = ctx;
         newctx.registers[10] = i as u64;
 
@@ -287,7 +290,7 @@ pub fn main() {
     }
 
     // Chain fibers together
-    for i in 0..(NUM_CORES-1) {
+    for i in 0..num_cores {
         let fiber = &fibers[i];
         let fiber2 = &fibers[i + 1];
         fiber.chain(fiber2);

@@ -3,10 +3,12 @@ use crate::io::plic::Plic;
 use crate::io::virtio::{Mmio, Block, Rng};
 
 mod abi;
+mod event;
 mod syscall;
 pub mod signal;
 pub mod loader;
 pub mod safe_memory;
+pub use event::EventLoop;
 pub use syscall::syscall;
 
 // Type definition of guest sizes

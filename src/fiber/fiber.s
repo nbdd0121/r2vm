@@ -52,8 +52,6 @@ fiber_sleep:
     pop rbx
     ret
 
-    mov rax, [rbp+0x100]
-
 fiber_start:
     lea rbp, [rdi + 32]
     mov rsp, [rdi]
@@ -66,3 +64,21 @@ fiber_interp_run:
     call run_instr_ex
     call fiber_yield_raw
     jmp fiber_interp_run
+
+.extern event_loop_handle
+.global fiber_event_loop
+fiber_event_loop:
+    # Increase the global cycle counter
+    mov rax, [rbp]
+    add rax, 1
+    mov [rbp], rax
+    # If the cycle counter exceeds the `next_event` value, we need to do things.
+    cmp rax, [rbp + 8]
+    jae 1f
+2:
+    call fiber_yield_raw
+    jmp fiber_event_loop
+1:
+    mov rdi, rbp
+    call event_loop_handle
+    jmp 2b
