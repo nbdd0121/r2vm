@@ -3,6 +3,9 @@ extern crate log;
 extern crate pretty_env_logger;
 extern crate rand;
 extern crate fnv;
+#[macro_use]
+extern crate num_derive;
+extern crate num_traits;
 
 pub mod riscv;
 pub mod x86;

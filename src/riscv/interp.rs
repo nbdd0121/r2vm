@@ -183,14 +183,21 @@ const CACHE_LINE_LOG2_SIZE: usize = 12;
 #[export_name = "translate_cache_miss"]
 fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let out = unsafe { &mut *ctx.cache }.access(ctx, addr, if write { AccessType::Write } else { AccessType::Read })?;
-        // Refill is only possible if reside in physical memory
-        let line: &mut CacheLine = &mut ctx.line[(idx & 1023) as usize];
-        line.tag = idx << 1;
-        line.paddr = out ^ addr;
-        if !write { line.tag |= 1 }
+    let out = match translate(ctx, addr, write) {
+        Err(trap) => {
+            ctx.scause = trap as u64;
+            ctx.stval = addr;
+            return Err(())
+        }
+        Ok(out) => out,
+    };
+    // Refill is only possible if reside in physical memory
+    let line: &mut CacheLine = &mut ctx.line[(idx & 1023) as usize];
+    line.tag = idx << 1;
+    line.paddr = out ^ addr;
+    if !write { line.tag |= 1 }
     Ok(out)
-    }
+}
 
 fn read_vaddr<T: Copy + CastFrom<u64>>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
@@ -1295,6 +1302,7 @@ pub fn trap(ctx: &mut Context) {
     ctx.pc = ctx.stvec;
 }
 
+#[no_mangle]
 pub fn run_instr_ex(ctx: &mut Context) {
     match run_instr(ctx) {
         Ok(()) => (),
