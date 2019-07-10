@@ -43,10 +43,26 @@ pub struct Context {
     // Current privilege level
     pub prv: u64,
 
-    // Pending exceptions: sstatus.sie ? sie & sip : 0
+    // Pending trap
     pub pending: u64,
+    pub pending_tval: u64,
 
+    pub hartid: u64,
     pub line: [CacheLine; 1024],
+}
+
+impl Context {
+    pub fn update_pending(&mut self) {
+        // Find out which interrupts can be taken
+        let interrupt_mask = if (self.sstatus & 0x2) != 0 { self.sip & self.sie } else { 0 };
+        // No interrupt pending
+        if interrupt_mask == 0 { return }
+        // Find the highest priority interrupt
+        let pending = 63 - interrupt_mask.leading_zeros() as u64;
+        // Interrupts have the highest bit set
+        self.pending = (1 << 63) | pending;
+        self.pending_tval = 0;
+    }
 }
 
 /// Perform a CSR read on a context. Note that this operation performs no checks before accessing
@@ -106,11 +122,11 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
             value |= 0x200000000;
             ctx.sstatus = value;
             // Update ctx.pending. Important!
-            ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 }
+            ctx.update_pending();
         }
         Csr::Sie => {
             ctx.sie = value;
-            ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 }
+            ctx.update_pending();
         }
         Csr::Stvec => {
             // We support MODE 0 only at the moment
@@ -125,7 +141,7 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
         Csr::Sip => {
             // Only SSIP flag can be cleared by software
             ctx.sip = ctx.sip &! 0x2 | value & 0x2;
-            ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 }
+            ctx.update_pending();
         }
         Csr::Satp => {
             match value >> 60 {
@@ -500,7 +516,19 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         /* SYSTEM */
         Op::Ecall =>
             if ctx.prv == 0 {
+                if crate::get_flags().user_only {
+                    ctx.registers[10] = unsafe { crate::emu::syscall(
+                        ctx.registers[17],
+                        ctx.registers[10],
+                        ctx.registers[11],
+                        ctx.registers[12],
+                        ctx.registers[13],
+                        ctx.registers[14],
+                        ctx.registers[15],
+                    ) };
+                } else {
                 trap!(8, 0)
+                }
             } else {
                 ctx.registers[10] = sbi_call(
                     ctx,
@@ -1255,19 +1283,6 @@ fn run_block(ctx: &mut Context) -> Result<(), ()> {
 /// Trigger a trap. pc must be already adjusted properly before calling.
 pub fn trap(ctx: &mut Context) {
     if crate::get_flags().user_only {
-        if ctx.scause == 8 {
-            ctx.registers[10] = unsafe { crate::emu::syscall(
-                ctx.registers[17],
-                ctx.registers[10],
-                ctx.registers[11],
-                ctx.registers[12],
-                ctx.registers[13],
-                ctx.registers[14],
-                ctx.registers[15],
-            ) };
-            ctx.pc += 4;
-            return;
-        }
         eprintln!("unhandled trap {}", ctx.scause);
         eprintln!("pc  = {:16x}  ra  = {:16x}", ctx.pc, ctx.registers[1]);
         for i in (2..32).step_by(2) {
@@ -1310,15 +1325,14 @@ pub fn run_instr_ex(ctx: &mut Context) {
     }
     if ctx.cycle >= ctx.timecmp {
         ctx.sip |= 32;
-        ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
+        ctx.update_pending();
     }
     if ctx.pending != 0 {
-        // The highest set bit of ctx.pending
-        let pending = 63 - ctx.pending.leading_zeros() as u64;
+        let pending = ctx.pending &! (1 << 63);
+        // TODO: This is a hack, fix it!
         ctx.sip &= !(1 << pending);
-        // The highest bit of cause indicates this is an interrupt
-        ctx.scause = (1 << 63) | pending;
-        ctx.stval = 0;
+        ctx.scause = ctx.pending;
+        ctx.stval = ctx.pending_tval;
         trap(ctx);
     }
 }
@@ -1330,15 +1344,14 @@ pub fn run_block_ex(ctx: &mut Context) {
     }
     if ctx.cycle >= ctx.timecmp {
         ctx.sip |= 32;
-        ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
+        ctx.update_pending();
     }
     if ctx.pending != 0 {
-        // The highest set bit of ctx.pending
-        let pending = 63 - ctx.pending.leading_zeros() as u64;
+        let pending = ctx.pending &! (1 << 63);
+        // TODO: This is a hack, fix it!
         ctx.sip &= !(1 << pending);
-        // The highest bit of cause indicates this is an interrupt
-        ctx.scause = (1 << 63) | pending;
-        ctx.stval = 0;
+        ctx.scause = ctx.pending;
+        ctx.stval = ctx.pending_tval;
         trap(ctx);
     }
 }

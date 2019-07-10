@@ -107,7 +107,7 @@ pub static mut CONTEXTS: &'static mut [*mut riscv::interp::Context] = &mut [];
 extern "C" fn interrupt() {
     let ctx = unsafe { &mut *CONTEXTS[0] };
     ctx.sip |= 512;
-    ctx.pending = if (ctx.sstatus & 0x2) != 0 { ctx.sip & ctx.sie } else { 0 };
+    ctx.update_pending();
 }
 
 #[no_mangle]
@@ -116,7 +116,7 @@ unsafe extern "C" fn send_ipi(mask: u64) {
         let actx = &mut *CONTEXTS[i];
         if (mask & (1 << i)) == 0 { continue }
         actx.sip |= 2;
-        actx.pending = if (actx.sstatus & 0x2) != 0 { actx.sip & actx.sie } else { 0 };
+        actx.update_pending();
     }
 }
 
@@ -252,11 +252,13 @@ pub fn main() {
         sscratch: 0,
         stvec: 0,
         pending: 0,
+        pending_tval: 0,
         cycle: 0,
         timecmp: u64::max_value(),
         // These are set by setup_mem, so we don't really care now.
         pc: 0,
         prv: 0,
+        hartid: 0,
         line: [riscv::interp::CacheLine {
             tag: i64::max_value() as u64,
             paddr: 0
@@ -283,6 +285,7 @@ pub fn main() {
     for i in 0..num_cores {
         let mut newctx = ctx;
         newctx.registers[10] = i as u64;
+        newctx.hartid = i as u64;
 
         let fiber = fiber::Fiber::new();
         let ptr = fiber.data_pointer();
