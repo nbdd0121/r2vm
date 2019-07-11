@@ -265,9 +265,9 @@ fn ptr_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, 
 use fnv::FnvHashMap;
 type Block = (Vec<(Op, bool)>, u64, u64);
 
-static mut ICACHE: [Option<FnvHashMap<u64, Block>>; 8] = [None, None, None, None, None, None, None, None];
+static mut ICACHE: [Option<FnvHashMap<u64, crate::dbt::DbtBlock>>; 8] = [None, None, None, None, None, None, None, None];
 
-fn icache(id: u64) -> &'static mut FnvHashMap<u64, Block> {
+fn icache(id: u64) -> &'static mut FnvHashMap<u64, crate::dbt::DbtBlock> {
     let id = id as usize;
     unsafe {
         if ICACHE[id].is_none() {
@@ -336,6 +336,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
     }
 }
 
+#[export_name = "riscv_step"]
 pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     macro_rules! read_reg {
         ($rs: expr) => {{
@@ -1255,20 +1256,20 @@ extern "C" fn no_op() {}
 
 #[no_mangle]
 extern "C" fn interp_block(ctx: &mut Context) {
-    let blk = unsafe { &*(ctx.cur_block as *const Block) };
-    ctx.pc += blk.2 - blk.1;
+    let dbtblk = unsafe { &*(ctx.cur_block as *const crate::dbt::DbtBlock) };
+    ctx.pc += dbtblk.pc_end - dbtblk.pc_start;
     
-    for i in 0..blk.0.len() {
+    for i in 0..dbtblk.block.len() {
         if i != 0 { crate::fiber::Fiber::sleep(1) }
-        let (ref inst, _) = blk.0[i];
+        let (ref inst, _) = dbtblk.block[i];
         match step(ctx, inst) {
         Ok(()) => (),
         Err(()) => {
                 // Adjust pc and instret by iterating through remaining instructions.
-                for j in i..blk.0.len() {
-                    ctx.pc -= if blk.0[j].1 { 2 } else { 4 };
+                for j in i..dbtblk.block.len() {
+                    ctx.pc -= if dbtblk.block[j].1 { 2 } else { 4 };
                 }
-                ctx.instret -= (blk.0.len() - i) as u64;
+                ctx.instret -= (dbtblk.block.len() - i) as u64;
                 return;
             }
         }
@@ -1292,7 +1293,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
         Err(_) => 0,
     };
 
-    let blk = icache(ctx.hartid).entry(phys_pc).or_insert_with(|| {
+    let dbtblk = icache(ctx.hartid).entry(phys_pc).or_insert_with(|| {
         let (mut vec, start, end) = super::decode::decode_block(phys_pc, phys_pc_next);
         // Function step will assume the pc is just past the instruction, however we will reduce
         // change to instret by increment past the whole basic block. We preprocess the block to
@@ -1303,13 +1304,13 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
                 *imm -= (end - phys_pc) as i32;
             }
         }
-        (vec, start, end)
+        let mut compiler = crate::dbt::DbtCompiler::new();
+        compiler.compile((vec, start, end))
     });
 
-    ctx.instret += blk.0.len() as u64;
-
-    ctx.cur_block = blk as *const _ as usize;
-    fiber_interp_block
+    ctx.instret += dbtblk.block.len() as u64;
+    ctx.cur_block = dbtblk as *const _ as usize;
+    unsafe { dbtblk.code.as_func_ptr::<extern "C" fn()>() }
 }
 
 /// Trigger a trap. pc must be already adjusted properly before calling.

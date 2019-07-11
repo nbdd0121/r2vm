@@ -10,9 +10,11 @@ extern crate num_traits;
 pub mod riscv;
 pub mod x86;
 pub mod io;
+#[macro_use]
 pub mod util;
 pub mod emu;
 pub mod fiber;
+pub mod dbt;
 
 use std::ffi::{CString};
 use std::ptr;
@@ -80,7 +82,7 @@ pub struct Flags {
     user_only: bool,
 }
 
-pub static mut FLAGS: Flags = Flags {
+static mut FLAGS: Flags = Flags {
     no_direct_memory_access: true,
     strace: false,
     disassemble: false,
