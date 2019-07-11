@@ -43,7 +43,18 @@ pub fn console_init() {
                     // 'x'
                     0x78 => {
                         println!("Terminated");
+                        unsafe {
+                            println!("CYCLE = {:x}", crate::event_loop().cycle());
+                            for i in 0..crate::CONTEXTS.len() {
+                                let ctx = &*crate::CONTEXTS[i];
+                                println!("Hart {}: INSTRET = {:x}, MINSTRET = {:x}", i, ctx.instret, ctx.minstret);
+                            }
+                        }
                         std::process::exit(0);
+                    }
+                    // 'c'
+                    0x63 => {
+                        unsafe { libc::raise(libc::SIGTRAP); }
                     }
                     // Hit Ctrl + A twice, send Ctrl + A to guest
                     1 => (),

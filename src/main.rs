@@ -264,6 +264,7 @@ pub fn main() {
         pc: 0,
         prv: 0,
         hartid: 0,
+        minstret: 0,
         line: [riscv::interp::CacheLine {
             tag: i64::max_value() as u64,
             paddr: 0

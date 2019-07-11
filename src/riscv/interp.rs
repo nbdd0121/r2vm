@@ -52,6 +52,7 @@ pub struct Context {
     pub prv: u64,
 
     pub hartid: u64,
+    pub minstret: u64,
 
     /// This is the L0 cache used to accelerate simulation. If a memory request hits the cache line
     /// here, then it will not go through virtual address translation nor cache simulation.
@@ -241,6 +242,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
 }
 
 fn read_vaddr<T: Copy + CastFrom<u64>>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
+    ctx.minstret += 1;
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
     let paddr = if (line.tag >> 1) != idx {
@@ -252,6 +254,7 @@ fn read_vaddr<T: Copy + CastFrom<u64>>(ctx: &mut Context, addr: u64) -> Result<T
 }
 
 fn ptr_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
+    ctx.minstret += 1;
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
     let paddr = if line.tag != (idx << 1) {
@@ -1257,6 +1260,7 @@ extern "C" fn no_op() {}
 #[no_mangle]
 extern "C" fn interp_block(ctx: &mut Context) {
     let dbtblk = unsafe { &*(ctx.cur_block as *const crate::dbt::DbtBlock) };
+    ctx.instret += dbtblk.block.len() as u64;
     ctx.pc += dbtblk.pc_end - dbtblk.pc_start;
     
     for i in 0..dbtblk.block.len() {
@@ -1308,7 +1312,6 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
         compiler.compile((vec, start, end))
     });
 
-    ctx.instret += dbtblk.block.len() as u64;
     ctx.cur_block = dbtblk as *const _ as usize;
     unsafe { dbtblk.code.as_func_ptr::<extern "C" fn()>() }
 }

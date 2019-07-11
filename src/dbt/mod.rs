@@ -49,6 +49,7 @@ impl DbtBlock {
 
 pub struct DbtCompiler {
     enc: crate::x86::Encoder,
+    minstret: u32,
 }
 
 #[inline]
@@ -78,6 +79,7 @@ impl DbtCompiler {
     pub fn new() -> DbtCompiler {
         DbtCompiler {
             enc: crate::x86::Encoder { buffer: Vec::new() },
+            minstret: 0,
         }
     }
 
@@ -211,6 +213,7 @@ impl DbtCompiler {
     }
 
     fn emit_load(&mut self, rs1: u8, imm: i32, size: Size) {
+        self.minstret += 1;
         let offset = offset_of!(crate::riscv::interp::Context, line);
         
         // RSI = addr
@@ -259,6 +262,7 @@ impl DbtCompiler {
     }
 
     fn emit_store(&mut self, rs1: u8, rs2: u8, imm: i32, size: Size) {
+        self.minstret += 1;
         let offset = offset_of!(crate::riscv::interp::Context, line);
 
         // RSI = addr
@@ -1195,6 +1199,16 @@ impl DbtCompiler {
         // Pre-adjust PC
         self.emit(Add(Mem(memory_of_pc()), Imm((block.2 - block.1) as i64)));
 
+        // Increase instret
+        let mem_of_instret = (Register::RBP + offset_of!(crate::riscv::interp::Context, instret) as i32).qword();
+        self.emit(Add(Mem(mem_of_instret), Imm(opblock.len() as i64)));
+
+        // Increase minstret, the immediate is a placeholder and will be patched later
+        // Note minstret is not precisely tracked in case of exception
+        let mem_of_minstret = (Register::RBP + offset_of!(crate::riscv::interp::Context, minstret) as i32).qword();
+        self.emit(Add(Mem(mem_of_minstret), Imm(0x77777777)));
+        let fixup = self.enc.buffer.len();
+
         let mut pc_start = 0;
         for i in 0..opblock.len() {
             if i != 0 {
@@ -1210,6 +1224,9 @@ impl DbtCompiler {
 
         // Epilogue
         self.emit(Ret(0));
+
+        // Patch up minstret
+        self.enc.buffer[fixup-4..fixup].copy_from_slice(&self.minstret.to_le_bytes());
         
         let code = crate::util::Code::new(&self.enc.buffer);
         DbtBlock {
