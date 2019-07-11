@@ -45,6 +45,7 @@ pub struct EventLoop {
 }
 
 extern {
+    // See also `event.s` for this function
     fn fiber_event_loop();
 }
 
