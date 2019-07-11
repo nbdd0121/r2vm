@@ -13,13 +13,22 @@ pub struct CacheLine {
     pub paddr: u64,
 }
 
+/// Context representing the CPU state of a RISC-V hart.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Context {
     pub registers: [u64; 32],
-    pub fp_registers: [u64; 32],
     pub pc: u64,
     pub instret: u64,
+
+    // Pending trap
+    // Note that changing the position of this field would need to change the hard-fixed constant
+    // in assembly.
+    pub pending: u64,
+    pub pending_tval: u64,
+
+    // Floating point states
+    pub fp_registers: [u64; 32],
     pub fcsr: u64,
 
     // For load reservation
@@ -43,23 +52,26 @@ pub struct Context {
     // Current privilege level
     pub prv: u64,
 
-    // Pending trap
-    pub pending: u64,
-    pub pending_tval: u64,
-
     pub hartid: u64,
     pub line: [CacheLine; 1024],
 }
 
 impl Context {
     pub fn update_pending(&mut self) {
+        // If there is a trap already pending, then we couldn't take interrupt
+        if (self.pending as i64) > 0 { return }
+
         // Find out which interrupts can be taken
         let interrupt_mask = if (self.sstatus & 0x2) != 0 { self.sip & self.sie } else { 0 };
         // No interrupt pending
-        if interrupt_mask == 0 { return }
+        if interrupt_mask == 0 {
+            self.pending = 0;
+            return
+        }
         // Find the highest priority interrupt
         let pending = 63 - interrupt_mask.leading_zeros() as u64;
         // Interrupts have the highest bit set
+        // TODO: Reconsider atomicity
         self.pending = (1 << 63) | pending;
         self.pending_tval = 0;
     }
@@ -201,8 +213,8 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let out = match translate(ctx, addr, write) {
         Err(trap) => {
-            ctx.scause = trap as u64;
-            ctx.stval = addr;
+            ctx.pending = trap as u64;
+            ctx.pending_tval = addr;
             return Err(())
         }
         Ok(out) => out,
@@ -374,8 +386,8 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     }
     macro_rules! trap {
         ($cause: expr, $tval: expr) => {{
-            ctx.scause = $cause;
-            ctx.stval = $tval;
+            ctx.pending = $cause;
+            ctx.pending_tval = $tval;
             return Err(())
         }}
     }
@@ -1205,15 +1217,15 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     Ok(())
 }
 
-fn run_instr(ctx: &mut Context) -> Result<(), ()> {
+fn run_instr(ctx: &mut Context) {
     let pc = ctx.pc;
     let mut phys_pc = match translate(ctx, pc, false) {
         Ok(pc) => pc,
         Err(ex) => {
-            ctx.scause = ex;
-            ctx.stval = pc;
+            ctx.pending = ex;
+            ctx.pending_tval = pc;
             ctx.cycle += 1;
-            return Err(())
+            return
         }
     };
     // Ignore error in this case
@@ -1230,20 +1242,20 @@ fn run_instr(ctx: &mut Context) -> Result<(), ()> {
         Err(()) => {
             ctx.pc -= if c { 2 } else { 4 };
             ctx.instret -= 1;
-            return Err(());
+            return
         }
     }
-    Ok(())
 }
 
-fn run_block(ctx: &mut Context) -> Result<(), ()> {
+fn run_block(ctx: &mut Context) {
     let pc = ctx.pc;
     let mut phys_pc = match translate(ctx, pc, false) {
         Ok(pc) => pc,
         Err(ex) => {
-            ctx.scause = ex;
-            ctx.stval = pc;
-            return Err(())
+            ctx.pending = ex;
+            ctx.pending_tval = pc;
+            ctx.cycle += 1;
+            return
         }
     };
     // Ignore error in this case
@@ -1281,17 +1293,16 @@ fn run_block(ctx: &mut Context) -> Result<(), ()> {
                 }
                 ctx.instret -= (vec.len() - i) as u64;
                 ctx.cycle -= (vec.len() - i - 1) as u64;
-                return Err(());
+                return
             }
         }
     }
-    Ok(())
 }
 
 /// Trigger a trap. pc must be already adjusted properly before calling.
 pub fn trap(ctx: &mut Context) {
     if crate::get_flags().user_only {
-        eprintln!("unhandled trap {}", ctx.scause);
+        eprintln!("unhandled trap {}", ctx.pending);
         eprintln!("pc  = {:16x}  ra  = {:16x}", ctx.pc, ctx.registers[1]);
         for i in (2..32).step_by(2) {
             eprintln!(
@@ -1303,6 +1314,14 @@ pub fn trap(ctx: &mut Context) {
         std::process::exit(1);
     }
 
+    if ctx.pending & (1 << 63) != 0 {
+        let interrupt = ctx.pending &! (1 << 63);
+        // TODO: This is a hack, fix it!
+        ctx.sip &= !(1 << interrupt);
+    }
+
+    ctx.scause = ctx.pending;
+    ctx.stval = ctx.pending_tval;
     ctx.sepc = ctx.pc;
 
     // Clear or set SPP bit
@@ -1327,31 +1346,15 @@ pub fn trap(ctx: &mut Context) {
 
 #[no_mangle]
 pub fn run_instr_ex(ctx: &mut Context) {
-    match run_instr(ctx) {
-        Ok(()) => (),
-        Err(()) => return trap(ctx),
-    }
+    run_instr(ctx);
     if ctx.pending != 0 {
-        let pending = ctx.pending &! (1 << 63);
-        // TODO: This is a hack, fix it!
-        ctx.sip &= !(1 << pending);
-        ctx.scause = ctx.pending;
-        ctx.stval = ctx.pending_tval;
         trap(ctx);
     }
 }
 
 pub fn run_block_ex(ctx: &mut Context) {
-    match run_block(ctx) {
-        Ok(()) => (),
-        Err(()) => return trap(ctx),
-    }
+    run_block(ctx);
     if ctx.pending != 0 {
-        let pending = ctx.pending &! (1 << 63);
-        // TODO: This is a hack, fix it!
-        ctx.sip &= !(1 << pending);
-        ctx.scause = ctx.pending;
-        ctx.stval = ctx.pending_tval;
         trap(ctx);
     }
 }
