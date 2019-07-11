@@ -46,7 +46,6 @@ pub struct Context {
     pub sip: u64,
     pub satp: u64,
 
-    pub cycle: u64,
     pub timecmp: u64,
 
     // Current privilege level
@@ -104,7 +103,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> u64 {
         Csr::Frm => (ctx.fcsr >> 5) & 0b111,
         Csr::Fcsr => ctx.fcsr,
         // Pretend that we're 100MHz
-        Csr::Time => ctx.cycle / 100,
+        Csr::Time => crate::event_loop().cycle() / 100,
         // We assume the instret is incremented already
         Csr::Instret => ctx.instret - 1,
         Csr::Sstatus => ctx.sstatus,
@@ -219,7 +218,7 @@ fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
     return Ok(ret);
 }
 
-const CACHE_LINE_LOG2_SIZE: usize = 12;
+pub const CACHE_LINE_LOG2_SIZE: usize = 12;
 
 #[inline(never)]
 #[export_name = "translate_cache_miss"]
@@ -301,9 +300,9 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
         0 => {
             ctx.timecmp = arg0 * 100;
             let ctx_ptr = ctx as *mut Context;
-            (unsafe { &*crate::EVENT_LOOP }).queue(arg0 * 100, Box::new(move || {
+            crate::event_loop().queue(arg0 * 100, Box::new(move || {
                 let ctx = unsafe{ &mut *ctx_ptr };
-                if unsafe { &*crate::EVENT_LOOP }.cycle() >= ctx.timecmp {
+                if crate::event_loop().cycle() >= ctx.timecmp {
                     ctx.sip |= 32;
                     ctx.update_pending();
                 }
@@ -1270,7 +1269,6 @@ extern "C" fn interp_block(ctx: &mut Context) {
                     ctx.pc -= if blk.0[j].1 { 2 } else { 4 };
                 }
                 ctx.instret -= (blk.0.len() - i) as u64;
-                ctx.cycle -= (blk.0.len() - i - 1) as u64;
                 return;
             }
         }
@@ -1285,7 +1283,6 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
         Err(ex) => {
             ctx.pending = ex;
             ctx.pending_tval = pc;
-            ctx.cycle += 1;
             return no_op;
         }
     };
@@ -1310,7 +1307,6 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
     });
 
     ctx.instret += blk.0.len() as u64;
-    ctx.cycle += blk.0.len() as u64;
 
     ctx.cur_block = blk as *const _ as usize;
     fiber_interp_block

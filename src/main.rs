@@ -120,7 +120,11 @@ unsafe extern "C" fn send_ipi(mask: u64) {
     }
 }
 
-pub static mut EVENT_LOOP: *mut emu::EventLoop = std::ptr::null_mut();
+static mut EVENT_LOOP: *const emu::EventLoop = std::ptr::null_mut();
+
+pub fn event_loop() -> &'static emu::EventLoop {
+    unsafe { &*EVENT_LOOP }
+}
 
 extern {
     fn fiber_interp_run();
@@ -253,7 +257,6 @@ pub fn main() {
         stvec: 0,
         pending: 0,
         pending_tval: 0,
-        cycle: 0,
         timecmp: u64::max_value(),
         // These are set by setup_mem, so we don't really care now.
         pc: 0,
