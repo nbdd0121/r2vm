@@ -1,6 +1,6 @@
 //! Helper traits for templating over integer types.
 
-use std::ops;
+use core::ops;
 
 /// Trait for fixed-size integer types.
 pub trait Int: Sized + Ord + Eq + Copy +
@@ -18,13 +18,13 @@ pub trait Int: Sized + Ord + Eq + Copy +
     ops::BitAndAssign<Self> +
     ops::BitOrAssign<Self> +
     ops::Not<Output=Self> +
-    std::fmt::Debug {
+    core::fmt::Debug {
 
     fn zero() -> Self;
     fn one() -> Self;
     fn max_value() -> Self;
     fn bit_width() -> u32 {
-        std::mem::size_of::<Self>() as u32 * 8
+        core::mem::size_of::<Self>() as u32 * 8
     }
 }
 

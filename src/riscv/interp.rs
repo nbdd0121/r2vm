@@ -1,7 +1,6 @@
 use super::csr::Csr;
 use super::op::Op;
-use crate::util::int::{CastFrom};
-use crate::util::softfp::{self, F32, F64};
+use softfp::{self, F32, F64};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -181,7 +180,7 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
                 _ => (),
             }
             ctx.clear_local_cache();
-            }
+        }
         _ => {
            unreachable!("write illegal csr {:x} = {:x}", csr as i32, value);
         }
@@ -241,7 +240,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
     Ok(out)
 }
 
-fn read_vaddr<T: Copy + CastFrom<u64>>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
+fn read_vaddr<T: Copy>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
     ctx.minstret += 1;
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
@@ -405,7 +404,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         ($rm: expr) => {{
             let rm = if $rm == 0b111 { (ctx.fcsr >> 5) as u32 } else { $rm as u32 };
             if rm >= 5 { trap!(2, 0) }
-            softfp::set_rounding_mode(rm);
+            softfp::set_rounding_mode(unsafe { std::mem::transmute(rm) });
         }}
     }
     macro_rules! clear_flags {
@@ -583,7 +582,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
                         ctx.registers[15],
                     ) };
                 } else {
-                trap!(8, 0)
+                    trap!(8, 0)
                 }
             } else {
                 ctx.registers[10] = sbi_call(
@@ -710,7 +709,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             write_32!(rd, read_fs!(frs1).0);
         }
         Op::FclassS { rd, frs1 } => {
-            write_reg!(rd, 1 << read_fs!(frs1).classify());
+            write_reg!(rd, 1 << read_fs!(frs1).classify() as u32);
         }
         Op::FeqS { rd, frs1, frs2 } => {
             write_reg!(rd, (read_fs!(frs1) == read_fs!(frs2)) as u64)
@@ -871,7 +870,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             write_reg!(rd, read_fd!(frs1).0);
         }
         Op::FclassD { rd, frs1 } => {
-            write_reg!(rd, 1 << read_fd!(frs1).classify());
+            write_reg!(rd, 1 << read_fd!(frs1).classify() as u32);
         }
         Op::FeqD { rd, frs1, frs2 } => {
             write_reg!(rd, (read_fd!(frs1) == read_fd!(frs2)) as u64)
@@ -1267,8 +1266,8 @@ extern "C" fn interp_block(ctx: &mut Context) {
         if i != 0 { crate::fiber::Fiber::sleep(1) }
         let (ref inst, _) = dbtblk.block[i];
         match step(ctx, inst) {
-        Ok(()) => (),
-        Err(()) => {
+            Ok(()) => (),
+            Err(()) => {
                 // Adjust pc and instret by iterating through remaining instructions.
                 for j in i..dbtblk.block.len() {
                     ctx.pc -= if dbtblk.block[j].1 { 2 } else { 4 };

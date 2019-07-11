@@ -7,6 +7,8 @@ extern crate fnv;
 extern crate num_derive;
 extern crate num_traits;
 
+extern crate softfp;
+
 pub mod riscv;
 pub mod x86;
 pub mod io;

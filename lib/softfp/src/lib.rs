@@ -1,19 +1,23 @@
-#![allow(dead_code)]
+mod int;
 
-use std::ops;
-use std::cmp::Ordering;
-use std::sync::atomic::{AtomicU32, Ordering as MemOrder};
-use std::convert::{TryInto};
-use super::int::{CastFrom, CastTo, Int, UInt};
+use core::ops;
+use core::cmp::Ordering;
+use core::sync::atomic::{AtomicU32, Ordering as MemOrder};
+use core::convert::{TryInto};
+use int::{CastFrom, CastTo, Int, UInt};
 
 // #region Rounding mode constant and manipulation
 //
 
-const RM_TIES_TO_EVEN    : u32 = 0b000;
-const RM_TOWARD_ZERO     : u32 = 0b001;
-const RM_TOWARD_NEGATIVE : u32 = 0b010;
-const RM_TOWARD_POSITIVE : u32 = 0b011;
-const RM_TIES_TO_AWAY    : u32 = 0b100;
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RoundingMode {
+    TiesToEven     = 0b000,
+    TowardZero     = 0b001,
+    TowardNegative = 0b010,
+    TowardPositive = 0b011,
+    TiesToAway     = 0b100,
+}
 
 thread_local!(
     /// We use atomic here merely to avoid the cost of RefCell. So we should use relaxed ordering.
@@ -21,16 +25,16 @@ thread_local!(
 );
 
 #[inline]
-fn get_rounding_mode() -> u32 {
+fn get_rounding_mode() -> RoundingMode {
     ROUNDING_MODE.with(|flags| {
-        flags.load(MemOrder::Relaxed)
+        unsafe { core::mem::transmute(flags.load(MemOrder::Relaxed)) }
     })
 }
 
 #[inline]
-pub fn set_rounding_mode(flag: u32) {
+pub fn set_rounding_mode(flag: RoundingMode) {
     ROUNDING_MODE.with(|flags| {
-        flags.store(flag, MemOrder::Relaxed);
+        flags.store(flag as u32, MemOrder::Relaxed);
     })
 }
 
@@ -39,11 +43,11 @@ pub fn set_rounding_mode(flag: u32) {
 
 // #region Exception flags constant and manipulation
 
-const EX_INEXACT           : u32 = 1;
-const EX_UNDERFLOW         : u32 = 2;
-const EX_OVERFLOW          : u32 = 4;
-const EX_DIVIDE_BY_ZERO    : u32 = 8;
-const EX_INVALID_OPERATION : u32 = 16;
+pub const EX_INEXACT           : u32 = 1;
+pub const EX_UNDERFLOW         : u32 = 2;
+pub const EX_OVERFLOW          : u32 = 4;
+pub const EX_DIVIDE_BY_ZERO    : u32 = 8;
+pub const EX_INVALID_OPERATION : u32 = 16;
 
 thread_local!(
     /// We use atomic here merely to avoid the cost of RefCell. So we should use relaxed ordering.
@@ -74,16 +78,20 @@ fn set_exception_flag(flag: u32) {
 //
 // #endregion
 
-const CLASS_NEGATIVE_INFINITY  : u32 = 0;
-const CLASS_NEGATIVE_NORMAL    : u32 = 1;
-const CLASS_NEGATIVE_SUBNORMAL : u32 = 2;
-const CLASS_NEGATIVE_ZERO      : u32 = 3;
-const CLASS_POSITIVE_ZERO      : u32 = 4;
-const CLASS_POSITIVE_SUBNORMAL : u32 = 5;
-const CLASS_POSITIVE_NORMAL    : u32 = 6;
-const CLASS_POSITIVE_INFINITY  : u32 = 7;
-const CLASS_SIGNALING_NAN      : u32 = 8;
-const CLASS_QUIET_NAN          : u32 = 9;
+#[repr(u32)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Class {
+    NegativeInfinity  = 0,
+    NegativeNormal    = 1,
+    NegativeSubnormal = 2,
+    NegativeZero      = 3,
+    PositiveZero      = 4,
+    PositiveSubnormal = 5,
+    PositiveNormal    = 6,
+    PositiveInfinity  = 7,
+    SignalingNan      = 8,
+    QuietNan          = 9,
+}
 
 pub trait FpDesc: Copy {
     const EXPONENT_WIDTH: u32;
@@ -201,15 +209,14 @@ impl<Desc: FpDesc> Fp<Desc> {
             inexact = true;
 
             match get_rounding_mode() {
-                RM_TIES_TO_EVEN =>
+                RoundingMode::TiesToEven =>
                     significand += ((significand >> 2) & Desc::Holder::one()) + Desc::Holder::one(),
-                RM_TOWARD_ZERO => (),
-                RM_TOWARD_NEGATIVE => if sign { significand += 3u32.cast_to() }
-                RM_TOWARD_POSITIVE => if !sign { significand += 3u32.cast_to() }
-                RM_TIES_TO_AWAY =>
+                RoundingMode::TowardZero => (),
+                RoundingMode::TowardNegative => if sign { significand += 3u32.cast_to() }
+                RoundingMode::TowardPositive => if !sign { significand += 3u32.cast_to() }
+                RoundingMode::TiesToAway =>
                     // If last two bits are 10 or 11, then round up.
                     significand += 2u32.cast_to(),
-                _ => unreachable!(),
             }
         }
 
@@ -225,7 +232,9 @@ impl<Desc: FpDesc> Fp<Desc> {
         let mut value = Self::infinity(sign);
 
         let rm = get_rounding_mode();
-        if (sign && rm == RM_TOWARD_POSITIVE) || (!sign && rm == RM_TOWARD_NEGATIVE) || rm == RM_TOWARD_ZERO {
+        if (sign && rm == RoundingMode::TowardPositive) ||
+           (!sign && rm == RoundingMode::TowardNegative) ||
+           rm == RoundingMode::TowardZero {
 
             // Decrement by one will shift value from infinity to max finite number
             value.0 -= Desc::Holder::one();
@@ -318,7 +327,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     fn cancellation_zero() -> Self {
-        Self::zero(get_rounding_mode() == RM_TOWARD_NEGATIVE)
+        Self::zero(get_rounding_mode() == RoundingMode::TowardNegative)
     }
 
     // #endregion
@@ -826,7 +835,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         }
     }
 
-    fn convert_to_int<T: UInt + CastFrom<Desc::Holder> + std::convert::TryFrom<Desc::Holder>>(&self, positive_max: T, negative_max: T) -> (bool, T) {
+    fn convert_to_int<T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>>(&self, positive_max: T, negative_max: T) -> (bool, T) {
         // Round NaN to the maximum value
         if self.is_nan() {
             set_exception_flag(EX_INVALID_OPERATION);
@@ -914,12 +923,12 @@ impl<Desc: FpDesc> Fp<Desc> {
         return (sign, result)
     }
 
-    pub fn convert_to_uint<T: UInt + CastFrom<Desc::Holder> + std::convert::TryFrom<Desc::Holder>>(&self) -> T {
+    pub fn convert_to_uint<T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>>(&self) -> T {
         let max = T::max_value();
         self.convert_to_int(max, T::zero()).1
     }
 
-    pub fn convert_to_sint<T: UInt + CastFrom<Desc::Holder> + std::convert::TryFrom<Desc::Holder>>(&self) -> T {
+    pub fn convert_to_sint<T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>>(&self) -> T {
         let max = T::max_value() >> 1;
         let min = !max;
         let (sign, value) = self.convert_to_int(max, min);
@@ -1039,29 +1048,29 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     /* IEEE 754-2008 5.7.2 Non-computation operations > General operations */
-    pub fn classify(&self) -> u32 {
+    pub fn classify(&self) -> Class {
         let sign = self.sign();
         let exponent = self.biased_exponent();
         let significand = self.trailing_significand();
         let positive_class = if exponent == 0 {
             if significand == Desc::Holder::zero() {
-                CLASS_POSITIVE_ZERO
+                Class::PositiveZero as u32
             } else {
-                CLASS_POSITIVE_SUBNORMAL
+                Class::PositiveSubnormal as u32
             }
         } else if exponent == Self::INFINITY_BIASED_EXPONENT {
             if significand == Desc::Holder::zero() {
-                CLASS_POSITIVE_INFINITY
+                Class::PositiveInfinity as u32
             } else if (significand & (Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH - 1))) == Desc::Holder::zero() {
-                return CLASS_SIGNALING_NAN;
+                return Class::SignalingNan;
             } else {
-                return CLASS_QUIET_NAN;
+                return Class::QuietNan;
             }
         } else {
-            CLASS_POSITIVE_NORMAL
+            Class::PositiveNormal as u32
         };
         // We use the property that negative and positive classes add up to 7.
-        if sign { 7 - positive_class } else { positive_class }
+        unsafe { core::mem::transmute(if sign { 7 - positive_class } else { positive_class }) }
     }
 
     //
@@ -1147,13 +1156,13 @@ impl<Desc: FpDesc> Fp<Desc> {
     // #endregion
 }
 
-impl<Desc: FpDesc> std::cmp::PartialEq for Fp<Desc> {
+impl<Desc: FpDesc> core::cmp::PartialEq for Fp<Desc> {
     fn eq(&self, other: &Self) -> bool {
         Fp::compare_quiet(*self, *other) == Some(Ordering::Equal)
     }
 }
 
-impl<Desc: FpDesc> std::cmp::PartialOrd for Fp<Desc> {
+impl<Desc: FpDesc> core::cmp::PartialOrd for Fp<Desc> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Fp::compare_signaling(*self, *other)
     }
