@@ -53,10 +53,24 @@ pub struct Context {
     pub prv: u64,
 
     pub hartid: u64,
+
+    /// This is the L0 cache used to accelerate simulation. If a memory request hits the cache line
+    /// here, then it will not go through virtual address translation nor cache simulation.
+    /// Therefore this should only contain entries that are neither in the TLB nor in the cache.
+    /// 
+    /// The cache line should only contain valid entries for the current privilege level and ASID.
+    /// Upon privilege-level switch or address space switch all entries here should be cleared.
     pub line: [CacheLine; 1024],
+    pub cur_block: usize,
 }
 
 impl Context {
+    pub fn clear_local_cache(&mut self) {
+        for line in self.line.iter_mut() {
+            line.tag = u64::max_value();
+        }
+    }
+
     pub fn update_pending(&mut self) {
         // If there is a trap already pending, then we couldn't take interrupt
         if (self.pending as i64) > 0 { return }
@@ -135,6 +149,8 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
             ctx.sstatus = value;
             // Update ctx.pending. Important!
             ctx.update_pending();
+
+            // XXX: When MXR or SUM is changed, also clear local cache
         }
         Csr::Sie => {
             ctx.sie = value;
@@ -160,14 +176,12 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
                 // No paging
                 0 => ctx.satp = 0,
                 // ASID not yet supported
-                8 => ctx.satp = value &! (0xffffu64 << 44),
+                8 => ctx.satp = value,
                 // We only support SV39 at the moment.
                 _ => (),
             }
-            for line in ctx.line.iter_mut() {
-                line.tag = u64::max_value();
+            ctx.clear_local_cache();
             }
-        }
         _ => {
            unreachable!("write illegal csr {:x} = {:x}", csr as i32, value);
         }
@@ -252,22 +266,37 @@ fn ptr_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, 
 use fnv::FnvHashMap;
 type Block = (Vec<(Op, bool)>, u64, u64);
 
-static mut ICACHE: Option<FnvHashMap<u64, Block>> = None;
+static mut ICACHE: [Option<FnvHashMap<u64, Block>>; 8] = [None, None, None, None, None, None, None, None];
 
-fn icache() -> &'static mut FnvHashMap<u64, Block> {
+fn icache(id: u64) -> &'static mut FnvHashMap<u64, Block> {
+    let id = id as usize;
     unsafe {
-        if ICACHE.is_none() {
-            ICACHE = Some(FnvHashMap::default())
+        if ICACHE[id].is_none() {
+            ICACHE[id] = Some(FnvHashMap::default())
         }
-        ICACHE.as_mut().unwrap()
+        ICACHE[id].as_mut().unwrap()
     }
 }
 
 extern {
     fn send_ipi(mask: u64);
+    fn fiber_interp_block();
 }
 
-fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
+/// Broadcast sfence
+fn global_sfence(mask: u64) {
+    unsafe {
+        for i in 0..crate::CONTEXTS.len() {
+            if mask & (1 << i) == 0 { continue }
+            let ctx = &mut *crate::CONTEXTS[i];
+
+            ctx.clear_local_cache();
+            icache(ctx.hartid).clear();
+        }
+    }
+}
+
+fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     match nr {
         0 => {
             ctx.timecmp = arg0 * 100;
@@ -293,10 +322,12 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64) -> u64 {
             0
         }
         5 | 6 | 7 => {
-            for l in ctx.line.iter_mut() {
-                l.tag = i64::max_value() as u64;
-            }
-            icache().clear();
+            let mask: u64 = if arg0 == 0 {
+                u64::max_value()
+            } else {
+                crate::emu::read_memory(translate(ctx, arg0, false).unwrap())
+            };
+            global_sfence(mask);
             0
         }
         8 => std::process::exit(0),
@@ -440,7 +471,9 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Andi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) & (imm as u64)),
         /* MISC-MEM */
         Op::Fence => (),
-        Op::FenceI => icache().clear(),
+        Op::FenceI => {
+            icache(ctx.hartid).clear();
+        }
         /* OP-IMM-32 */
         Op::Addiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64),
         Op::Slliw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
@@ -554,6 +587,9 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
                     ctx,
                     ctx.registers[17],
                     ctx.registers[10],
+                    ctx.registers[11],
+                    ctx.registers[12],
+                    ctx.registers[13],
                 )
             }
         Op::Ebreak => trap!(3, 0),
@@ -1192,6 +1228,8 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
                 ctx.prv = 1;
             } else {
                 ctx.prv = 0;
+                // Switch from S-mode to U-mode, clear local cache
+                ctx.clear_local_cache();
             }
 
             // Set SIE according to SPIE
@@ -1208,46 +1246,39 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::Wfi => (),
         Op::SfenceVma {..} => {
-            for l in ctx.line.iter_mut() {
-                l.tag = i64::max_value() as u64;
-            }
-            icache().clear()
+            global_sfence(1 << ctx.hartid)
         }
     }
     Ok(())
 }
 
-fn run_instr(ctx: &mut Context) {
-    let pc = ctx.pc;
-    let mut phys_pc = match translate(ctx, pc, false) {
-        Ok(pc) => pc,
-        Err(ex) => {
-            ctx.pending = ex;
-            ctx.pending_tval = pc;
-            ctx.cycle += 1;
-            return
-        }
-    };
-    // Ignore error in this case
-    let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
-        Ok(pc) => pc,
-        Err(_) => 0,
-    };
-    let (op, c) = super::decode::decode_instr(&mut phys_pc, phys_pc_next);
-    ctx.pc += if c { 2 } else { 4 };
-    ctx.instret += 1;
-    ctx.cycle += 1;
-    match step(ctx, &op) {
+extern "C" fn no_op() {}
+
+#[no_mangle]
+extern "C" fn interp_block(ctx: &mut Context) {
+    let blk = unsafe { &*(ctx.cur_block as *const Block) };
+    ctx.pc += blk.2 - blk.1;
+    
+    for i in 0..blk.0.len() {
+        if i != 0 { crate::fiber::Fiber::sleep(1) }
+        let (ref inst, _) = blk.0[i];
+        match step(ctx, inst) {
         Ok(()) => (),
         Err(()) => {
-            ctx.pc -= if c { 2 } else { 4 };
-            ctx.instret -= 1;
-            return
+                // Adjust pc and instret by iterating through remaining instructions.
+                for j in i..blk.0.len() {
+                    ctx.pc -= if blk.0[j].1 { 2 } else { 4 };
+                }
+                ctx.instret -= (blk.0.len() - i) as u64;
+                ctx.cycle -= (blk.0.len() - i - 1) as u64;
+                return;
+            }
         }
     }
 }
 
-fn run_block(ctx: &mut Context) {
+#[no_mangle]
+fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
     let pc = ctx.pc;
     let mut phys_pc = match translate(ctx, pc, false) {
         Ok(pc) => pc,
@@ -1255,7 +1286,7 @@ fn run_block(ctx: &mut Context) {
             ctx.pending = ex;
             ctx.pending_tval = pc;
             ctx.cycle += 1;
-            return
+            return no_op;
         }
     };
     // Ignore error in this case
@@ -1264,7 +1295,7 @@ fn run_block(ctx: &mut Context) {
         Err(_) => 0,
     };
 
-    let (vec, start, end) = icache().entry(phys_pc).or_insert_with(|| {
+    let blk = icache(ctx.hartid).entry(phys_pc).or_insert_with(|| {
         let (mut vec, start, end) = super::decode::decode_block(phys_pc, phys_pc_next);
         // Function step will assume the pc is just past the instruction, however we will reduce
         // change to instret by increment past the whole basic block. We preprocess the block to
@@ -1278,28 +1309,15 @@ fn run_block(ctx: &mut Context) {
         (vec, start, end)
     });
 
-    ctx.pc += *end - *start;
-    ctx.instret += vec.len() as u64;
-    ctx.cycle += vec.len() as u64;
+    ctx.instret += blk.0.len() as u64;
+    ctx.cycle += blk.0.len() as u64;
 
-    for i in 0..vec.len() {
-        let (ref inst, _) = vec[i];
-        match step(ctx, inst) {
-            Ok(()) => (),
-            Err(()) => {
-                // Adjust pc and instret by iterating through remaining instructions.
-                for j in i..vec.len() {
-                    ctx.pc -= if vec[j].1 { 2 } else { 4 };
-                }
-                ctx.instret -= (vec.len() - i) as u64;
-                ctx.cycle -= (vec.len() - i - 1) as u64;
-                return
-            }
-        }
-    }
+    ctx.cur_block = blk as *const _ as usize;
+    fiber_interp_block
 }
 
 /// Trigger a trap. pc must be already adjusted properly before calling.
+#[no_mangle]
 pub fn trap(ctx: &mut Context) {
     if crate::get_flags().user_only {
         eprintln!("unhandled trap {}", ctx.pending);
@@ -1329,6 +1347,8 @@ pub fn trap(ctx: &mut Context) {
         ctx.sstatus |= 0x100;
     } else {
         ctx.sstatus &=! 0x100;
+        // Switch from U-mode to S-mode, clear local cache
+        ctx.clear_local_cache();
     }
     // Clear of set SPIE bit
     if (ctx.sstatus & 0x2) != 0 {
@@ -1342,19 +1362,4 @@ pub fn trap(ctx: &mut Context) {
     // Switch to S-mode
     ctx.prv = 1;
     ctx.pc = ctx.stvec;
-}
-
-#[no_mangle]
-pub fn run_instr_ex(ctx: &mut Context) {
-    run_instr(ctx);
-    if ctx.pending != 0 {
-        trap(ctx);
-    }
-}
-
-pub fn run_block_ex(ctx: &mut Context) {
-    run_block(ctx);
-    if ctx.pending != 0 {
-        trap(ctx);
-    }
 }

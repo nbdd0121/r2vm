@@ -57,10 +57,26 @@ fiber_start:
     mov rsp, [rdi]
     ret
 
-.extern run_instr_ex
+.extern find_block
+.extern trap
 .global fiber_interp_run
 fiber_interp_run:
     mov rdi, rbp
-    call run_instr_ex
+    call find_block
+    call rax
+    # Read the pending register
+    cmp qword ptr [rbp + 32 * 8 + 16], 0
+    jnz 1f
+2:
     call fiber_yield_raw
     jmp fiber_interp_run
+1:
+    mov rdi, rbp
+    call trap
+    jmp 2b
+
+.extern interp_block
+.global fiber_interp_block
+fiber_interp_block:
+    mov rdi, rbp
+    jmp interp_block
