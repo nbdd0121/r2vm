@@ -1,6 +1,7 @@
 use super::csr::Csr;
 use super::op::Op;
 use softfp::{self, F32, F64};
+use std::convert::TryInto;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -403,8 +404,11 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     macro_rules! set_rm {
         ($rm: expr) => {{
             let rm = if $rm == 0b111 { (ctx.fcsr >> 5) as u32 } else { $rm as u32 };
-            if rm >= 5 { trap!(2, 0) }
-            softfp::set_rounding_mode(unsafe { std::mem::transmute(rm) });
+            let mode = match rm.try_into() {
+                Ok(v) => v,
+                Err(_) => trap!(2, 0),
+            };
+            softfp::set_rounding_mode(mode);
         }}
     }
     macro_rules! clear_flags {

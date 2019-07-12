@@ -23,44 +23,4 @@ pub trait IoMemory {
     /// Write to I/O memory. `size` can be either 1, 2, 4 or 8. `addr` must be aligned properly,
     /// e.g. when `size` is 4, the least significant 2 bits of `addr` should be zero.
     fn write(&mut self, addr: usize, value: u64, size: u32);
-
-    /// Read a 64-bit value from the memory.
-    fn read_u64(&mut self, addr: usize) -> u64 {
-        self.read(addr, 8)
-    }
-
-    /// Read a 32-bit value from the memory.
-    fn read_u32(&mut self, addr: usize) -> u32 {
-        self.read(addr, 4) as u32
-    }
-
-    /// Read a 16-bit value from the memory.
-    fn read_u16(&mut self, addr: usize) -> u16 {
-        self.read(addr, 2) as u16
-    }
-
-    /// Read a 8-bit value from the memory.
-    fn read_u8(&mut self, addr: usize) -> u8 {
-        self.read(addr, 1) as u8
-    }
-
-    /// Write a 64-bit value to the memory.
-    fn write_u64(&mut self, addr: usize, value: u64) {
-        self.write(addr, value, 8)
-    }
-
-    /// Write a 32-bit value to the memory.
-    fn write_u32(&mut self, addr: usize, value: u32) {
-        self.write(addr, value as u64, 4)
-    }
-
-    /// Write a 16-bit value to the memory.
-    fn write_u16(&mut self, addr: usize, value: u16) {
-        self.write(addr, value as u64, 2)
-    }
-
-    /// Write a 8-bit value to the memory.
-    fn write_u8(&mut self, addr: usize, value: u8) {
-        self.write(addr, value as u64, 1)
-    }
 }

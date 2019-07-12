@@ -3,7 +3,7 @@ mod int;
 use core::ops;
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as MemOrder};
-use core::convert::{TryInto};
+use core::convert::{TryInto, TryFrom};
 use int::{CastFrom, CastTo, Int, UInt};
 
 // #region Rounding mode constant and manipulation
@@ -19,6 +19,17 @@ pub enum RoundingMode {
     TiesToAway     = 0b100,
 }
 
+impl TryFrom<u32> for RoundingMode {
+    type Error = ();
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        if value >= 5 {
+            Err(())
+        } else {
+            Ok(unsafe { core::mem::transmute(value) })
+        }
+    }
+}
+
 thread_local!(
     /// We use atomic here merely to avoid the cost of RefCell. So we should use relaxed ordering.
     static ROUNDING_MODE: AtomicU32 = AtomicU32::new(0)
@@ -27,7 +38,7 @@ thread_local!(
 #[inline]
 fn get_rounding_mode() -> RoundingMode {
     ROUNDING_MODE.with(|flags| {
-        unsafe { core::mem::transmute(flags.load(MemOrder::Relaxed)) }
+        flags.load(MemOrder::Relaxed).try_into().unwrap()
     })
 }
 
@@ -91,6 +102,17 @@ pub enum Class {
     PositiveInfinity  = 7,
     SignalingNan      = 8,
     QuietNan          = 9,
+}
+
+impl TryFrom<u32> for Class {
+    type Error = ();
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        if value >= 10 {
+            Err(())
+        } else {
+            Ok(unsafe { core::mem::transmute(value) })
+        }
+    }
 }
 
 pub trait FpDesc: Copy {
@@ -1070,7 +1092,7 @@ impl<Desc: FpDesc> Fp<Desc> {
             Class::PositiveNormal as u32
         };
         // We use the property that negative and positive classes add up to 7.
-        unsafe { core::mem::transmute(if sign { 7 - positive_class } else { positive_class }) }
+        (if sign { 7 - positive_class } else { positive_class }).try_into().unwrap()
     }
 
     //
