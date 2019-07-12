@@ -271,6 +271,10 @@ pub fn main() {
             tag: i64::max_value() as u64,
             paddr: 0
         }; 1024],
+        i_line: [riscv::interp::CacheLine {
+            tag: i64::max_value() as u64,
+            paddr: 0
+        }; 1024],
         cur_block: 0,
     };
     // x0 must always be 0

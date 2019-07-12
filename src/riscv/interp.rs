@@ -61,12 +61,16 @@ pub struct Context {
     /// The cache line should only contain valid entries for the current privilege level and ASID.
     /// Upon privilege-level switch or address space switch all entries here should be cleared.
     pub line: [CacheLine; 1024],
+    pub i_line: [CacheLine; 1024],
     pub cur_block: usize,
 }
 
 impl Context {
     pub fn clear_local_cache(&mut self) {
         for line in self.line.iter_mut() {
+            line.tag = u64::max_value();
+        }
+        for line in self.i_line.iter_mut() {
             line.tag = u64::max_value();
         }
     }
@@ -222,6 +226,34 @@ fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
 pub const CACHE_LINE_LOG2_SIZE: usize = 12;
 
 #[inline(never)]
+fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
+    let idx = addr >> CACHE_LINE_LOG2_SIZE;
+    let out = match translate(ctx, addr, false) {
+        Err(trap) => {
+            ctx.pending = trap as u64;
+            ctx.pending_tval = addr;
+            return Err(())
+        }
+        Ok(out) => out,
+    };
+    let line: &mut CacheLine = &mut ctx.i_line[(idx & 1023) as usize];
+    line.tag = idx;
+    line.paddr = out ^ addr;
+    Ok(out)
+}
+
+fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
+    let idx = addr >> CACHE_LINE_LOG2_SIZE;
+    let line = &ctx.i_line[(idx & 1023) as usize];
+    let paddr = if line.tag != idx {
+        insn_translate_cache_miss(ctx, addr)?
+    } else {
+        line.paddr ^ addr
+    };
+    Ok(paddr)
+}
+
+#[inline(never)]
 #[export_name = "translate_cache_miss"]
 fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
@@ -233,7 +265,6 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
         }
         Ok(out) => out,
     };
-    // Refill is only possible if reside in physical memory
     let line: &mut CacheLine = &mut ctx.line[(idx & 1023) as usize];
     line.tag = idx << 1;
     line.paddr = out ^ addr;
@@ -241,7 +272,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
     Ok(out)
 }
 
-fn read_vaddr<T: Copy>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
+fn read_vaddr<T>(ctx: &mut Context, addr: u64) -> Result<&'static T, ()> {
     ctx.minstret += 1;
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
@@ -250,10 +281,10 @@ fn read_vaddr<T: Copy>(ctx: &mut Context, addr: u64) -> Result<T, ()> {
     } else {
         line.paddr ^ addr
     };
-    Ok(unsafe { crate::emu::read_memory_unsafe(paddr) })
+    Ok(unsafe { &*(paddr as *const T) })
 }
 
-fn ptr_vaddr_x<T: Copy>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
+fn ptr_vaddr_x<T>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
     ctx.minstret += 1;
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.line[(idx & 1023) as usize];
@@ -303,7 +334,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
         0 => {
             ctx.timecmp = arg0 * 100;
             let ctx_ptr = ctx as *mut Context;
-            crate::event_loop().queue(arg0 * 100, Box::new(move || {
+            crate::event_loop().queue(ctx.timecmp, Box::new(move || {
                 let ctx = unsafe{ &mut *ctx_ptr };
                 if crate::event_loop().cycle() >= ctx.timecmp {
                     ctx.sip |= 32;
@@ -434,36 +465,36 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         /* LOAD */
         Op::Lb { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            write_reg!(rd, read_vaddr::<u8>(ctx, vaddr)? as i8 as u64);
+            write_reg!(rd, *read_vaddr::<u8>(ctx, vaddr)? as i8 as u64);
         }
         Op::Lh { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 1 != 0 { trap!(4, vaddr) }
-            write_reg!(rd, read_vaddr::<u16>(ctx, vaddr)? as i16 as u64);
+            write_reg!(rd, *read_vaddr::<u16>(ctx, vaddr)? as i16 as u64);
         }
         Op::Lw { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(4, vaddr) }
-            write_reg!(rd, read_vaddr::<u32>(ctx, vaddr)? as i32 as u64);
+            write_reg!(rd, *read_vaddr::<u32>(ctx, vaddr)? as i32 as u64);
         }
         Op::Ld { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 7 != 0 { trap!(4, vaddr) }
-            write_reg!(rd, read_vaddr::<u64>(ctx, vaddr)?);
+            write_reg!(rd, *read_vaddr::<u64>(ctx, vaddr)?);
         }
         Op::Lbu { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            write_reg!(rd, read_vaddr::<u8>(ctx, vaddr)? as u64);
+            write_reg!(rd, *read_vaddr::<u8>(ctx, vaddr)? as u64);
         }
         Op::Lhu { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 1 != 0 { trap!(4, vaddr) }
-            write_reg!(rd, read_vaddr::<u16>(ctx, vaddr)? as u64);
+            write_reg!(rd, *read_vaddr::<u16>(ctx, vaddr)? as u64);
         }
         Op::Lwu { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(4, vaddr) }
-            write_reg!(rd, read_vaddr::<u32>(ctx, vaddr)? as u64);
+            write_reg!(rd, *read_vaddr::<u32>(ctx, vaddr)? as u64);
         }
         /* OP-IMM */
         Op::Addi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1).wrapping_add(imm as u64)),
@@ -634,7 +665,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Flw { frd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(4, vaddr) }
-            write_fs!(frd, F32::new(read_vaddr::<u32>(ctx, vaddr)?));
+            write_fs!(frd, F32::new(*read_vaddr::<u32>(ctx, vaddr)?));
         }
         Op::Fsw { rs1, frs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
@@ -784,7 +815,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Fld { frd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(4, vaddr) }
-            write_fd!(frd, F64::new(read_vaddr::<u64>(ctx, vaddr)?));
+            write_fd!(frd, F64::new(*read_vaddr::<u64>(ctx, vaddr)?));
         }
         Op::Fsd { rs1, frs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
@@ -1286,13 +1317,9 @@ extern "C" fn interp_block(ctx: &mut Context) {
 #[no_mangle]
 fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
     let pc = ctx.pc;
-    let mut phys_pc = match translate(ctx, pc, false) {
+    let mut phys_pc = match insn_translate(ctx, pc) {
         Ok(pc) => pc,
-        Err(ex) => {
-            ctx.pending = ex;
-            ctx.pending_tval = pc;
-            return no_op;
-        }
+        Err(_) => return no_op,
     };
     let dbtblk = icache(ctx.hartid).entry(phys_pc).or_insert_with(|| {
         // Ignore error in this case
