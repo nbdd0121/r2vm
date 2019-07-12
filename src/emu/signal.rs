@@ -133,28 +133,8 @@ unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &m
     ctx.uc_mcontext.gregs[REG_RIP] = reader.0 as i64;
 }
 
-extern {
-    static memory_probe_start: u8;
-    static memory_probe_end: u8;
-}
-
 pub unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &mut libc::ucontext_t) -> () {
     let current_ip = ctx.uc_mcontext.gregs[REG_RIP];
-
-    // Fault within the probe
-    if current_ip >= (&memory_probe_start as *const _ as usize as i64) &&
-       current_ip < (&memory_probe_end as *const _ as usize as i64) {
-
-        // If we fault with in the probe, let the probe return instead.
-        // Pop out rip from the stack and set it.
-        let rsp = ctx.uc_mcontext.gregs[REG_RSP];
-        ctx.uc_mcontext.gregs[REG_RIP] = *(rsp as usize as *mut i64);
-        ctx.uc_mcontext.gregs[REG_RSP] = rsp + 8;
-
-        // Set rax to 1 to signal failure
-        ctx.uc_mcontext.gregs[REG_RAX] = 1;
-        return;
-    }
 
     // Decode the faulting instruction
     let mut reader = MemReader(current_ip as usize);

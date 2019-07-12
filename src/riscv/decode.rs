@@ -1,7 +1,6 @@
 use std::convert::TryInto;
 
 use super::op::Op;
-use super::Csr;
 
 // #region: decoding helpers for 32-bit instructions
 //
@@ -866,6 +865,7 @@ pub fn decode(bits: u32) -> Op {
     }
 }
 
+#[allow(dead_code)]
 pub fn decode_iter(iter: &mut impl Iterator<Item=u16>) -> Option<(Op, bool)> {
     let bits = iter.next()?;
     if bits & 3 == 3 {

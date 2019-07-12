@@ -7,7 +7,6 @@ mod event;
 mod syscall;
 pub mod signal;
 pub mod loader;
-pub mod safe_memory;
 pub use event::EventLoop;
 pub use syscall::syscall;
 
@@ -65,24 +64,13 @@ pub unsafe fn write_memory_unsafe<T: Copy>(addr: u64, value: T) {
 }
 
 pub fn read_memory<T: Copy>(addr: u64) -> T {
-    let ptr = addr as usize as *const T;
-    safe_memory::probe_read(ptr).unwrap();
-    unsafe { *ptr }
+    assert!(addr < unsafe { IO_BOUNDARY });
+    unsafe { read_memory_unsafe(addr) }
 }
 
 pub fn write_memory<T: Copy>(addr: u64, value: T) {
-    let ptr = addr as usize as *mut T;
-    safe_memory::probe_write(ptr).unwrap();
-    unsafe { *ptr = value }
-}
-
-pub fn is_ram(addr: ureg) -> bool {
-    if addr >= unsafe { IO_BOUNDARY } {
-        false
-    } else {
-        // XXX: we should probably test if safe using probe!
-        true
-    }
+    assert!(addr < unsafe { IO_BOUNDARY });
+    unsafe { write_memory_unsafe(addr, value) }
 }
 
 pub fn phys_read(addr: ureg, size: u32) -> ureg {

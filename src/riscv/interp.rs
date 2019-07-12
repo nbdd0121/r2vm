@@ -1290,13 +1290,13 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             return no_op;
         }
     };
-    // Ignore error in this case
-    let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
-        Ok(pc) => pc,
-        Err(_) => 0,
-    };
-
     let dbtblk = icache(ctx.hartid).entry(phys_pc).or_insert_with(|| {
+        // Ignore error in this case
+        let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
+            Ok(pc) => pc,
+            Err(_) => 0,
+        };
+
         let (mut vec, start, end) = super::decode::decode_block(phys_pc, phys_pc_next);
         // Function step will assume the pc is just past the instruction, however we will reduce
         // change to instret by increment past the whole basic block. We preprocess the block to
