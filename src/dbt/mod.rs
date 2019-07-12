@@ -70,7 +70,10 @@ extern "C" {
     fn helper_step_tail(ctx: &mut crate::riscv::interp::Context, op: &Op);
 
     #[allow(improper_ctypes)]
-    fn helper_translate_cache_miss(ctx: &mut crate::riscv::interp::Context, addr: u64, size: usize);
+    fn helper_translate_cache_miss(ctx: &mut crate::riscv::interp::Context, addr: u64, write: bool);
+
+    #[allow(improper_ctypes)]
+    fn helper_icache_miss(ctx: &mut crate::riscv::interp::Context, addr: u64);
 
     fn fiber_yield_raw();
 }
@@ -212,6 +215,34 @@ impl DbtCompiler {
         }
     }
 
+    fn emit_icache_access(&mut self, off: u64) {
+        let offset = offset_of!(crate::riscv::interp::Context, i_line);
+        
+        // RSI = addr
+        self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
+        self.emit(Sub(Reg(Register::RSI), Imm(off as i64)));
+
+        // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
+        self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
+        self.emit(Shr(Reg(Register::RCX), Imm(crate::riscv::interp::CACHE_LINE_LOG2_SIZE as i64)));
+
+        // EAX = (idx & 1023) * 16
+        self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
+        self.emit(And(Reg(Register::EAX), Imm(1023)));
+        self.emit(Shl(Reg(Register::EAX), Imm(4)));
+
+        // RDX = ctx.line[(idx & 1023)].tag
+        self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
+
+        self.emit(Jcc(12, ConditionCode::Equal));
+
+        let ffn = helper_icache_miss as *const () as usize;
+        // 10 bytes
+        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
+        // 2 bytes
+        self.emit(Call(OpReg(Register::RAX)));
+    }
+
     fn emit_load(&mut self, rs1: u8, imm: i32, size: Size) {
         self.minstret += 1;
         let offset = offset_of!(crate::riscv::interp::Context, line);
@@ -229,7 +260,7 @@ impl DbtCompiler {
         self.emit(And(Reg(Register::EAX), Imm(1023)));
         self.emit(Shl(Reg(Register::EAX), Imm(4)));
 
-        // RDX = ctx.line[(idx & 1023)].tag << 1
+        // RDX = ctx.line[(idx & 1023)].tag >> 1
         self.emit(Mov(Reg(Register::RDX), OpMem(Register::RBP + Register::RAX + offset as i32)));
         self.emit(Shr(Reg(Register::RDX), Imm(1)));
         self.emit(Cmp(Reg(Register::RDX), OpReg(Register::RCX)));
@@ -1210,12 +1241,21 @@ impl DbtCompiler {
         let fixup = self.enc.buffer.len();
 
         let mut pc_start = 0;
+        let mut cur_pc = block.1;
+
         for i in 0..opblock.len() {
             if i != 0 {
                 let step_fn: usize = fiber_yield_raw as *const () as usize;
                 self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
                 self.emit(Call(OpReg(Register::RAX)));
             }
+
+            let cache_line_size = 1 << crate::riscv::interp::CACHE_LINE_LOG2_SIZE;
+            if cur_pc & (cache_line_size - 1) == 0 || cur_pc & (cache_line_size - 1) == cache_line_size - 2 {
+                self.emit_icache_access(block.2 - cur_pc);
+            }
+            cur_pc += if opblock[i].1 { 2 } else { 4 };
+
             self.emit_op(&opblock[i].0, i == opblock.len() - 1);
             let pc_end = self.enc.buffer.len();
             pc_map.push((pc_end - pc_start) as u8);

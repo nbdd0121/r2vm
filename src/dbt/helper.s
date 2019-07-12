@@ -50,3 +50,15 @@ helper_translate_cache_miss:
     ret
 1:
     jmp helper_trap
+
+.global helper_icache_miss
+.extern insn_translate_cache_miss
+helper_icache_miss:
+    mov rdi, rbp
+    call insn_translate_cache_miss
+    test al, al
+    jnz 1f
+    ret
+1:
+    # we're not yet prepared for this
+    ud2

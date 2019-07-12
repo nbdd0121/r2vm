@@ -226,6 +226,7 @@ fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
 pub const CACHE_LINE_LOG2_SIZE: usize = 12;
 
 #[inline(never)]
+#[no_mangle]
 fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let out = match translate(ctx, addr, false) {
@@ -236,6 +237,12 @@ fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
         }
         Ok(out) => out,
     };
+    // If the cache line exists on data cache, mark it as non-writable
+    // This is important as we want to capture all write to DBTed block
+    let line: &mut CacheLine = &mut ctx.line[(idx & 1023) as usize];
+    if (line.tag >> 1) == idx {
+        line.tag |= 1;
+    }
     let line: &mut CacheLine = &mut ctx.i_line[(idx & 1023) as usize];
     line.tag = idx;
     line.paddr = out ^ addr;
@@ -1295,11 +1302,20 @@ extern "C" fn no_op() {}
 extern "C" fn interp_block(ctx: &mut Context) {
     let dbtblk = unsafe { &*(ctx.cur_block as *const crate::dbt::DbtBlock) };
     ctx.instret += dbtblk.block.len() as u64;
+    let mut cur_pc = ctx.pc;
     ctx.pc += dbtblk.pc_end - dbtblk.pc_start;
     
     for i in 0..dbtblk.block.len() {
         if i != 0 { crate::fiber::Fiber::sleep(1) }
+
+        // The instruction is on a new cache line, force an access to I$
+        let cache_line_size = 1 << CACHE_LINE_LOG2_SIZE;
+        if cur_pc & (cache_line_size - 1) == 0 || cur_pc & (cache_line_size - 1) == cache_line_size - 2 {
+            let _ = insn_translate(ctx, cur_pc);
+        }
+
         let (ref inst, _) = dbtblk.block[i];
+        cur_pc += if dbtblk.block[i].1 { 2 } else { 4 };
         match step(ctx, inst) {
             Ok(()) => (),
             Err(()) => {
