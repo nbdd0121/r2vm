@@ -243,7 +243,9 @@ impl DbtCompiler {
         self.emit(Call(OpReg(Register::RAX)));
     }
 
-    fn emit_load(&mut self, rs1: u8, imm: i32, size: Size) {
+    /// Shared routine for generating load code. Note that this routine does not perform the
+    /// actual load - it merely computes the address, translate to physical and leave it at RSI
+    fn emit_load(&mut self, rs1: u8, imm: i32, _: Size) {
         self.minstret += 1;
         let offset = offset_of!(crate::riscv::interp::Context, line);
         
@@ -280,16 +282,6 @@ impl DbtCompiler {
         self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
         // 2 bytes
         self.emit(Call(OpReg(Register::RAX)));
-
-        let reg = match size {
-            Size::Byte => Register::AL,
-            Size::Word => Register::AX,
-            Size::Dword => Register::EAX,
-            Size::Qword => Register::RAX,
-        };
-        let mut mem = Register::RSI + 0;
-        mem.size = size;
-        self.emit(Mov(Reg(reg), OpMem(mem)));
     }
 
     fn emit_store(&mut self, rs1: u8, rs2: u8, imm: i32, size: Size) {
@@ -1008,35 +1000,37 @@ impl DbtCompiler {
             /* LOAD */
             Op::Lb { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Byte);
-                self.emit(Movsx(Register::RAX, Reg(Register::AL)));
+                self.emit(Movsx(Register::RAX, Mem((Register::RSI + 0).byte())));
                 self.store_from_rax(rd);
             }
             Op::Lh { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Word);
-                self.emit(Movsx(Register::RAX, Reg(Register::AX)));
+                self.emit(Movsx(Register::RAX, Mem((Register::RSI + 0).word())));
                 self.store_from_rax(rd);
             }
             Op::Lw { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Dword);
-                self.store_from_eax(rd);
+                self.emit(Movsx(Register::RAX, Mem((Register::RSI + 0).dword())));
+                self.store_from_rax(rd);
             }
             Op::Ld { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Qword);
+                self.emit(Mov(Reg(Register::RAX), OpMem((Register::RSI + 0).qword())));
                 self.store_from_rax(rd);
             }
             Op::Lbu { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Byte);
-                self.emit(Movzx(Register::RAX, Reg(Register::AL)));
+                self.emit(Movzx(Register::RAX, Mem((Register::RSI + 0).byte())));
                 self.store_from_rax(rd);
             }
             Op::Lhu { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Word);
-                self.emit(Movzx(Register::RAX, Reg(Register::AX)));
+                self.emit(Movzx(Register::RAX, Mem((Register::RSI + 0).word())));
                 self.store_from_rax(rd);
             }
             Op::Lwu { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Dword);
-                self.emit(Mov(Reg(Register::EAX), OpReg(Register::EAX)));
+                self.emit(Mov(Reg(Register::EAX), OpMem((Register::RSI + 0).dword())));
                 self.store_from_rax(rd);
             }
             /* OP-IMM */

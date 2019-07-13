@@ -112,7 +112,7 @@ impl<'a> Decoder<'a> {
         let mut opsize = Size::Dword;
 
         // Keep reading prefixes.
-        let mut opcode = loop {
+        let mut opcode: u32 = loop {
             let prefix = self.byte();
             if (prefix & 0xF0) == 0x40 {
                 // REX prefix
@@ -123,9 +123,14 @@ impl<'a> Decoder<'a> {
                 opsize = Size::Word;
             } else {
                 // Unread the byte
-                break prefix;
+                break prefix as u32;
             }
         };
+
+        // Handle escape sequences
+        if opcode == 0xF {
+            opcode = opcode << 8 | self.byte() as u32;
+        }
 
         // Handling byte-sized ops
         match opcode {
@@ -137,6 +142,22 @@ impl<'a> Decoder<'a> {
         }
 
         match opcode {
+            0x0FB6 => {
+                let (src, dst) = self.modrm(rex, opsize);
+                Op::Movzx(dst, src.resize(Size::Byte))
+            }
+            0x0FB7 => {
+                let (src, dst) = self.modrm(rex, opsize);
+                Op::Movzx(dst, src.resize(Size::Word))
+            }
+            0x0FBE => {
+                let (src, dst) = self.modrm(rex, opsize);
+                Op::Movsx(dst, src.resize(Size::Byte))
+            }
+            0x0FBF => {
+                let (src, dst) = self.modrm(rex, opsize);
+                Op::Movsx(dst, src.resize(Size::Word))
+            }
             0x63 => {
                 let (src, dst) = self.modrm(rex, opsize);
                 Op::Movsx(dst, src.resize(Size::Dword))

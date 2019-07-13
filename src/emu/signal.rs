@@ -145,7 +145,8 @@ pub unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ct
 
     // Replay the read/write, as if they are accessing directly to guest physical memory
     match op {
-        Op::Mov(Location::Reg(reg), Operand::Mem(mem)) => {
+        Op::Mov(Location::Reg(reg), Operand::Mem(mem)) |
+        Op::Movzx(reg, Location::Mem(mem)) => {
             let address = eval_memory_location(ctx, &mem);
             let data = crate::emu::phys_read(address as _, mem.size.bytes() as u32);
             write_location(ctx, &Location::Reg(reg), data);
