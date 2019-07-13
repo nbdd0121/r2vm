@@ -118,6 +118,29 @@ impl Register {
             _ => unreachable!(),
         }
     }
+
+    /// Given a register ID and a size, construct a `Register` object.
+    /// Note that AH, DH, CH, BH are not constructible with this function.
+    pub fn from_id_and_size(id: u8, size: Size) -> Register {
+        // Make sure this will always be a valid register
+        let id = id & 15;
+
+        let mask = match size {
+            Size::Byte => if id >= 4 && id <= 7 { REG_GPB2 } else { REG_GPB },
+            Size::Word => REG_GPW,
+            Size::Dword => REG_GPD,
+            Size::Qword => REG_GPQ,
+        };
+
+        // This will always be valid
+        unsafe { std::mem::transmute(id | mask) }
+    }
+
+    pub fn resize(self, size: Size) -> Self {
+        // AH - BH must not be used in resize
+        assert!(!(self as u8 >= Register::AH as u8 && self as u8 <= Register::BH as u8));
+        Self::from_id_and_size(self as u8, size)
+    }
 }
 
 impl fmt::Display for Register {
@@ -133,6 +156,13 @@ pub struct Memory {
     pub index: Option<(Register, u8)>,
     pub displacement: i32,
     pub size: Size,
+}
+
+impl Memory {
+    pub fn resize(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
 }
 
 impl fmt::Display for Memory {
@@ -180,6 +210,13 @@ impl Location {
         match self {
             Location::Reg(reg) => reg.size(),
             Location::Mem(mem) => mem.size,
+        }
+    }
+
+    pub fn resize(&self, size: Size) -> Location {
+        match self {
+            Location::Reg(reg) => Location::Reg(reg.resize(size)),
+            Location::Mem(mem) => Location::Mem(mem.resize(size)),
         }
     }
 }

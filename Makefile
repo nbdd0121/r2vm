@@ -1,4 +1,4 @@
-RUST_FILES = $(shell find src -type f -name '*')
+RUST_FILES = $(shell find src lib -type f -name '*')
 
 default: all
 

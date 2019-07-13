@@ -137,6 +137,10 @@ impl<'a> Decoder<'a> {
         }
 
         match opcode {
+            0x63 => {
+                let (src, dst) = self.modrm(rex, opsize);
+                Op::Movsx(dst, src.resize(Size::Dword))
+            }
             0x89 => {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Op::Mov(operand, OpReg(reg))
@@ -153,7 +157,7 @@ impl<'a> Decoder<'a> {
                     _ => unimplemented!(),
                 }
             }
-            _ => unimplemented!(),
+            _ => unimplemented!("opcode {:x}", opcode),
         }
     }
 }

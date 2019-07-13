@@ -147,13 +147,24 @@ pub unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ct
     match op {
         Op::Mov(Location::Reg(reg), Operand::Mem(mem)) => {
             let address = eval_memory_location(ctx, &mem);
-            let data = crate::emu::phys_read(address as _, reg.size().bytes() as u32);
+            let data = crate::emu::phys_read(address as _, mem.size.bytes() as u32);
             write_location(ctx, &Location::Reg(reg), data);
         }
         Op::Mov(Location::Mem(mem), Operand::Reg(reg)) => {
             let address = eval_memory_location(ctx, &mem);
             let data = read_location(ctx, &Location::Reg(reg));
-            crate::emu::phys_write(address as _, data, reg.size().bytes() as u32);
+            crate::emu::phys_write(address as _, data, mem.size.bytes() as u32);
+        }
+        Op::Movsx(reg, Location::Mem(mem)) => {
+            let address = eval_memory_location(ctx, &mem);
+            let data = crate::emu::phys_read(address as _, mem.size.bytes() as u32);
+            let data = match mem.size {
+                Size::Qword => unreachable!(),
+                Size::Dword => data as i32 as u64,
+                Size::Word => data as i16 as u64,
+                Size::Byte => data as i8 as u64,
+            };
+            write_location(ctx, &Location::Reg(reg), data)
         }
         _ => unimplemented!(),
     };
