@@ -1256,7 +1256,12 @@ impl DbtCompiler {
             }
             cur_pc += if opblock[i].1 { 2 } else { 4 };
 
-            self.emit_op(&opblock[i].0, i == opblock.len() - 1);
+            let op = &opblock[i].0;
+            if let Op::Auipc { rd, imm } = op {
+                self.emit_op(&Op::Auipc { rd: *rd, imm: imm - (block.2 - cur_pc) as i32 }, false);
+            } else {
+                self.emit_op(op, i == opblock.len() - 1);
+            }
             let pc_end = self.enc.buffer.len();
             pc_map.push((pc_end - pc_start) as u8);
             pc_start = pc_end;

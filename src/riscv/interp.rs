@@ -1302,27 +1302,22 @@ extern "C" fn no_op() {}
 extern "C" fn interp_block(ctx: &mut Context) {
     let dbtblk = unsafe { &*(ctx.cur_block as *const crate::dbt::DbtBlock) };
     ctx.instret += dbtblk.block.len() as u64;
-    let mut cur_pc = ctx.pc;
-    ctx.pc += dbtblk.pc_end - dbtblk.pc_start;
-    
+
     for i in 0..dbtblk.block.len() {
         if i != 0 { crate::fiber::Fiber::sleep(1) }
 
         // The instruction is on a new cache line, force an access to I$
         let cache_line_size = 1 << CACHE_LINE_LOG2_SIZE;
-        if cur_pc & (cache_line_size - 1) == 0 || cur_pc & (cache_line_size - 1) == cache_line_size - 2 {
-            let _ = insn_translate(ctx, cur_pc);
+        if ctx.pc & (cache_line_size - 1) == 0 || ctx.pc & (cache_line_size - 1) == cache_line_size - 2 {
+            let _ = insn_translate(ctx, ctx.pc);
         }
 
-        let (ref inst, _) = dbtblk.block[i];
-        cur_pc += if dbtblk.block[i].1 { 2 } else { 4 };
+        let (ref inst, compressed) = dbtblk.block[i];
+        ctx.pc += if compressed { 2 } else { 4 };
         match step(ctx, inst) {
             Ok(()) => (),
             Err(()) => {
-                // Adjust pc and instret by iterating through remaining instructions.
-                for j in i..dbtblk.block.len() {
-                    ctx.pc -= if dbtblk.block[j].1 { 2 } else { 4 };
-                }
+                ctx.pc = ctx.pc - if compressed { 2 } else { 4 };
                 ctx.instret -= (dbtblk.block.len() - i) as u64;
                 return;
             }
@@ -1333,7 +1328,7 @@ extern "C" fn interp_block(ctx: &mut Context) {
 #[no_mangle]
 fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
     let pc = ctx.pc;
-    let mut phys_pc = match insn_translate(ctx, pc) {
+    let phys_pc = match insn_translate(ctx, pc) {
         Ok(pc) => pc,
         Err(_) => return no_op,
     };
@@ -1344,16 +1339,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             Err(_) => 0,
         };
 
-        let (mut vec, start, end) = super::decode::decode_block(phys_pc, phys_pc_next);
-        // Function step will assume the pc is just past the instruction, however we will reduce
-        // change to instret by increment past the whole basic block. We preprocess the block to
-        // handle the difference.
-        for (op, c) in &mut vec {
-            phys_pc += if *c { 2 } else { 4 };
-            if let Op::Auipc { imm, .. } = op {
-                *imm -= (end - phys_pc) as i32;
-            }
-        }
+        let (vec, start, end) = super::decode::decode_block(phys_pc, phys_pc_next);
         let mut compiler = crate::dbt::DbtCompiler::new();
         compiler.compile((vec, start, end))
     });
