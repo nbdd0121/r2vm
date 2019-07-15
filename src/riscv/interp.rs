@@ -70,6 +70,9 @@ impl Context {
         for line in self.line.iter_mut() {
             line.tag = u64::max_value();
         }
+    }
+
+    pub fn clear_local_icache(&mut self) {
         for line in self.i_line.iter_mut() {
             line.tag = u64::max_value();
         }
@@ -185,6 +188,7 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
                 _ => (),
             }
             ctx.clear_local_cache();
+            ctx.clear_local_icache();
         }
         _ => {
            unreachable!("write illegal csr {:x} = {:x}", csr as i32, value);
@@ -426,13 +430,14 @@ extern {
 }
 
 /// Broadcast sfence
-fn global_sfence(mask: u64) {
+fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
     unsafe {
         for i in 0..crate::CONTEXTS.len() {
             if mask & (1 << i) == 0 { continue }
             let ctx = &mut *crate::CONTEXTS[i];
 
             ctx.clear_local_cache();
+            ctx.clear_local_icache();
         }
     }
 }
@@ -456,19 +461,47 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             0
         }
         2 => crate::io::console::console_getchar() as u64,
-        3 => 0, //panic!("Ignore clear_ipi"),
+        3 => {
+            ctx.sip &= !2;
+            ctx.update_pending();
+            0
+        }
         4 => {
             let mask: u64 = crate::emu::read_memory(translate(ctx, arg0, false).unwrap());
             unsafe { send_ipi(mask) };
             0
         }
-        5 | 6 | 7 => {
+        5 => {
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
                 crate::emu::read_memory(translate(ctx, arg0, false).unwrap())
             };
-            global_sfence(mask);
+            unsafe {
+                for i in 0..crate::CONTEXTS.len() {
+                    if mask & (1 << i) == 0 { continue }
+                    let ctx = &mut *crate::CONTEXTS[i];
+                    ctx.clear_local_icache();
+                }
+            }
+            0
+        }
+        6 => {
+            let mask: u64 = if arg0 == 0 {
+                u64::max_value()
+            } else {
+                crate::emu::read_memory(translate(ctx, arg0, false).unwrap())
+            };
+            global_sfence(mask, None, if arg2 == 4096 { Some(arg1 >> 12) } else { None });
+            0
+        }
+        7 => {
+            let mask: u64 = if arg0 == 0 {
+                u64::max_value()
+            } else {
+                crate::emu::read_memory(translate(ctx, arg0, false).unwrap())
+            };
+            global_sfence(mask, Some(arg3 as u16), if arg2 == 4096 { Some(arg1 >> 12) } else { None });
             0
         }
         8 => std::process::exit(0),
@@ -616,7 +649,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Andi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) & (imm as u64)),
         /* MISC-MEM */
         Op::Fence => (),
-        Op::FenceI => (),
+        Op::FenceI => ctx.clear_local_icache(),
         /* OP-IMM-32 */
         Op::Addiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64),
         Op::Slliw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
@@ -1373,6 +1406,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
                 ctx.prv = 0;
                 // Switch from S-mode to U-mode, clear local cache
                 ctx.clear_local_cache();
+                ctx.clear_local_icache();
             }
 
             // Set SIE according to SPIE
@@ -1388,8 +1422,10 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             ctx.sstatus &=! 0x100;
         }
         Op::Wfi => (),
-        Op::SfenceVma {..} => {
-            global_sfence(1 << ctx.hartid)
+        Op::SfenceVma { rs1, rs2 } => {
+            let asid = if rs2 == 0 { None } else { Some(read_reg!(rs2) as u16) };
+            let vpn = if rs1 == 0 { None } else { Some(read_reg!(rs1) >> 12) };
+            global_sfence(1 << ctx.hartid, asid, vpn)
         }
     }
     Ok(())
@@ -1503,6 +1539,7 @@ pub fn trap(ctx: &mut Context) {
         ctx.sstatus &=! 0x100;
         // Switch from U-mode to S-mode, clear local cache
         ctx.clear_local_cache();
+        ctx.clear_local_icache();
     }
     // Clear of set SPIE bit
     if (ctx.sstatus & 0x2) != 0 {
