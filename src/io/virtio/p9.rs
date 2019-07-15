@@ -32,7 +32,7 @@ impl P9 {
             status: 0,
             queue: Queue::new(),
             config: config.into_boxed_slice(),
-            handler: P9Handler::new(Passthrough::new(path)),
+            handler: P9Handler::new(Passthrough::new(path).unwrap()),
         }
     }
 }

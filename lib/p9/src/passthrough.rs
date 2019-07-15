@@ -29,8 +29,8 @@ impl Clone for File {
 pub struct Passthrough(PathBuf);
 
 impl Passthrough {
-    pub fn new(root: &Path) -> Passthrough {
-        Passthrough(root.to_owned())
+    pub fn new(root: &Path) -> std::io::Result<Passthrough> {
+        Ok(Passthrough(root.canonicalize()?))
     }
 }
 
