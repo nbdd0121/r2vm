@@ -13,7 +13,7 @@ pub enum Csr {
     Time = 0xC01,
     Instret = 0xC02,
     
-    /* Rv32I only */
+    // These CSRs are Rv32I only, and they are considered invalid in RV64I
     Cycleh = 0xC80,
     Timeh = 0xC81,
     Instreth = 0xC82,
@@ -30,9 +30,17 @@ pub enum Csr {
     Sip = 0x144,
 
     Satp = 0x180,
+}
 
-    #[doc(hidden)]
-    __Nonexhaustive,
+impl Csr {
+    /// Get the minimal privilege level required to access the CSR
+    pub fn min_prv_level(self) -> u8 {
+        (((self as u16) >> 8) & 0b11) as u8
+    }
+
+    pub fn readonly(self) -> bool {
+        ((self as u16) >> 10) & 0b11 == 0b11
+    }
 }
 
 impl TryFrom<u16> for Csr {
@@ -67,7 +75,6 @@ impl fmt::Display for Csr {
             Csr::Stval => "stval",
             Csr::Sip => "sip",
             Csr::Satp => "satp",
-            v => return write!(f, "{}", *v as u16),
         })
     }
 }

@@ -96,6 +96,16 @@ impl Context {
         self.pending = (1 << 63) | pending;
         self.pending_tval = 0;
     }
+
+    pub fn test_and_set_fs(&mut self) -> Result<(), ()> {
+        if self.sstatus & 0x6000 == 0 {
+            self.pending = 2;
+            self.pending_tval = 0;
+            return Err(())
+        }
+        self.sstatus |= 0x6000;
+        Ok(())
+    }
 }
 
 /// Perform a CSR read on a context. Note that this operation performs no checks before accessing
@@ -104,17 +114,37 @@ impl Context {
 /// * The current privilege level has enough permission to access the CSR. CSR is nicely partition
 ///   into regions, so privilege check can be easily done.
 /// * U-mode code does not access floating point CSRs with FS == Off.
-/// * The CSR is a valid CSR.
-fn read_csr(ctx: &mut Context, csr: Csr) -> u64 {
-    match csr {
-        Csr::Fflags => ctx.fcsr & 0b11111,
-        Csr::Frm => (ctx.fcsr >> 5) & 0b111,
-        Csr::Fcsr => ctx.fcsr,
+fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
+    if ctx.prv < csr.min_prv_level() as _ {
+        ctx.pending = 2;
+        ctx.pending_tval = 0;
+        return Err(())
+    }
+    Ok(match csr {
+        Csr::Fflags => {
+            ctx.test_and_set_fs()?;
+            ctx.fcsr & 0b11111
+        }
+        Csr::Frm => {
+            ctx.test_and_set_fs()?;
+            (ctx.fcsr >> 5) & 0b111
+        }
+        Csr::Fcsr => {
+            ctx.test_and_set_fs()?;
+            ctx.fcsr
+        }
         // Pretend that we're 100MHz
         Csr::Time => crate::event_loop().cycle() / 100,
         // We assume the instret is incremented already
         Csr::Instret => ctx.instret - 1,
-        Csr::Sstatus => ctx.sstatus,
+        Csr::Sstatus => {
+            let mut value = ctx.sstatus;
+            // SSTATUS.FS = dirty, also set SD
+            if value & 0x6000 == 0x6000 { value |= 0x8000000000000000 }
+            // Hard-wire UXL to 0b10, i.e. 64-bit.
+            value |= 0x200000000;
+            value
+        }
         Csr::Sie => ctx.sie,
         Csr::Stvec => ctx.stvec,
         Csr::Scounteren => 0,
@@ -125,38 +155,39 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> u64 {
         Csr::Sip => ctx.sip,
         Csr::Satp => ctx.satp,
         _ => {
-           unreachable!("read illegal csr {:x}", csr as i32);
+            error!("read illegal csr {:x}", csr as i32);
+            ctx.pending = 2;
+            ctx.pending_tval = 0;
+            return Err(())
         }
-    }
+    })
 }
 
-fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
+fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
+    if csr.readonly() || ctx.prv < csr.min_prv_level() as _ {
+        ctx.pending = 2;
+        ctx.pending_tval = 0;
+        return Err(())
+    }
     match csr {
         Csr::Fflags => {
+            ctx.test_and_set_fs()?;
             ctx.fcsr = (ctx.fcsr &! 0b11111) | (value & 0b11111);
-            // Set SSTATUS.{FS, SD}
-            ctx.sstatus |= 0x8000000000006000
         }
         Csr::Frm => {
+            ctx.test_and_set_fs()?;
             ctx.fcsr = (ctx.fcsr &! (0b111 << 5)) | ((value & 0b111) << 5);
-            ctx.sstatus |= 0x8000000000006000
         }
         Csr::Fcsr => {
+            ctx.test_and_set_fs()?;
             ctx.fcsr = value & 0xff;
-            ctx.sstatus |= 0x8000000000006000
         }
         Csr::Instret => ctx.instret = value,
         Csr::Sstatus => {
             // Mask-out non-writable bits
-            let mut value = value & 0xC6122;
-            // SSTATUS.FS = dirty, also set SD
-            if (value & 0x6000) == 0x6000 { value |= 0x8000000000000000 }
-            // Hard-wire UXL to 0b10, i.e. 64-bit.
-            value |= 0x200000000;
-            ctx.sstatus = value;
+            ctx.sstatus = value & 0xC6122;
             // Update ctx.pending. Important!
             ctx.update_pending();
-
             // XXX: When MXR or SUM is changed, also clear local cache
         }
         Csr::Sie => {
@@ -165,8 +196,9 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
         }
         Csr::Stvec => {
             // We support MODE 0 only at the moment
-            if (value & 2) != 0 { return }
-            ctx.stvec = value;
+            if (value & 2) == 0 {
+                ctx.stvec = value;
+            }
         }
         Csr::Scounteren => (),
         Csr::Sscratch => ctx.sscratch = value,
@@ -191,9 +223,13 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) {
             ctx.clear_local_icache();
         }
         _ => {
-           unreachable!("write illegal csr {:x} = {:x}", csr as i32, value);
+            error!("write illegal csr {:x} = {:x}", csr as i32, value);
+            ctx.pending = 2;
+            ctx.pending_tval = 0;
+            return Err(())
         }
     }
+    Ok(())
 }
 
 type Trap = u64;
@@ -575,6 +611,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     }
     macro_rules! set_rm {
         ($rm: expr) => {{
+            ctx.test_and_set_fs()?;
             let rm = if $rm == 0b111 { (ctx.fcsr >> 5) as u32 } else { $rm as u32 };
             let mode = match rm.try_into() {
                 Ok(v) => v,
@@ -770,43 +807,45 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             }
         Op::Ebreak => trap!(3, 0),
         Op::Csrrw { rd, rs1, csr } => {
-            let result = if rd != 0 { read_csr(ctx, csr) } else { 0 };
-            write_csr(ctx, csr, read_reg!(rs1));
+            let result = if rd != 0 { read_csr(ctx, csr)? } else { 0 };
+            write_csr(ctx, csr, read_reg!(rs1))?;
             write_reg!(rd, result);
         }
         Op::Csrrs { rd, rs1, csr } => {
-            let result = read_csr(ctx, csr);
-            if rs1 != 0 { write_csr(ctx, csr, result | read_reg!(rs1)) }
+            let result = read_csr(ctx, csr)?;
+            if rs1 != 0 { write_csr(ctx, csr, result | read_reg!(rs1))? }
             write_reg!(rd, result);
         }
         Op::Csrrc { rd, rs1, csr } => {
-            let result = read_csr(ctx, csr);
-            if rs1 != 0 { write_csr(ctx, csr, result &! read_reg!(rs1)) }
+            let result = read_csr(ctx, csr)?;
+            if rs1 != 0 { write_csr(ctx, csr, result &! read_reg!(rs1))? }
             write_reg!(rd, result);
         }
         Op::Csrrwi { rd, imm, csr } => {
-            let result = if rd != 0 { read_csr(ctx, csr) } else { 0 };
-            write_csr(ctx, csr, imm as u64);
+            let result = if rd != 0 { read_csr(ctx, csr)? } else { 0 };
+            write_csr(ctx, csr, imm as u64)?;
             write_reg!(rd, result);
         }
         Op::Csrrsi { rd, imm, csr } => {
-            let result = read_csr(ctx, csr);
-            if imm != 0 { write_csr(ctx, csr, result | imm as u64) }
+            let result = read_csr(ctx, csr)?;
+            if imm != 0 { write_csr(ctx, csr, result | imm as u64)? }
             write_reg!(rd, result);
         }
         Op::Csrrci { rd, imm, csr } => {
-            let result = read_csr(ctx, csr);
-            if imm != 0 { write_csr(ctx, csr, result &! imm as u64) }
+            let result = read_csr(ctx, csr)?;
+            if imm != 0 { write_csr(ctx, csr, result &! imm as u64)? }
             write_reg!(rd, result);
         }
 
         /* F-extension */
         Op::Flw { frd, rs1, imm } => {
+            ctx.test_and_set_fs()?;
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(4, vaddr) }
             write_fs!(frd, F32::new(*read_vaddr::<u32>(ctx, vaddr)?));
         }
         Op::Fsw { rs1, frs2, imm } => {
+            ctx.test_and_set_fs()?;
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(5, vaddr) }
             let paddr = ptr_vaddr_x(ctx, vaddr)?;
@@ -842,15 +881,26 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             write_fs!(frd, read_fs!(frs1).square_root());
             update_flags!();
         }
-        Op::FsgnjS { frd, frs1, frs2 } => write_fs!(frd, read_fs!(frs1).copy_sign(read_fs!(frs2))),
-        Op::FsgnjnS { frd, frs1, frs2 } => write_fs!(frd, read_fs!(frs1).copy_sign_negated(read_fs!(frs2))),
-        Op::FsgnjxS { frd, frs1, frs2 } => write_fs!(frd, read_fs!(frs1).copy_sign_xored(read_fs!(frs2))),
+        Op::FsgnjS { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
+            write_fs!(frd, read_fs!(frs1).copy_sign(read_fs!(frs2)))
+        }
+        Op::FsgnjnS { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
+            write_fs!(frd, read_fs!(frs1).copy_sign_negated(read_fs!(frs2)))
+        }
+        Op::FsgnjxS { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
+            write_fs!(frd, read_fs!(frs1).copy_sign_xored(read_fs!(frs2)))
+        }
         Op::FminS { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             clear_flags!();
             write_fs!(frd, F32::min(read_fs!(frs1), read_fs!(frs2)));
             update_flags!();
         }
         Op::FmaxS { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             clear_flags!();
             write_fs!(frd, F32::max(read_fs!(frs1), read_fs!(frs2)));
             update_flags!();
@@ -880,20 +930,25 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             update_flags!();
         }
         Op::FmvXW { rd, frs1 } => {
+            ctx.test_and_set_fs()?;
             write_32!(rd, read_fs!(frs1).0);
         }
         Op::FclassS { rd, frs1 } => {
+            ctx.test_and_set_fs()?;
             write_reg!(rd, 1 << read_fs!(frs1).classify() as u32);
         }
         Op::FeqS { rd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             write_reg!(rd, (read_fs!(frs1) == read_fs!(frs2)) as u64)
         }
         Op::FltS { rd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             clear_flags!();
             write_reg!(rd, (read_fs!(frs1) < read_fs!(frs2)) as u64);
             update_flags!();
         }
         Op::FleS { rd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             clear_flags!();
             write_reg!(rd, (read_fs!(frs1) <= read_fs!(frs2)) as u64);
             update_flags!();
@@ -923,6 +978,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             update_flags!();
         }
         Op::FmvWX { frd, rs1 } => {
+            ctx.test_and_set_fs()?;
             write_fs!(frd, F32::new(read_32!(rs1)));
         }
         Op::FmaddS { frd, frs1, frs2, frs3, rm } => {
@@ -952,11 +1008,13 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
 
         /* D-extension */
         Op::Fld { frd, rs1, imm } => {
+            ctx.test_and_set_fs()?;
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 3 != 0 { trap!(4, vaddr) }
             write_fd!(frd, F64::new(*read_vaddr::<u64>(ctx, vaddr)?));
         }
         Op::Fsd { rs1, frs2, imm } => {
+            ctx.test_and_set_fs()?;
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
             if vaddr & 7 != 0 { trap!(5, vaddr) }
             let paddr = ptr_vaddr_x(ctx, vaddr)?;
@@ -992,15 +1050,26 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             write_fd!(frd, read_fd!(frs1).square_root());
             update_flags!();
         }
-        Op::FsgnjD { frd, frs1, frs2 } => write_fd!(frd, read_fd!(frs1).copy_sign(read_fd!(frs2))),
-        Op::FsgnjnD { frd, frs1, frs2 } => write_fd!(frd, read_fd!(frs1).copy_sign_negated(read_fd!(frs2))),
-        Op::FsgnjxD { frd, frs1, frs2 } => write_fd!(frd, read_fd!(frs1).copy_sign_xored(read_fd!(frs2))),
+        Op::FsgnjD { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
+            write_fd!(frd, read_fd!(frs1).copy_sign(read_fd!(frs2)))
+        }
+        Op::FsgnjnD { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
+            write_fd!(frd, read_fd!(frs1).copy_sign_negated(read_fd!(frs2)))
+        }
+        Op::FsgnjxD { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
+            write_fd!(frd, read_fd!(frs1).copy_sign_xored(read_fd!(frs2)))
+        }
         Op::FminD { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             clear_flags!();
             write_fd!(frd, F64::min(read_fd!(frs1), read_fd!(frs2)));
             update_flags!();
         }
         Op::FmaxD { frd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             clear_flags!();
             write_fd!(frd, F64::max(read_fd!(frs1), read_fd!(frs2)));
             update_flags!();
@@ -1012,6 +1081,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             update_flags!();
         }
         Op::FcvtDS { frd, frs1, .. } => {
+            ctx.test_and_set_fs()?;
             clear_flags!();
             write_fd!(frd, read_fs!(frs1).convert_format());
             update_flags!();
@@ -1041,20 +1111,25 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             update_flags!();
         }
         Op::FmvXD { rd, frs1 } => {
+            ctx.test_and_set_fs()?;
             write_reg!(rd, read_fd!(frs1).0);
         }
         Op::FclassD { rd, frs1 } => {
+            ctx.test_and_set_fs()?;
             write_reg!(rd, 1 << read_fd!(frs1).classify() as u32);
         }
         Op::FeqD { rd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             write_reg!(rd, (read_fd!(frs1) == read_fd!(frs2)) as u64)
         }
         Op::FltD { rd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             clear_flags!();
             write_reg!(rd, (read_fd!(frs1) < read_fd!(frs2)) as u64);
             update_flags!();
         }
         Op::FleD { rd, frs1, frs2 } => {
+            ctx.test_and_set_fs()?;
             clear_flags!();
             write_reg!(rd, (read_fd!(frs1) <= read_fd!(frs2)) as u64);
             update_flags!();
@@ -1084,6 +1159,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             update_flags!();
         }
         Op::FmvDX { frd, rs1 } => {
+            ctx.test_and_set_fs()?;
             write_fd!(frd, F64::new(read_reg!(rs1)));
         }
         Op::FmaddD { frd, frs1, frs2, frs3, rm } => {
@@ -1397,6 +1473,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
 
         /* Privileged */
         Op::Sret => {
+            if ctx.prv != 1 { trap!(2, 0) }
             ctx.pc = ctx.sepc;
 
             // Set privilege according to SPP
@@ -1421,8 +1498,11 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             // Set SPP to U
             ctx.sstatus &=! 0x100;
         }
-        Op::Wfi => (),
+        Op::Wfi => {
+            if ctx.prv != 1 { trap!(2, 0) }
+        }
         Op::SfenceVma { rs1, rs2 } => {
+            if ctx.prv != 1 { trap!(2, 0) }
             let asid = if rs2 == 0 { None } else { Some(read_reg!(rs2) as u16) };
             let vpn = if rs1 == 0 { None } else { Some(read_reg!(rs1) >> 12) };
             global_sfence(1 << ctx.hartid, asid, vpn)
