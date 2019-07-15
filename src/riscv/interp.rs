@@ -62,7 +62,7 @@ pub struct Context {
     /// Upon privilege-level switch or address space switch all entries here should be cleared.
     pub line: [CacheLine; 1024],
     pub i_line: [CacheLine; 1024],
-    pub cur_block: usize,
+    pub cur_block: Option<&'static DbtBlock>,
 }
 
 impl Context {
@@ -275,7 +275,25 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
     let line: &mut CacheLine = &mut ctx.line[(idx & 1023) as usize];
     line.tag = idx << 1;
     line.paddr = out ^ addr;
-    if !write { line.tag |= 1 }
+    if write {
+        // Invalidate presence in I$, so if the code is executed, we won't silently write into it.
+        let page = out >> 12 << 12;
+        let start = page.saturating_sub(4096);
+        let end = page + 4096;
+        unsafe {
+            let icache = icache();
+            let keys: Vec<u64> = icache.range(start .. end).map(|(k,_)|*k).collect();
+            for key in keys {
+                icache.remove(&key);
+            }
+        }
+        let line = &mut ctx.i_line[(idx & 1023) as usize];
+        if line.tag == idx {
+            line.tag = u64::max_value();
+        }
+    } else {
+        line.tag |= 1
+    }
     Ok(out)
 }
 
@@ -303,23 +321,107 @@ fn ptr_vaddr_x<T>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
     Ok(unsafe { &mut *(paddr as *mut T) })
 }
 
-use fnv::FnvHashMap;
-type Block = (Vec<(Op, bool)>, u64, u64);
+use std::collections::BTreeMap;
 
-static mut ICACHE: [Option<FnvHashMap<u64, crate::dbt::DbtBlock>>; 8] = [None, None, None, None, None, None, None, None];
+#[derive(Clone, Copy)]
+pub struct DbtBlock {
+    /// Decoded instructions. This is pinned, as the translated code will reference its absolute location.
+    pub block: &'static [(Op, bool)],
+    pub code: &'static [u8],
+    pub pc_map: &'static [u8],
+    pub pc_start: u64,
+    pub pc_end: u64,
+}
 
-fn icache(id: u64) -> &'static mut FnvHashMap<u64, crate::dbt::DbtBlock> {
-    let id = id as usize;
-    unsafe {
-        if ICACHE[id].is_none() {
-            ICACHE[id] = Some(FnvHashMap::default())
+#[no_mangle]
+extern "C" fn handle_trap(ctx: &mut crate::riscv::interp::Context, pc: usize) {
+    let blk = ctx.cur_block.unwrap();
+    let i = crate::dbt::get_index_by_pc(&blk.pc_map, pc - blk.code.as_ptr() as usize);
+    for j in i..blk.block.len() {
+        ctx.pc -= if blk.block[j].1 { 2 } else { 4 };
+    }
+    ctx.instret -= (blk.block.len() - i) as u64;
+}
+
+/// DBT-ed instruction cache
+/// ========================
+///
+/// It is vital that we make keep instruction cache coherent with the main memory. Alternatively we
+/// can make use of the fence.i/sfence.vma instruction, but we would not like to flush the entire
+/// cache when we see them because flushing the cache is very expensive, and modifying code in
+/// icache is relatively rare.
+/// 
+/// It is challenging to implememtn a DBT code cache, beca
+/// 
+/// We
+/// 
+/// We partition the whole icache memory into two halves. When
+/// 
+/// We achieve this by
+static mut ICACHE: Option<BTreeMap<u64, &'static DbtBlock>> = None;
+
+unsafe fn icache() -> &'static mut BTreeMap<u64, &'static DbtBlock> {
+    if ICACHE.is_none() {
+        ICACHE = Some(BTreeMap::default())
+    }
+    ICACHE.as_mut().unwrap()
+}
+
+static mut ICACHE_CODE: Option<Heap> = None;
+
+unsafe fn icache_code() -> &'static mut Heap {
+    if ICACHE_CODE.is_none() {
+        ICACHE_CODE = Some(Heap::new())
+    }
+    ICACHE_CODE.as_mut().unwrap()
+}
+
+struct Heap(usize, usize);
+const HEAP_SIZE: usize = 1024 * 1024 * 128;
+
+impl Heap {
+    fn new() -> Heap {
+        let ptr = unsafe { libc::mmap(std::ptr::null_mut(), HEAP_SIZE as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
+        assert_ne!(ptr, libc::MAP_FAILED);
+        let ptr = ptr as usize;
+        Heap(ptr, 0)
+    }
+
+    fn alloc_size(&mut self, size: usize) -> usize {
+        // Crossing half-boundary
+        let rollover = if self.1 <= HEAP_SIZE / 2 && self.1 + size > HEAP_SIZE / 2 {
+            true
+        } else if self.1 + size > HEAP_SIZE {
+            // Rollover, start from zero
+            self.1 = 0;
+            true
+        } else {
+            false
+        };
+
+        if rollover {
+            unsafe { icache().clear() }
         }
-        ICACHE[id].as_mut().unwrap()
+
+        let ret = self.1 + self.0;
+        self.1 += size;
+        ret
+    }
+
+    unsafe fn alloc<T: Copy>(&mut self) -> &'static mut T {
+        let size = std::mem::size_of::<T>();
+        &mut *(self.alloc_size(size) as *mut T)
+    }
+
+    unsafe fn alloc_slice<T: Copy>(&mut self, len: usize) -> &'static mut [T] {
+        let size = std::mem::size_of::<T>();
+        std::slice::from_raw_parts_mut(self.alloc_size(size * len) as *mut T, len)
     }
 }
 
 extern {
     fn send_ipi(mask: u64);
+    #[allow(dead_code)]
     fn fiber_interp_block();
 }
 
@@ -331,7 +433,6 @@ fn global_sfence(mask: u64) {
             let ctx = &mut *crate::CONTEXTS[i];
 
             ctx.clear_local_cache();
-            icache(ctx.hartid).clear();
         }
     }
 }
@@ -515,9 +616,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Andi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) & (imm as u64)),
         /* MISC-MEM */
         Op::Fence => (),
-        Op::FenceI => {
-            icache(ctx.hartid).clear();
-        }
+        Op::FenceI => (),
         /* OP-IMM-32 */
         Op::Addiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64),
         Op::Slliw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
@@ -1300,7 +1399,7 @@ extern "C" fn no_op() {}
 
 #[no_mangle]
 extern "C" fn interp_block(ctx: &mut Context) {
-    let dbtblk = unsafe { &*(ctx.cur_block as *const crate::dbt::DbtBlock) };
+    let dbtblk = ctx.cur_block.unwrap();
     ctx.instret += dbtblk.block.len() as u64;
 
     for i in 0..dbtblk.block.len() {
@@ -1332,20 +1431,43 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
         Ok(pc) => pc,
         Err(_) => return no_op,
     };
-    let dbtblk = icache(ctx.hartid).entry(phys_pc).or_insert_with(|| {
-        // Ignore error in this case
-        let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
-            Ok(pc) => pc,
-            Err(_) => 0,
-        };
+    let dbtblk: &DbtBlock = match unsafe { icache().get(&phys_pc) } {
+        Some(v) => v,
+        None => {
+            // Ignore error in this case
+            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
+                Ok(pc) => pc,
+                Err(_) => 0,
+            };
 
-        let (vec, start, end) = super::decode::decode_block(phys_pc, phys_pc_next);
-        let mut compiler = crate::dbt::DbtCompiler::new();
-        compiler.compile((vec, start, end))
-    });
+            let (vec, start, end) = super::decode::decode_block(phys_pc, phys_pc_next);
+            let op_slice = unsafe { icache_code().alloc_slice(vec.len()) };
+            op_slice.copy_from_slice(&vec);
 
-    ctx.cur_block = dbtblk as *const _ as usize;
-    unsafe { dbtblk.code.as_func_ptr::<extern "C" fn()>() }
+            let mut compiler = crate::dbt::DbtCompiler::new();
+            compiler.compile((&op_slice, start, end));
+            
+            let code = unsafe { icache_code().alloc_slice(compiler.enc.buffer.len()) };
+            code.copy_from_slice(&compiler.enc.buffer);
+
+            let map = unsafe { icache_code().alloc_slice(compiler.pc_map.len()) };
+            map.copy_from_slice(&compiler.pc_map);
+
+            let block = unsafe { icache_code().alloc() };
+            *block = DbtBlock {
+                block: op_slice,
+                code: code,
+                pc_map: map,
+                pc_start: start,
+                pc_end: end,
+            };
+            unsafe { icache().insert(phys_pc, block) };
+            block
+        }
+    };
+
+    ctx.cur_block = Some(dbtblk);
+    unsafe { std::mem::transmute(dbtblk.code.as_ptr() as usize) }
 }
 
 /// Trigger a trap. pc must be already adjusted properly before calling.

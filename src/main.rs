@@ -277,7 +277,7 @@ pub fn main() {
             tag: i64::max_value() as u64,
             paddr: 0
         }; 1024],
-        cur_block: 0,
+        cur_block: None,
     };
     // x0 must always be 0
     ctx.registers[0] = 0;
