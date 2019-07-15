@@ -37,17 +37,6 @@ helper_step:
 1:
     jmp helper_trap
 
-.global helper_step_tail
-helper_step_tail:
-    mov rdi, rbp
-    call riscv_step
-    test al, al
-    jnz 1f
-    add rsp, 8
-    ret
-1:
-    jmp helper_trap
-
 .global helper_translate_cache_miss
 .extern translate_cache_miss
 helper_translate_cache_miss:

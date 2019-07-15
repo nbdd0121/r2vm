@@ -47,9 +47,6 @@ extern "C" {
     fn helper_step(ctx: &mut crate::riscv::interp::Context, op: &Op);
 
     #[allow(improper_ctypes)]
-    fn helper_step_tail(ctx: &mut crate::riscv::interp::Context, op: &Op);
-
-    #[allow(improper_ctypes)]
     fn helper_translate_cache_miss(ctx: &mut crate::riscv::interp::Context, addr: u64, write: bool);
 
     #[allow(improper_ctypes)]
@@ -127,10 +124,10 @@ impl DbtCompiler {
         self.emit(Mov(Mem(memory_of_register(rd)), Imm(imm)));
     }
 
-    fn emit_step_call(&mut self, op: &Op, tail: bool) {
+    fn emit_step_call(&mut self, op: &Op) {
         // Functional-unit type instruction. Simply step through them.
         self.emit(Mov(Reg(Register::RSI), Imm(op as *const Op as usize as i64)));
-        let step_fn: usize = if tail { helper_step_tail } else { helper_step } as *const () as usize;
+        let step_fn: usize = helper_step as *const () as usize;
         self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
         self.emit(Call(OpReg(Register::RAX)));
     }
@@ -1024,9 +1021,9 @@ impl DbtCompiler {
     //
     // #endregion
 
-    fn emit_op(&mut self, op: &crate::riscv::Op, tail: bool) {
+    fn emit_op(&mut self, op: &crate::riscv::Op) {
         match *op {
-            Op::Illegal => self.emit_step_call(op, tail),
+            Op::Illegal => self.emit_step_call(op),
             /* LOAD */
             Op::Lb { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Byte);
@@ -1075,7 +1072,7 @@ impl DbtCompiler {
             Op::Andi { rd, rs1, imm } => self.emit_andi(rd, rs1, imm),
             /* MISC-MEM */
             Op::Fence => (),
-            Op::FenceI => self.emit_step_call(op, tail),
+            Op::FenceI => self.emit_step_call(op),
             /* OP-IMM-32 */
             Op::Addiw { rd, rs1, imm } => self.emit_addiw(rd, rs1, imm),
             Op::Slliw { rd, rs1, imm } => self.emit_slliw(rd, rs1, imm),
@@ -1130,7 +1127,7 @@ impl DbtCompiler {
             Op::Csrrc {..} |
             Op::Csrrwi {..} |
             Op::Csrrsi {..} |
-            Op::Csrrci {..} => self.emit_step_call(op, tail),
+            Op::Csrrci {..} => self.emit_step_call(op),
 
             /* F-extension */
             Op::Flw {..} |
@@ -1195,7 +1192,7 @@ impl DbtCompiler {
             Op::FmaddD {..} |
             Op::FmsubD {..} |
             Op::FnmsubD {..} |
-            Op::FnmaddD {..} => self.emit_step_call(op, tail),
+            Op::FnmaddD {..} => self.emit_step_call(op),
 
             /* M-extension */
             Op::Mul { rd, rs1, rs2 } => self.emit_mul(rd, rs1, rs2),
@@ -1234,12 +1231,12 @@ impl DbtCompiler {
             Op::AmominuW {..} |
             Op::AmominuD {..} |
             Op::AmomaxuW {..} |
-            Op::AmomaxuD {..} => self.emit_step_call(op, tail),
+            Op::AmomaxuD {..} => self.emit_step_call(op),
 
             /* Privileged */
-            Op::Sret => self.emit_step_call(op, tail),
+            Op::Sret => self.emit_step_call(op),
             Op::Wfi => (),
-            Op::SfenceVma {..} => self.emit_step_call(op, tail),
+            Op::SfenceVma {..} => self.emit_step_call(op),
         }
     }
 
@@ -1278,9 +1275,9 @@ impl DbtCompiler {
 
             let op = &opblock[i].0;
             if let Op::Auipc { rd, imm } = op {
-                self.emit_op(&Op::Auipc { rd: *rd, imm: imm - (block.2 - cur_pc) as i32 }, false);
+                self.emit_op(&Op::Auipc { rd: *rd, imm: imm - (block.2 - cur_pc) as i32 });
             } else {
-                self.emit_op(op, i == opblock.len() - 1);
+                self.emit_op(op);
             }
             let pc_end = self.enc.buffer.len();
             self.pc_map.push((pc_end - pc_start) as u8);
