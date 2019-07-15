@@ -6,8 +6,10 @@ extern crate fnv;
 #[macro_use]
 extern crate num_derive;
 extern crate num_traits;
+extern crate byteorder;
 
 extern crate softfp;
+extern crate p9;
 
 pub mod riscv;
 pub mod x86;
