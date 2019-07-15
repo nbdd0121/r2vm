@@ -4,9 +4,12 @@ default: all
 
 .PHONY: all clean register unregister
 
-all: codegen
+all: codegen dt
 
 clean:
+
+dt: devtree.dts
+	dtc $< > $@
 
 codegen: target/debug/dbt
 	cp $< $@
