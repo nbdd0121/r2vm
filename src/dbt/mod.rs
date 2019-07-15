@@ -55,6 +55,8 @@ extern "C" {
     #[allow(improper_ctypes)]
     fn helper_icache_miss(ctx: &mut crate::riscv::interp::Context, addr: u64);
 
+    fn helper_misalign();
+
     fn fiber_yield_raw();
 }
 
@@ -226,35 +228,59 @@ impl DbtCompiler {
 
     /// Shared routine for generating load code. Note that this routine does not perform the
     /// actual load - it merely computes the address, translate to physical and leave it at RSI
-    fn emit_load(&mut self, rs1: u8, imm: i32, _: Size) {
+    fn emit_load(&mut self, rs1: u8, imm: i32, size: Size) {
         self.minstret += 1;
         let offset = offset_of!(crate::riscv::interp::Context, line);
         
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
-        self.emit(Add(Reg(Register::RSI), Imm(imm as i64)));
+        if imm != 0 { self.emit(Add(Reg(Register::RSI), Imm(imm as i64))); }
+
+        // Check for alignment
+        if size != Size::Byte {
+            self.emit(Test(Reg(Register::RSI), Imm(size.bytes() as i64 - 1)));
+            self.emit(Jcc(43, ConditionCode::NotEqual));
+        }
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
+        // 3 bytes
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
+        // 4 bytes
         self.emit(Shr(Reg(Register::RCX), Imm(crate::riscv::interp::CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
+        // 2 bytes
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
+        // 5 bytes
         self.emit(And(Reg(Register::EAX), Imm(1023)));
+        // 3 bytes
         self.emit(Shl(Reg(Register::EAX), Imm(4)));
 
         // RDX = ctx.line[(idx & 1023)].tag >> 1
+        // 8 bytes
         self.emit(Mov(Reg(Register::RDX), OpMem(Register::RBP + Register::RAX + offset as i32)));
+        // 3 bytes
         self.emit(Shr(Reg(Register::RDX), Imm(1)));
+        // 3 bytes
         self.emit(Cmp(Reg(Register::RDX), OpReg(Register::RCX)));
-
-        self.emit(Jcc(10, ConditionCode::NotEqual));
+        // 2 bytes
+        self.emit(Jcc(if size == Size::Byte { 10 } else { 24 }, ConditionCode::NotEqual));
 
         // RSI = ctx.line[(idx & 1023)].paddr ^ addr
         // 8 bytes
         self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
         // 2 bytes
-        self.emit(Jmp(Imm(14)));
+        self.emit(Jmp(Imm(if size == Size::Byte { 14 } else { 28 })));
+
+        if size != Size::Byte {
+            // 2 bytes
+            self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
+            let ffn = helper_misalign as *const () as usize;
+            // 10 bytes
+            self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
+            // 2 bytes
+            self.emit(Call(OpReg(Register::RAX)));
+        }
 
         // 2 bytes
         self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
@@ -271,28 +297,51 @@ impl DbtCompiler {
 
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
-        self.emit(Add(Reg(Register::RSI), Imm(imm as i64)));
+        if imm != 0 { self.emit(Add(Reg(Register::RSI), Imm(imm as i64))); }
+
+        // Check for alignment
+        if size != Size::Byte {
+            self.emit(Test(Reg(Register::RSI), Imm(size.bytes() as i64 - 1)));
+            self.emit(Jcc(40, ConditionCode::NotEqual));
+        }
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
+        // 3 bytes
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
+        // 4 bytes
         self.emit(Shr(Reg(Register::RCX), Imm(crate::riscv::interp::CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
+        // 2 bytes
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
+        // 5 bytes
         self.emit(And(Reg(Register::EAX), Imm(1023)));
+        // 3 bytes
         self.emit(Shl(Reg(Register::EAX), Imm(4)));
 
         // RCX = idx << 1
+        // 3 bytes
         self.emit(Add(Reg(Register::RCX), OpReg(Register::RCX)));
+        // 8 bytes
         self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
-
-        self.emit(Jcc(10, ConditionCode::NotEqual));
+        // 2 bytes
+        self.emit(Jcc(if size == Size::Byte { 10 } else { 27 }, ConditionCode::NotEqual));
 
         // RSI = ctx.line[(idx & 1023)].paddr ^ addr
         // 8 bytes
         self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
         // 2 bytes
-        self.emit(Jmp(Imm(17)));
+        self.emit(Jmp(Imm(if size == Size::Byte { 17 } else { 34 })));
+
+        if size != Size::Byte {
+            // 5 bytes
+            self.emit(Mov(Reg(Register::EDX), Imm(1)));
+            let ffn = helper_misalign as *const () as usize;
+            // 10 bytes
+            self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
+            // 2 bytes
+            self.emit(Call(OpReg(Register::RAX)));
+        }
 
         // 5 bytes
         self.emit(Mov(Reg(Register::EDX), Imm(1)));

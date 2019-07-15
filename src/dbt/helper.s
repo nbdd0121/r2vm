@@ -6,6 +6,15 @@
 # All helper functions are called with RSP misaligned to 16-byte boundary
 # So when return address is pushed, they are properly aligned
 
+# RSI -> vaddr
+.global helper_misalign
+helper_misalign:
+    add edx, 4
+    # Set pending and pending_tval
+    mov [rbp + 32 * 8 + 16], rdx
+    mov [rbp + 32 * 8 + 24], rsi
+    # Fall-through to helper_trap
+
 helper_trap:
     # RDI -> context
     mov rdi, rbp

@@ -1590,7 +1590,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
 #[no_mangle]
 pub fn trap(ctx: &mut Context) {
     if crate::get_flags().user_only {
-        eprintln!("unhandled trap {}", ctx.pending);
+        eprintln!("unhandled trap {:x}, tval = {:x}", ctx.pending, ctx.pending_tval);
         eprintln!("pc  = {:16x}  ra  = {:16x}", ctx.pc, ctx.registers[1]);
         for i in (2..32).step_by(2) {
             eprintln!(
