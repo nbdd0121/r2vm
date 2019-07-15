@@ -177,3 +177,69 @@ impl Buffer {
         total_len
     }
 }
+
+pub struct BufferReader<'a> {
+    buffer: &'a Buffer,
+    pub pos: usize,
+}
+
+impl<'a> BufferReader<'a> {
+    pub fn new(buffer: &'a mut Buffer) -> Self {
+        Self { buffer, pos: 0 }
+    }
+}
+
+impl<'a> std::io::Seek for BufferReader<'a> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        let (base, offset) = match pos {
+            std::io::SeekFrom::Start(n) => { (0, n as i64) }
+            std::io::SeekFrom::End(n) => (self.buffer.read_len(), n),
+            std::io::SeekFrom::Current(n) => (self.pos, n),
+        };
+        let new_pos = (base as i64 + offset) as usize;
+        self.pos = new_pos;
+        Ok(new_pos as u64)
+    }
+}
+
+impl<'a> std::io::Read for BufferReader<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let size = self.buffer.read(self.pos, buf);
+        self.pos += size;
+        Ok(size)
+    }
+}
+
+pub struct BufferWriter<'a> {
+    buffer: &'a mut Buffer,
+    pub pos: usize,
+}
+
+impl<'a> BufferWriter<'a> {
+    pub fn new(buffer: &'a mut Buffer) -> Self {
+        Self { buffer, pos: 0 }
+    }
+}
+
+impl<'a> std::io::Seek for BufferWriter<'a> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        let (base, offset) = match pos {
+            std::io::SeekFrom::Start(n) => { (0, n as i64) }
+            std::io::SeekFrom::End(n) => (self.buffer.write_len(), n),
+            std::io::SeekFrom::Current(n) => (self.pos, n),
+        };
+        let new_pos = (base as i64 + offset) as usize;
+        self.pos = new_pos;
+        Ok(new_pos as u64)
+    }
+}
+
+impl<'a> std::io::Write for BufferWriter<'a> {
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let size = self.buffer.write(self.pos, buf);
+        self.pos += size;
+        Ok(size)
+    }
+}

@@ -44,6 +44,7 @@ pub fn console_init() {
                     0x78 => {
                         println!("Terminated");
                         unsafe {
+                            println!("TIME = {:?}", crate::util::cpu_time());
                             println!("CYCLE = {:x}", crate::event_loop().cycle());
                             for i in 0..crate::CONTEXTS.len() {
                                 let ctx = &*crate::CONTEXTS[i];

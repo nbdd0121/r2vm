@@ -1,6 +1,6 @@
 use crate::io::IoMemory;
 use crate::io::plic::Plic;
-use crate::io::virtio::{Mmio, Block, Rng};
+use crate::io::virtio::{Mmio, Block, Rng, P9};
 
 mod abi;
 mod event;
@@ -26,6 +26,7 @@ static mut IO_BOUNDARY: ureg = ureg::max_value();
 
 static mut VIRTIO_BLK: Option<Mmio> = None;
 static mut VIRTIO_RNG: Option<Mmio> = None;
+static mut VIRTIO_P9: Option<Mmio> = None;
 
 pub fn init() {
     let file = std::fs::OpenOptions::new()
@@ -38,6 +39,7 @@ pub fn init() {
         VIRTIO_BLK = Some(Mmio::new(Box::new(Block::new(Box::new(file)))));
         
         VIRTIO_RNG = Some(Mmio::new(Box::new(Rng::new_seeded())));
+        VIRTIO_P9 = Some(Mmio::new(Box::new(P9::new("/dev/root", std::path::Path::new("./shared")))));
 
         IO_BOUNDARY = 0x7fffffff;
 
@@ -79,7 +81,9 @@ pub fn phys_read(addr: ureg, size: u32) -> ureg {
         unsafe {if addr >= 0x100000 {
             PLIC.as_mut().unwrap().read(addr - 0x100000, size)
         } else {
-            if addr >= 4096 {
+            if addr >= 0x2000 {
+                VIRTIO_P9.as_mut().unwrap().read(addr - 0x2000, size)
+            } else if addr >= 0x1000 {
                 VIRTIO_RNG.as_mut().unwrap().read(addr - 4096, size)
             } else {
                 VIRTIO_BLK.as_mut().unwrap().read(addr, size)
@@ -102,7 +106,9 @@ pub fn phys_write(addr: ureg, value: ureg, size: u32) {
         unsafe {if addr >= 0x100000 {
             PLIC.as_mut().unwrap().write(addr - 0x100000, value, size)
         } else {
-            if addr >= 4096 {
+            if addr >= 0x2000 {
+                VIRTIO_P9.as_mut().unwrap().write(addr - 0x2000, value, size)
+            } else if addr >= 0x1000 {
                 VIRTIO_RNG.as_mut().unwrap().write(addr - 4096, value, size)
             } else {
                 VIRTIO_BLK.as_mut().unwrap().write(addr, value, size)
