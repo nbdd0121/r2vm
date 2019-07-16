@@ -44,7 +44,7 @@ pub fn init() {
         IO_BOUNDARY = 0x7fffffff;
 
         let result = libc::mmap(
-            0x8000000 as *mut libc::c_void, 0x8000000,
+            0x80000000 as *mut libc::c_void, 0x80000000,
             libc::PROT_NONE,
             libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
             -1, 0
