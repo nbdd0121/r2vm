@@ -288,6 +288,7 @@ pub fn main() {
 
     // Load the program
     unsafe { emu::loader::load(&loader, &mut ctx, &mut std::iter::once(program_name).chain(args)) };
+    std::mem::drop(loader);
 
     // Create fibers for all threads
     let mut fibers = Vec::new();
