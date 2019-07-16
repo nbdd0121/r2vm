@@ -21,7 +21,7 @@ target/debug/dbt: $(RUST_FILES) dt
 	cargo build
 
 target/release/dbt: $(RUST_FILES)
-	cargo build --release
+	cargo build --release --features fast
 
 register: codegen
 	sudo bash -c "echo ':riscv:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xf3\x00:\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff:$(shell realpath codegen):' > /proc/sys/fs/binfmt_misc/register"

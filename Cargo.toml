@@ -30,3 +30,7 @@ panic = "abort"
 [profile.release]
 panic = "abort"
 debug = true
+
+[features]
+default = []
+fast = []
