@@ -1,3 +1,9 @@
+#![cfg_attr(not(feature = "std"), no_std)]
+
+// Currently our encoder makes use of Vec, so we need to depend on alloc
+// In the future this dependency could be removed.
+extern crate alloc;
+
 mod op;
 mod encode;
 mod decode;

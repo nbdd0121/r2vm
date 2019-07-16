@@ -20,7 +20,7 @@ release: target/release/dbt
 target/debug/dbt: $(RUST_FILES) dt
 	cargo build
 
-target/release/dbt: $(RUST_FILES)
+target/release/dbt: $(RUST_FILES) dt
 	cargo build --release --features fast
 
 register: codegen

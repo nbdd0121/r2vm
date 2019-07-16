@@ -1,4 +1,4 @@
-use std::fmt::{self, Write};
+use core::fmt::{self, Write};
 
 /// Helper for displaying signed hex
 struct Signed(i64);
@@ -31,13 +31,13 @@ pub enum Size {
 }
 
 impl PartialOrd for Size {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for Size {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         (*self as u8).cmp(&(*other as u8))
     }
 }
@@ -133,7 +133,7 @@ impl Register {
         };
 
         // This will always be valid
-        unsafe { std::mem::transmute(id | mask) }
+        unsafe { core::mem::transmute(id | mask) }
     }
 
     pub fn resize(self, size: Size) -> Self {
@@ -143,9 +143,26 @@ impl Register {
     }
 }
 
+const REG_NAMES : [&'static str; 0x48] = [
+    "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh",
+    "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
+    "ax", "cx", "dx", "bx", "sp", "bp", "si", "di",
+    "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w",
+    "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",
+    "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
+    "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+    "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+    "(unknown)", "(unknown)", "(unknown)", "(unknown)", "spl", "bpl", "sil", "dil"
+];
+
+fn register_name(reg_num: u8) -> &'static str {
+    if reg_num < 0x10 || reg_num >= 0x58 { return "(unknown)" }
+    return REG_NAMES[(reg_num - 0x10) as usize];
+}
+
 impl fmt::Display for Register {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", super::disasm::register_name(*self as u8))
+        write!(f, "{}", register_name(*self as u8))
     }
 }
 
@@ -402,7 +419,7 @@ pub enum Op {
 }
 
 // index * scale
-impl std::ops::Mul<u8> for Register {
+impl core::ops::Mul<u8> for Register {
     type Output = Memory;
     fn mul(self, rhs: u8) -> Memory {
         Memory {
@@ -415,7 +432,7 @@ impl std::ops::Mul<u8> for Register {
 }
 
 // base + index * scale
-impl std::ops::Add<Memory> for Register {
+impl core::ops::Add<Memory> for Register {
     type Output = Memory;
     fn add(self, mut rhs: Memory) -> Memory {
         rhs.base = Some(self);
@@ -424,7 +441,7 @@ impl std::ops::Add<Memory> for Register {
 }
 
 // base + index
-impl std::ops::Add<Register> for Register {
+impl core::ops::Add<Register> for Register {
     type Output = Memory;
     fn add(self, rhs: Register) -> Memory {
         Memory {
@@ -437,7 +454,7 @@ impl std::ops::Add<Register> for Register {
 }
 
 // base + displacement
-impl std::ops::Add<i32> for Register {
+impl core::ops::Add<i32> for Register {
     type Output = Memory;
     fn add(self, rhs: i32) -> Memory {
         Memory {
@@ -450,7 +467,7 @@ impl std::ops::Add<i32> for Register {
 }
 
 // base - displacement
-impl std::ops::Sub<i32> for Register {
+impl core::ops::Sub<i32> for Register {
     type Output = Memory;
     fn sub(self, rhs: i32) -> Memory {
         Memory {
@@ -463,7 +480,7 @@ impl std::ops::Sub<i32> for Register {
 }
 
 // [base +] index * scale + displacement
-impl std::ops::Add<i32> for Memory {
+impl core::ops::Add<i32> for Memory {
     type Output = Memory;
     fn add(mut self, rhs: i32) -> Memory {
         self.displacement = rhs;
@@ -471,7 +488,7 @@ impl std::ops::Add<i32> for Memory {
     }
 }
 
-impl std::ops::Sub<i32> for Memory {
+impl core::ops::Sub<i32> for Memory {
     type Output = Memory;
     fn sub(mut self, rhs: i32) -> Memory {
         self.displacement = -rhs;

@@ -10,9 +10,9 @@ extern crate byteorder;
 
 extern crate softfp;
 extern crate p9;
+extern crate x86;
 
 pub mod riscv;
-pub mod x86;
 pub mod io;
 #[macro_use]
 pub mod util;

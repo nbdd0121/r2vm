@@ -39,7 +39,7 @@ impl<'a> Decoder<'a> {
         };
 
         // This will always be valid
-        unsafe { std::mem::transmute(reg | mask) }
+        unsafe { core::mem::transmute(reg | mask) }
     }
 
     /// Decode a ModR/M sequence

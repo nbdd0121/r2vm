@@ -1,0 +1,11 @@
+[package]
+name = "x86"
+version = "0.1.0"
+authors = ["Gary Guo <gary@garyguo.net>"]
+edition = "2018"
+
+[dependencies]
+
+[features]
+default = [ "std" ]
+std = []

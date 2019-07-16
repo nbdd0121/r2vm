@@ -1,8 +1,8 @@
-use std::convert::TryFrom;
+use core::convert::TryFrom;
 use super::op::{ConditionCode, Location, Operand, Memory, Register, Op, Size, REG_GPB2, REG_GPQ};
 
 pub struct Encoder {
-    pub buffer: Vec<u8>,
+    pub buffer: alloc::vec::Vec<u8>,
 }
 
 // For most instructions taking immediates:

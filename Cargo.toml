@@ -22,6 +22,7 @@ fixedbitset = "0.1"
 byteorder = "1.3"
 softfp = { path = "lib/softfp" }
 p9 = { path = "lib/p9" }
+x86 = { path = "lib/x86" }
 
 [profile.dev]
 opt-level = "z"
