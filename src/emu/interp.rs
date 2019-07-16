@@ -68,13 +68,13 @@ pub struct Context {
 impl Context {
     pub fn clear_local_cache(&mut self) {
         for line in self.line.iter_mut() {
-            line.tag = u64::max_value();
+            line.tag = i64::max_value() as u64;
         }
     }
 
     pub fn clear_local_icache(&mut self) {
         for line in self.i_line.iter_mut() {
-            line.tag = u64::max_value();
+            line.tag = i64::max_value() as u64;
         }
     }
 
@@ -329,7 +329,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
         }
         let line = &mut ctx.i_line[(idx & 1023) as usize];
         if line.tag == idx {
-            line.tag = u64::max_value();
+            line.tag = i64::max_value() as u64;
         }
     } else {
         line.tag |= 1
