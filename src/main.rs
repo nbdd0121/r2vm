@@ -110,10 +110,14 @@ pub fn get_flags() -> &'static Flags {
 pub static mut CONTEXTS: &'static mut [*mut riscv::interp::Context] = &mut [];
 
 #[no_mangle]
-extern "C" fn interrupt() {
-    let ctx = unsafe { &mut *CONTEXTS[0] };
-    ctx.sip |= 512;
-    ctx.update_pending();
+extern "C" fn interrupt(id: usize, level: bool) {
+    let ctx = unsafe { &mut *CONTEXTS[id] };
+    if level {
+        ctx.sip |= 512;
+        ctx.update_pending();
+    } else {
+        ctx.sip &= !512;
+    }
 }
 
 #[no_mangle]

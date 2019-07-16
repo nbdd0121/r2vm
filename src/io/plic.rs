@@ -17,7 +17,7 @@ const OFFSET_PRIORITY_THRESHOLD  : usize = 0x000;
 const OFFSET_INTERRUPT_CLAIM     : usize = 0x004;
 
 extern {
-    fn interrupt();
+    fn interrupt(ctx: usize, level: bool);
 }
 
 /// An implementation of SiFive's PLIC controller. We support 31 interrupts at the moment.
@@ -44,11 +44,7 @@ impl Plic {
     pub fn trigger(&mut self, irq: u32) {
         assert!(irq > 0 && irq < 32);
         self.pending |= 1 << irq;
-        for ctx in 0..self.enable.len() {
-            if self.pending(ctx) {
-                unsafe { interrupt() }
-            }
-        }
+        self.recompute_pending();
     }
 
     /// Check if there are IRQs pending for a context
@@ -62,6 +58,12 @@ impl Plic {
             }
         }
         false
+    }
+
+    fn recompute_pending(&mut self) {
+        for ctx in 0..self.enable.len() {
+            unsafe { interrupt(ctx, self.pending(ctx)) }
+        }
     }
 
     fn claim(&mut self, ctx: usize) -> u32 {
@@ -79,8 +81,10 @@ impl Plic {
             }
         }
         if cur_irq != 0 {
-            self.pending &=! (1 << cur_irq);
+            self.pending &= !(1 << cur_irq);
             self.claimed[ctx] |= 1 << cur_irq;
+            // If something is claimed, then the pending state will change, so recompute
+            self.recompute_pending();
         }
         return cur_irq as u32;
     }
@@ -232,5 +236,8 @@ impl IoMemory for Plic {
                 return;
             }
         }
+
+        // Re-compute the interrupt status after each successful register write
+        self.recompute_pending();
     }
 }

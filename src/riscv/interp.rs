@@ -482,6 +482,8 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
     match nr {
         0 => {
             ctx.timecmp = arg0 * 100;
+            ctx.sip &= !32;
+            // No need to update pending as we are deasserting sip
             let ctx_ptr = ctx as *mut Context;
             crate::event_loop().queue(ctx.timecmp, Box::new(move || {
                 let ctx = unsafe{ &mut *ctx_ptr };
@@ -1600,12 +1602,6 @@ pub fn trap(ctx: &mut Context) {
             );
         }
         std::process::exit(1);
-    }
-
-    if ctx.pending & (1 << 63) != 0 {
-        let interrupt = ctx.pending &! (1 << 63);
-        // TODO: This is a hack, fix it!
-        ctx.sip &= !(1 << interrupt);
     }
 
     ctx.scause = ctx.pending;
