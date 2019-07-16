@@ -4,7 +4,7 @@ default: all
 
 .PHONY: all clean register unregister
 
-all: codegen dt
+all: codegen
 
 clean:
 
@@ -17,7 +17,7 @@ codegen: target/debug/dbt
 release: target/release/dbt
 	cp $< $@
 
-target/debug/dbt: $(RUST_FILES)
+target/debug/dbt: $(RUST_FILES) dt
 	cargo build
 
 target/release/dbt: $(RUST_FILES)

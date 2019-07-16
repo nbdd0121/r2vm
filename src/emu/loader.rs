@@ -425,7 +425,9 @@ pub unsafe fn load(file: &Loader, ctx: &mut crate::riscv::interp::Context, args:
             }
         };
 
-        Loader::new("dt".as_ref()).unwrap().load_bin(0x200000 + size);
+        let device_tree = include_bytes!("../../dt");
+        let target = std::slice::from_raw_parts_mut((0x200000 + size) as *mut u8, device_tree.len());
+        target.copy_from_slice(&device_tree[..]);
 
         // a0 is the current hartid
         ctx.registers[10] = 0;
