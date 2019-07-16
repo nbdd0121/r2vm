@@ -865,7 +865,6 @@ pub fn decode(bits: u32) -> Op {
     }
 }
 
-#[allow(dead_code)]
 pub fn decode_iter(iter: &mut impl Iterator<Item=u16>) -> Option<(Op, bool)> {
     let bits = iter.next()?;
     if bits & 3 == 3 {
@@ -874,48 +873,4 @@ pub fn decode_iter(iter: &mut impl Iterator<Item=u16>) -> Option<(Op, bool)> {
     } else {
         Some((decode_compressed(bits), true))
     }
-}
-
-pub fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
-    let bits = crate::emu::read_memory::<u16>(*pc);
-    if bits & 3 == 3 {
-        let hi_bits = if *pc & 4095 == 4094 {
-            crate::emu::read_memory::<u16>(pc_next)
-        } else {
-            crate::emu::read_memory::<u16>(*pc + 2)
-        };
-        let bits = (hi_bits as u32) << 16 | bits as u32;
-        let (op, c) = (decode(bits), false);
-        if crate::get_flags().disassemble {
-            super::disasm::print_instr(*pc, bits, &op);
-        }
-        *pc += 4;
-        (op, c)
-    } else {
-        let (op, c) = (decode_compressed(bits), true);
-        if crate::get_flags().disassemble {
-            super::disasm::print_instr(*pc, bits as u32, &op);
-        }
-        *pc += 2;
-        (op, c)
-    }
-}
-
-pub fn decode_block(mut pc: u64, pc_next: u64) -> (Vec<(Op, bool)>, u64, u64) {
-    let start_pc = pc;
-    let mut vec = Vec::new();
-
-    if crate::get_flags().disassemble {
-        eprintln!("Decoding {:x}", pc);
-    }
-
-    loop {
-        let (op, c) = decode_instr(&mut pc, pc_next);
-        if op.can_change_control_flow() || (pc &! 4095) != (start_pc &! 4095) {
-            vec.push((op, c));
-            break
-        }
-        vec.push((op, c));
-    }
-    (vec, start_pc, pc)
 }

@@ -1,5 +1,4 @@
-use super::csr::Csr;
-use super::op::Op;
+use riscv::{Op, Csr};
 use softfp::{self, F32, F64};
 use std::convert::TryInto;
 
@@ -62,6 +61,7 @@ pub struct Context {
     /// Upon privilege-level switch or address space switch all entries here should be cleared.
     pub line: [CacheLine; 1024],
     pub i_line: [CacheLine; 1024],
+
     pub cur_block: Option<&'static DbtBlock>,
 }
 
@@ -374,7 +374,7 @@ pub struct DbtBlock {
 }
 
 #[no_mangle]
-extern "C" fn handle_trap(ctx: &mut crate::riscv::interp::Context, pc: usize) {
+extern "C" fn handle_trap(ctx: &mut Context, pc: usize) {
     let blk = ctx.cur_block.unwrap();
     let i = crate::dbt::get_index_by_pc(&blk.pc_map, pc - blk.code.as_ptr() as usize);
     for j in i..blk.block.len() {
@@ -1542,6 +1542,51 @@ extern "C" fn interp_block(ctx: &mut Context) {
     }
 }
 
+fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
+    let bits = crate::emu::read_memory::<u16>(*pc);
+    if bits & 3 == 3 {
+        let hi_bits = if *pc & 4095 == 4094 {
+            crate::emu::read_memory::<u16>(pc_next)
+        } else {
+            crate::emu::read_memory::<u16>(*pc + 2)
+        };
+        let bits = (hi_bits as u32) << 16 | bits as u32;
+        let (op, c) = (riscv::decode::decode(bits), false);
+        if crate::get_flags().disassemble {
+            riscv::disasm::print_instr(*pc, bits, &op);
+        }
+        *pc += 4;
+        (op, c)
+    } else {
+        let (op, c) = (riscv::decode::decode_compressed(bits), true);
+        if crate::get_flags().disassemble {
+            riscv::disasm::print_instr(*pc, bits as u32, &op);
+        }
+        *pc += 2;
+        (op, c)
+    }
+}
+
+fn decode_block(mut pc: u64, pc_next: u64) -> (Vec<(Op, bool)>, u64, u64) {
+    let start_pc = pc;
+    let mut vec = Vec::new();
+
+    if crate::get_flags().disassemble {
+        eprintln!("Decoding {:x}", pc);
+    }
+
+    loop {
+        let (op, c) = decode_instr(&mut pc, pc_next);
+        if op.can_change_control_flow() || (pc &! 4095) != (start_pc &! 4095) {
+            vec.push((op, c));
+            break
+        }
+        vec.push((op, c));
+    }
+    (vec, start_pc, pc)
+}
+
+
 #[no_mangle]
 fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
     let pc = ctx.pc;
@@ -1558,7 +1603,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
                 Err(_) => 0,
             };
 
-            let (vec, start, end) = super::decode::decode_block(phys_pc, phys_pc_next);
+            let (vec, start, end) = decode_block(phys_pc, phys_pc_next);
             let op_slice = unsafe { icache_code().alloc_slice(vec.len()) };
             op_slice.copy_from_slice(&vec);
 
@@ -1597,8 +1642,8 @@ pub fn trap(ctx: &mut Context) {
         for i in (2..32).step_by(2) {
             eprintln!(
                 "{:-3} = {:16x}  {:-3} = {:16x}",
-                super::disasm::REG_NAMES[i], ctx.registers[i],
-                super::disasm::REG_NAMES[i + 1], ctx.registers[i + 1]
+                riscv::disasm::REG_NAMES[i], ctx.registers[i],
+                riscv::disasm::REG_NAMES[i + 1], ctx.registers[i + 1]
             );
         }
         std::process::exit(1);

@@ -2,6 +2,7 @@ use crate::io::IoMemory;
 use crate::io::plic::Plic;
 use crate::io::virtio::{Mmio, Block, Rng, P9};
 
+pub mod interp;
 mod abi;
 mod event;
 mod syscall;

@@ -314,7 +314,7 @@ impl Loader {
     }
 }
 
-pub unsafe fn load(file: &Loader, ctx: &mut crate::riscv::interp::Context, args: &mut dyn Iterator<Item=String>) {
+pub unsafe fn load(file: &Loader, ctx: &mut crate::emu::interp::Context, args: &mut dyn Iterator<Item=String>) {
     if crate::get_flags().user_only {
         // Set sp to be the highest possible address.
         let mut sp: ureg = 0x7fff0000;

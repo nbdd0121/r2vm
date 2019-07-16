@@ -9,6 +9,7 @@
 use crate::x86::{Op as X86Op, Op::*, Register, Memory, Size, ConditionCode};
 use crate::x86::builder::*;
 use crate::riscv::Op;
+use crate::emu::interp::Context;
 
 /// Reverse translate AMD64 program counter into RISC-V program counter.
 /// `host_pc_offset` should be the PC offset in relation to `self.code`.
@@ -39,18 +40,18 @@ fn memory_of_register(reg: u8) -> Memory {
 
 #[inline]
 fn memory_of_pc() -> Memory { 
-    (Register::RBP + offset_of!(crate::riscv::interp::Context, pc) as i32).qword()
+    (Register::RBP + offset_of!(Context, pc) as i32).qword()
 }
 
 extern "C" {
     #[allow(improper_ctypes)]
-    fn helper_step(ctx: &mut crate::riscv::interp::Context, op: &Op);
+    fn helper_step(ctx: &mut Context, op: &Op);
 
     #[allow(improper_ctypes)]
-    fn helper_translate_cache_miss(ctx: &mut crate::riscv::interp::Context, addr: u64, write: bool);
+    fn helper_translate_cache_miss(ctx: &mut Context, addr: u64, write: bool);
 
     #[allow(improper_ctypes)]
-    fn helper_icache_miss(ctx: &mut crate::riscv::interp::Context, addr: u64);
+    fn helper_icache_miss(ctx: &mut Context, addr: u64);
 
     fn helper_misalign();
 
@@ -196,7 +197,7 @@ impl DbtCompiler {
     }
 
     fn emit_icache_access(&mut self, off: u64) {
-        let offset = offset_of!(crate::riscv::interp::Context, i_line);
+        let offset = offset_of!(Context, i_line);
         
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
@@ -204,7 +205,7 @@ impl DbtCompiler {
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(crate::riscv::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(crate::emu::interp::CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
@@ -227,7 +228,7 @@ impl DbtCompiler {
     /// actual load - it merely computes the address, translate to physical and leave it at RSI
     fn emit_load(&mut self, rs1: u8, imm: i32, size: Size) {
         self.minstret += 1;
-        let offset = offset_of!(crate::riscv::interp::Context, line);
+        let offset = offset_of!(Context, line);
         
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
@@ -243,7 +244,7 @@ impl DbtCompiler {
         // 3 bytes
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
         // 4 bytes
-        self.emit(Shr(Reg(Register::RCX), Imm(crate::riscv::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(crate::emu::interp::CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         // 2 bytes
@@ -290,7 +291,7 @@ impl DbtCompiler {
 
     fn emit_store(&mut self, rs1: u8, rs2: u8, imm: i32, size: Size) {
         self.minstret += 1;
-        let offset = offset_of!(crate::riscv::interp::Context, line);
+        let offset = offset_of!(Context, line);
 
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
@@ -306,7 +307,7 @@ impl DbtCompiler {
         // 3 bytes
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
         // 4 bytes
-        self.emit(Shr(Reg(Register::RCX), Imm(crate::riscv::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(crate::emu::interp::CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         // 2 bytes
@@ -1248,12 +1249,12 @@ impl DbtCompiler {
         self.emit(Add(Mem(memory_of_pc()), Imm((block.2 - block.1) as i64)));
 
         // Increase instret
-        let mem_of_instret = (Register::RBP + offset_of!(crate::riscv::interp::Context, instret) as i32).qword();
+        let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
         self.emit(Add(Mem(mem_of_instret), Imm(opblock.len() as i64)));
 
         // Increase minstret, the immediate is a placeholder and will be patched later
         // Note minstret is not precisely tracked in case of exception
-        let mem_of_minstret = (Register::RBP + offset_of!(crate::riscv::interp::Context, minstret) as i32).qword();
+        let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
         self.emit(Add(Mem(mem_of_minstret), Imm(0x77777777)));
         let fixup = self.enc.buffer.len();
 
@@ -1268,7 +1269,7 @@ impl DbtCompiler {
             }
 
             if !cfg!(feature = "fast") {
-                let cache_line_size = 1 << crate::riscv::interp::CACHE_LINE_LOG2_SIZE;
+                let cache_line_size = 1 << crate::emu::interp::CACHE_LINE_LOG2_SIZE;
                 if cur_pc & (cache_line_size - 1) == 0 || cur_pc & (cache_line_size - 1) == cache_line_size - 2 {
                     self.emit_icache_access(block.2 - cur_pc);
                 }

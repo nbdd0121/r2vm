@@ -3,16 +3,13 @@ extern crate log;
 extern crate pretty_env_logger;
 extern crate rand;
 extern crate fnv;
-#[macro_use]
-extern crate num_derive;
-extern crate num_traits;
 extern crate byteorder;
 
 extern crate softfp;
 extern crate p9;
 extern crate x86;
+extern crate riscv;
 
-pub mod riscv;
 pub mod io;
 #[macro_use]
 pub mod util;
@@ -107,7 +104,7 @@ pub fn get_flags() -> &'static Flags {
     }
 }
 
-pub static mut CONTEXTS: &'static mut [*mut riscv::interp::Context] = &mut [];
+pub static mut CONTEXTS: &'static mut [*mut emu::interp::Context] = &mut [];
 
 #[no_mangle]
 extern "C" fn interrupt(id: usize, level: bool) {
@@ -248,7 +245,7 @@ pub fn main() {
         emu::init();
     }
 
-    let mut ctx = riscv::interp::Context {
+    let mut ctx = emu::interp::Context {
         registers: [0xCCCCCCCCCCCCCCCC; 32],
         fp_registers: [0xFFFFFFFFFFFFFFFF; 32],
         fcsr: 0,
@@ -273,11 +270,11 @@ pub fn main() {
         prv: 0,
         hartid: 0,
         minstret: 0,
-        line: [riscv::interp::CacheLine {
+        line: [emu::interp::CacheLine {
             tag: i64::max_value() as u64,
             paddr: 0
         }; 1024],
-        i_line: [riscv::interp::CacheLine {
+        i_line: [emu::interp::CacheLine {
             tag: i64::max_value() as u64,
             paddr: 0
         }; 1024],
