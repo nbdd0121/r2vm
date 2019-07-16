@@ -21,6 +21,7 @@ pub trait Inode: Clone {
 pub trait FileSystem {
     type File: Inode;
 
+    fn statfs(&mut self, file: &mut Self::File) -> Result<serialize::StatFs>;
     fn attach(&mut self) -> Result<Self::File>;
     fn getattr(&mut self, file: &mut Self::File) -> Result<serialize::Stat>;
     fn walk(&mut self, file: &mut Self::File, path: &str) -> Result<Self::File>;
@@ -54,6 +55,10 @@ impl<T: FileSystem> P9Handler<T> {
                 self.fs.open(file, flags &! 0o100000)?;
                 let qid = file.qid();
                 Fcall::Rlopen { qid, iounit: self.iounit }
+            }
+            Fcall::Tstatfs { fid } => {
+                let file = self.fids.get_mut(&fid).unwrap();
+                Fcall::Rstatfs { stat: self.fs.statfs(file)? }
             }
             Fcall::Tgetattr { fid, request_mask } => {
                 let file = self.fids.get_mut(&fid).unwrap();

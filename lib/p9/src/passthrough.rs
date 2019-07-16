@@ -1,12 +1,14 @@
 
 
-use super::serialize::{Qid, Stat};
+use super::serialize::{Qid, Stat, StatFs};
 use super::{FileSystem, Inode};
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::ffi::OsStrExt;
 use std::fs::ReadDir;
 use std::io::Read;
 use std::time::SystemTime;
+use std::ffi::CString;
 
 pub struct File {
     path: PathBuf,
@@ -55,6 +57,29 @@ impl Inode for File {
 
 impl FileSystem for Passthrough {
     type File = File;
+
+    fn statfs(&mut self, file: &mut Self::File) -> std::io::Result<StatFs> {
+        let path_str_c = CString::new(file.path.as_os_str().as_bytes()).unwrap();
+        unsafe {
+            let mut buf: libc::statvfs = std::mem::uninitialized();
+            // We use statvfs over statfs because statfs's f_fsid has type fsid_t but we need to
+            // return u64.
+            if libc::statvfs(path_str_c.as_ptr(), &mut buf) != 0 {
+                return Err(std::io::Error::last_os_error())
+            }
+            Ok(StatFs {
+                r#type: 0,
+                bsize: buf.f_bsize as _,
+                blocks: buf.f_blocks,
+                bfree: buf.f_bfree,
+                bavail: buf.f_bavail,
+                files: buf.f_files,
+                ffree: buf.f_ffree,
+                fsid: buf.f_fsid as _,
+                namelen: buf.f_namemax as _,
+            })
+        }
+    }
 
     fn attach(&mut self) -> std::io::Result<Self::File> {
         let pathbuf = self.0.clone();

@@ -39,12 +39,24 @@ pub struct Stat {
     pub ctime: SystemTime,
 }
 
+#[derive(Debug)]
+pub struct StatFs {
+    pub r#type: u32,
+    pub bsize: u32,
+    pub blocks: u64,
+    pub bfree: u64,
+    pub bavail: u64,
+    pub files: u64,
+    pub ffree: u64,
+    pub fsid: u64,
+    pub namelen: u32,
+}
 
 #[derive(Debug)]
 pub enum Fcall {
     Rlerror { ecode: u32 },
     Tstatfs { fid: u32 },
-    Rstatfs {/*TODO*/},
+    Rstatfs { stat: StatFs },
     Tlopen { fid: u32, flags: u32 },
     Rlopen { qid: Qid, iounit: u32 },
     Tlcreate { fid: u32, name: String, flags: u32, mode: u32, gid: u32 },
@@ -239,6 +251,22 @@ impl Serializable for Stat {
     }
 }
 
+impl Serializable for StatFs {
+    fn decode(_reader: &mut dyn Read) -> Result<Self> { unimplemented!() }
+
+    fn encode(&self, writer: &mut dyn Write) -> Result<()> {
+        self.r#type.encode(writer)?;
+        self.bsize.encode(writer)?;
+        self.blocks.encode(writer)?;
+        self.bfree.encode(writer)?;
+        self.bavail.encode(writer)?;
+        self.files.encode(writer)?;
+        self.ffree.encode(writer)?;
+        self.fsid.encode(writer)?;
+        self.namelen.encode(writer)
+    }
+}
+
 impl Serializable for (u16, Fcall) {
     fn decode(reader: &mut dyn Read) -> Result<(u16, Fcall)> {
         macro_rules! decode {
@@ -354,6 +382,7 @@ impl Serializable for (u16, Fcall) {
     fn encode(&self, writer: &mut dyn Write) -> Result<()> {
         let msg_type = match self.1 {
             Fcall::Rlerror {..} => 7,
+            Fcall::Rstatfs {..} => 9,
             Fcall::Rlopen {..} => 13,
             Fcall::Rgetattr {..} => 25,
             Fcall::Rreaddir {..} => 41,
@@ -371,6 +400,9 @@ impl Serializable for (u16, Fcall) {
         match &self.1 {
             Fcall::Rlerror { ecode } => {
                 writer.write_u32::<LE>(*ecode)?;
+            }
+            Fcall::Rstatfs { stat } => {
+                stat.encode(writer)?;
             }
             Fcall::Rlopen { qid, iounit } => {
                 qid.encode(writer)?;
