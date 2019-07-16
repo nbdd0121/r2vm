@@ -1,5 +1,5 @@
-use std::fmt;
-use std::convert::TryFrom;
+use core::fmt;
+use core::convert::TryFrom;
 use num_traits::FromPrimitive;
 
 #[repr(u16)]

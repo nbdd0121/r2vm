@@ -176,6 +176,7 @@ pub fn mnemonic(op: &Op) -> &'static str {
     }
 }
 
+#[cfg(feature = "std")]
 pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
     let mnemonic = mnemonic(inst);
 

@@ -1,4 +1,4 @@
-use std::convert::TryInto;
+use core::convert::TryInto;
 
 use super::op::Op;
 
@@ -220,7 +220,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                     Op::Sd { rs1: c_rs1s(bits), rs2: c_rs2s(bits), imm: cs_sd_imm(bits) }
                 }
                 // full case
-                _ => unsafe { std::hint::unreachable_unchecked() },
+                _ => unsafe { core::hint::unreachable_unchecked() },
             }
         }
         0b01 => {
@@ -300,7 +300,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                                 0b10 => Op::Or { rd: rs1, rs1, rs2 },
                                 0b11 => Op::And { rd: rs1, rs1, rs2 },
                                 // full case
-                                _ => unsafe { std::hint::unreachable_unchecked() },
+                                _ => unsafe { core::hint::unreachable_unchecked() },
                             }
                         } else {
                             // C.SUBW
@@ -313,7 +313,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                             }
                         }
                         // full case
-                        _ => unsafe { std::hint::unreachable_unchecked() },
+                        _ => unsafe { core::hint::unreachable_unchecked() },
                     }
                 }
                 0b101 => {
@@ -336,7 +336,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                     Op::Bne { rs1: c_rs1s(bits), rs2: 0, imm: cb_imm(bits) + 2 }
                 }
                 // full case
-                _ => unsafe { std::hint::unreachable_unchecked() },
+                _ => unsafe { core::hint::unreachable_unchecked() },
             }
         }
         0b10 => {
@@ -426,7 +426,7 @@ pub fn decode_compressed(bits: u16) -> Op {
                     Op::Sd { rs1: 2, rs2: c_rs2(bits), imm: css_sdsp_imm(bits) }
                 }
                 // full case
-                _ => unsafe { std::hint::unreachable_unchecked() },
+                _ => unsafe { core::hint::unreachable_unchecked() },
             }
         }
         _ => unreachable!(),
@@ -496,7 +496,7 @@ pub fn decode(bits: u32) -> Op {
                 0b110 => Op::Ori { rd, rs1, imm },
                 0b111 => Op::Andi { rd, rs1, imm },
                 // full case
-                _ => unsafe { std::hint::unreachable_unchecked() }
+                _ => unsafe { core::hint::unreachable_unchecked() }
             }
         }
 
@@ -612,7 +612,7 @@ pub fn decode(bits: u32) -> Op {
                     0b110 => Op::Rem { rd, rs1, rs2 },
                     0b111 => Op::Remu { rd, rs1, rs2 },
                     // full case
-                    _ => unsafe { std::hint::unreachable_unchecked() },
+                    _ => unsafe { core::hint::unreachable_unchecked() },
                 }
                 0b0000000 => match function {
                     0b000 => Op::Add { rd, rs1, rs2 },
@@ -624,7 +624,7 @@ pub fn decode(bits: u32) -> Op {
                     0b110 => Op::Or { rd, rs1, rs2 },
                     0b111 => Op::And { rd, rs1, rs2 },
                     // full case
-                    _ => unsafe { std::hint::unreachable_unchecked() },
+                    _ => unsafe { core::hint::unreachable_unchecked() },
                 }
                 0b0100000 => match function {
                     0b000 => Op::Sub { rd, rs1, rs2 },
@@ -856,7 +856,7 @@ pub fn decode(bits: u32) -> Op {
                         0b101 => Op::Csrrwi { rd, imm: rs1, csr },
                         0b110 => Op::Csrrsi { rd, imm: rs1, csr },
                         0b111 => Op::Csrrci { rd, imm: rs1, csr },
-                        _ => unsafe { std::hint::unreachable_unchecked() },
+                        _ => unsafe { core::hint::unreachable_unchecked() },
                     }
                 }
             }
