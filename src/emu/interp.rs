@@ -391,13 +391,23 @@ extern "C" fn handle_trap(ctx: &mut Context, pc: usize) {
 /// cache when we see them because flushing the cache is very expensive, and modifying code in
 /// icache is relatively rare.
 /// 
-/// It is challenging to implememtn a DBT code cache, beca
+/// It is very difficult to remove entries from the code cache, as there might be another hart
+/// actively executing the code. To avoid messing around this scenario, we does not allow individual
+/// cached blocks to be removed. Instead, we simply discard the pointer into the code cache so the
+/// invalidated block will no longer be used in the future.
 /// 
-/// We
+/// To avoid infinite growth of the cache, we will flush the cache if the amount of DBT-ed code
+/// get large. This is achieved by partitioning the whole memory into two halves. Whenever we
+/// cross the boundary and start allocating on the other half, we flush all pointers into the
+/// code cache. The code currently executing will return after their current basic block is
+/// finished, so we don't have to worry about overwriting code that is currently executing (
+/// we cannot fill the entire half in a basic block's time). The allocating block will span two
+/// partitions, but we don't have to worry about this, as it uses the very end of one half, so
+/// next flush when crossing boundary again will invalidate it while not overwriting it.
 /// 
-/// We partition the whole icache memory into two halves. When
-/// 
-/// We achieve this by
+/// Things may be a lot more complicated if we start to implement basic block chaining for extra
+/// speedup. In that case we probably need some pseudo-IPI stuff to make sure nobody is executing
+/// flushed or overwritten basic blocks.
 static mut ICACHE: Option<BTreeMap<u64, &'static DbtBlock>> = None;
 
 unsafe fn icache() -> &'static mut BTreeMap<u64, &'static DbtBlock> {
