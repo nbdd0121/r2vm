@@ -252,8 +252,8 @@ pub fn main() {
         instret: 0,
         lr_addr: 0,
         lr_value: 0,
-        // UXL = 0b10, indicating 64-bit
-        sstatus: 0x200000000,
+        // FPU turned on by default
+        sstatus: 0x6000,
         scause: 0,
         sepc: 0,
         stval: 0,

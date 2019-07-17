@@ -542,10 +542,6 @@ impl DbtCompiler {
         if rs1 == 0 { return self.emit_load_imm(rd, imm as i64) }
         if imm == 0 { return self.emit_move32(rd, rs1) }
 
-        if rd == rs1 {
-            return self.emit(Add(Mem(memory_of_register(rd)), Imm(imm as i64)))
-        }
-
         self.load_to_eax(rs1);
         self.emit(Add(Reg(Register::EAX), Imm(imm as i64)));
         self.store_from_eax(rd);
@@ -779,7 +775,8 @@ impl DbtCompiler {
 
     fn emit_or(&mut self, rd: u8, rs1: u8, rs2: u8) {
         if rd == 0 { return }
-        if rs1 == 0 || rs2 == 0 { return self.emit_move(rd, rs2) }
+        if rs1 == 0 { return self.emit_move(rd, rs2) }
+        if rs2 == 0 { return self.emit_move(rd, rs1) }
         if rs1 == rs2 { return self.emit_move(rd, rs1) }
 
         if rd == rs1 {
@@ -801,8 +798,7 @@ impl DbtCompiler {
 
     fn emit_and(&mut self, rd: u8, rs1: u8, rs2: u8) {
         if rd == 0 { return }
-        if rs1 == 0 { return self.emit_load_imm(rd, 0) }
-        if rs2 == 0 { return self.emit_load_imm(rd, 0) }
+        if rs1 == 0 || rs2 == 0 { return self.emit_load_imm(rd, 0) }
         if rs1 == rs2 { return self.emit_move(rd, rs1) }
 
         if rd == rs1 {
@@ -929,7 +925,7 @@ impl DbtCompiler {
 
         // Load value to register and multiply.
         self.emit(Mov(Reg(Register::RCX), OpMem(memory_of_register(rs1))));
-        self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
+        self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs2))));
         self.emit(Mov(Reg(Register::RAX), OpReg(Register::RCX)));
         self.emit(Mul(Reg(Register::RSI)));
 
