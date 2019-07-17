@@ -4,6 +4,9 @@ pub use split_int::SplitInt;
 mod code;
 pub use code::Code;
 
+mod atomic_min_max;
+pub use atomic_min_max::AtomicMinMax;
+
 macro_rules! offset_of {
     ($ty:ty, $field:ident) => {
         unsafe { &(*(0 as *const $ty)).$field as *const _ as usize }

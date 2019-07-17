@@ -1,6 +1,9 @@
 use riscv::{Op, Csr};
 use softfp::{self, F32, F64};
 use std::convert::TryInto;
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicI64, AtomicU64};
+use std::sync::atomic::Ordering as MemOrder;
+use crate::util::AtomicMinMax;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -697,7 +700,7 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Ori { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) | (imm as u64)),
         Op::Andi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) & (imm as u64)),
         /* MISC-MEM */
-        Op::Fence => (),
+        Op::Fence => std::sync::atomic::fence(MemOrder::SeqCst),
         Op::FenceI => ctx.clear_local_icache(),
         /* OP-IMM-32 */
         Op::Addiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64),
@@ -1277,12 +1280,11 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
 
         /* A-extension */
-        // Stub implementations. Single thread only.
         Op::LrW { rd, rs1 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
-            let paddr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            let value = *paddr as i32 as u64;
+            let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
+            let value = ptr.load(MemOrder::SeqCst) as i32 as u64;
             write_reg!(rd, value);
             ctx.lr_addr = addr;
             ctx.lr_value = value;
@@ -1290,8 +1292,8 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::LrD { rd, rs1 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
-            let paddr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            let value = *paddr;
+            let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
+            let value = ptr.load(MemOrder::SeqCst);
             write_reg!(rd, value);
             ctx.lr_addr = addr;
             ctx.lr_value = value;
@@ -1299,188 +1301,176 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::ScW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
-            let paddr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            if addr != ctx.lr_addr || *paddr != ctx.lr_value as u32 {
-                write_reg!(rd, 1)
+            let src = read_reg!(rs2) as u32;
+            let result = if addr != ctx.lr_addr {
+                1
             } else {
-                *paddr = read_reg!(rs2) as u32;
-                write_reg!(rd, 0)
-            }
+                let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
+                match ptr.compare_exchange(ctx.lr_value as u32, src, MemOrder::SeqCst, MemOrder::SeqCst) {
+                    Ok(_) => 0,
+                    Err(_) => 1,
+                }
+            };
+            write_reg!(rd, result);
         }
         Op::ScD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
-            let paddr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            if addr != ctx.lr_addr || *paddr != ctx.lr_value {
-                write_reg!(rd, 1)
+            let src = read_reg!(rs2);
+            let result = if addr != ctx.lr_addr {
+                1
             } else {
-                *paddr = read_reg!(rs2);
-                write_reg!(rd, 0)
-            }
+                let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
+                match ptr.compare_exchange(ctx.lr_value, src, MemOrder::SeqCst, MemOrder::SeqCst) {
+                    Ok(_) => 0,
+                    Err(_) => 1,
+                }
+            };
+            write_reg!(rd, result)
         }
         Op::AmoswapW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            if rd != 0 {
-                write_reg!(rd, *ptr as i32 as u64);
-            }
-            *ptr = src;
+            let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
+            let current = ptr.swap(src, MemOrder::SeqCst);
+            write_32!(rd, current);
         }
         Op::AmoswapD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            if rd != 0 {
-                write_reg!(rd, *ptr);
-            }
-            *ptr = src;
+            let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
+            let current = ptr.swap(src, MemOrder::SeqCst);
+            write_reg!(rd, current);
         }
         Op::AmoaddW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current as i32 as u64);
-            *ptr = current.wrapping_add(src);
+            let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
+            let current = ptr.fetch_add(src, MemOrder::SeqCst);
+            write_32!(rd, current);
         }
         Op::AmoaddD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            let current = *ptr;
+            let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
+            let current = ptr.fetch_add(src, MemOrder::SeqCst);
             write_reg!(rd, current);
-            *ptr = current.wrapping_add(src);
         }
         Op::AmoandW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current as i32 as u64);
-            *ptr = current & src;
+            let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
+            let current = ptr.fetch_and(src, MemOrder::SeqCst);
+            write_32!(rd, current);
         }
         Op::AmoandD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            let current = *ptr;
+            let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
+            let current = ptr.fetch_and(src, MemOrder::SeqCst);
             write_reg!(rd, current);
-            *ptr = current & src;
         }
         Op::AmoorW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current as i32 as u64);
-            *ptr = current | src;
+            let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
+            let current = ptr.fetch_or(src, MemOrder::SeqCst);
+            write_32!(rd, current);
         }
         Op::AmoorD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            let current = *ptr;
+            let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
+            let current = ptr.fetch_or(src, MemOrder::SeqCst);
             write_reg!(rd, current);
-            *ptr = current | src;
         }
         Op::AmoxorW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current as i32 as u64);
-            *ptr = current ^ src;
+            let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
+            let current = ptr.fetch_xor(src, MemOrder::SeqCst);
+            write_32!(rd, current);
         }
         Op::AmoxorD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            let current = *ptr;
+            let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
+            let current = ptr.fetch_xor(src, MemOrder::SeqCst);
             write_reg!(rd, current);
-            *ptr = current ^ src;
         }
         Op::AmominW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current as i32 as u64);
-            *ptr = i32::min(current as i32, src as i32) as u32;
+            let ptr = ptr_vaddr_x::<AtomicI32>(ctx, addr)?;
+            let current = ptr.fetch_min_stable(src as i32, MemOrder::SeqCst);
+            write_32!(rd, current as u32);
         }
         Op::AmominD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current);
-            *ptr = i64::min(current as i64, src as i64) as u64;
+            let ptr = ptr_vaddr_x::<AtomicI64>(ctx, addr)?;
+            let current = ptr.fetch_min_stable(src as i64, MemOrder::SeqCst);
+            write_reg!(rd, current as u64);
         }
         Op::AmomaxW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current as i32 as u64);
-            *ptr = i32::max(current as i32, src as i32) as u32;
+            let ptr = ptr_vaddr_x::<AtomicI32>(ctx, addr)?;
+            let current = ptr.fetch_max_stable(src as i32, MemOrder::SeqCst);
+            write_32!(rd, current as u32);
         }
         Op::AmomaxD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current);
-            *ptr = i64::max(current as i64, src as i64) as u64;
+            let ptr = ptr_vaddr_x::<AtomicI64>(ctx, addr)?;
+            let current = ptr.fetch_max_stable(src as i64, MemOrder::SeqCst);
+            write_reg!(rd, current as u64);
         }
         Op::AmominuW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current as i32 as u64);
-            *ptr = u32::min(current, src);
+            let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
+            let current = ptr.fetch_min_stable(src, MemOrder::SeqCst);
+            write_32!(rd, current);
         }
         Op::AmominuD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            let current = *ptr;
+            let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
+            let current = ptr.fetch_min_stable(src, MemOrder::SeqCst);
             write_reg!(rd, current);
-            *ptr = u64::min(current, src);
         }
         Op::AmomaxuW { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
-            let ptr = ptr_vaddr_x::<u32>(ctx, addr)?;
-            let current = *ptr;
-            write_reg!(rd, current as i32 as u64);
-            *ptr = u32::max(current, src);
+            let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
+            let current = ptr.fetch_max_stable(src, MemOrder::SeqCst);
+            write_32!(rd, current);
         }
         Op::AmomaxuD { rd, rs1, rs2 } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
-            let ptr = ptr_vaddr_x::<u64>(ctx, addr)?;
-            let current = *ptr;
+            let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
+            let current = ptr.fetch_max_stable(src, MemOrder::SeqCst);
             write_reg!(rd, current);
-            *ptr = u64::max(current, src);
         }
 
         /* Privileged */
