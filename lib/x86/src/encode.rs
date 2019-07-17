@@ -665,6 +665,7 @@ impl Encoder {
             Op::Shr(dst, src) => self.emit_shift(dst, src, 5),
             Op::Sar(dst, src) => self.emit_shift(dst, src, 7),
 
+            Op::Illegal => { self.emit_u8(0x0F); self.emit_u8(0x0B); }
             Op::Call(target) => self.emit_call(target),
             Op::Cdqe => { self.emit_u8(0x48); self.emit_u8(0x98); }
             Op::Cmovcc(dst, src, cc) => {
@@ -690,6 +691,7 @@ impl Encoder {
             Op::Jcc(target, cc) => self.emit_jcc(target, cc),
             Op::Jmp(target) => self.emit_jmp(target),
             Op::Lea(dst, src) => self.emit_lea(dst, src),
+            Op::Mfence => { self.emit_u8(0x0F); self.emit_u8(0xAE); self.emit_u8(0xF0); }
             Op::Mov(dst, src) => self.emit_mov(dst, src),
             Op::Movabs(dst, src) => self.emit_movabs(dst, src),
             Op::Movsx(dst, src) => self.emit_movsx(dst, src),
@@ -704,7 +706,6 @@ impl Encoder {
             Op::Setcc(dst, cc) => self.emit_setcc(dst, cc),
             Op::Test(dst, src) => self.emit_test(dst, src),
             Op::Xchg(dst, src) => self.emit_xchg(dst, src),
-            _ => unreachable!(),
         }
     }
 }

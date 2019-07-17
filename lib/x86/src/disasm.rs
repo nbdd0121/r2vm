@@ -18,6 +18,7 @@ pub fn mnemonic(op: &Op) -> &'static str {
         Op::Jcc {..} => "jcc",
         Op::Jmp {..} => "jmp",
         Op::Lea {..} => "lea",
+        Op::Mfence {..} => "mfence",
         Op::Mov {..} => "mov",
         Op::Movabs {..} => "movabs",
         Op::Movsx {..} => "movsx",
@@ -74,6 +75,7 @@ pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
         Op::Cdqe |
         Op::Cdq |
         Op::Cqo |
+        Op::Mfence => (),
         Op::Nop => (),
         Op::Add(dst, src) |
         Op::And(dst, src) |

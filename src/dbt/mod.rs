@@ -1068,7 +1068,7 @@ impl DbtCompiler {
             Op::Ori { rd, rs1, imm } => self.emit_ori(rd, rs1, imm),
             Op::Andi { rd, rs1, imm } => self.emit_andi(rd, rs1, imm),
             /* MISC-MEM */
-            Op::Fence => (),
+            Op::Fence => self.emit(Mfence),
             Op::FenceI => self.emit_step_call(op),
             /* OP-IMM-32 */
             Op::Addiw { rd, rs1, imm } => self.emit_addiw(rd, rs1, imm),

@@ -393,6 +393,7 @@ pub enum Op {
     Jcc(i32, ConditionCode),
     Jmp(Operand),
     Lea(Register, Memory),
+    Mfence,
     Mov(Location, Operand),
     /// mov instruction with absolute address as src or dst
     Movabs(Operand, Operand),
