@@ -54,14 +54,14 @@ pub fn init() {
     }
 }
 
-#[inline(always)]
-pub unsafe fn read_memory_unsafe<T: Copy>(addr: u64) -> T {
+// TODO: Remove these 4 functions
+
+unsafe fn read_memory_unsafe<T: Copy>(addr: u64) -> T {
     let ptr = addr as usize as *const T;
     std::ptr::read_volatile(ptr)
 }
 
-#[inline(always)]
-pub unsafe fn write_memory_unsafe<T: Copy>(addr: u64, value: T) {
+unsafe fn write_memory_unsafe<T: Copy>(addr: u64, value: T) {
     let ptr = addr as usize as *mut T;
     std::ptr::write_volatile(ptr, value)
 }

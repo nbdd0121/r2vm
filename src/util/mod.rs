@@ -1,9 +1,6 @@
 mod split_int;
 pub use split_int::SplitInt;
 
-mod code;
-pub use code::Code;
-
 mod atomic_min_max;
 pub use atomic_min_max::AtomicMinMax;
 
