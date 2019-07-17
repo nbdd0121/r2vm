@@ -15,9 +15,44 @@ pub struct CacheLine {
     pub paddr: u64,
 }
 
+#[repr(C)]
+pub struct SharedContext {
+    /// Interrupts currently pending. SIP is a very special register when doing simulation,
+    /// because it could be updated from outside a running hart.
+    /// * When an external interrupt asserts, it should be **OR**ed with corresponding bit.
+    /// * When an external interrupt deasserts, it should be **AND**ed with a mask.
+    pub sip: AtomicU64,
+}
+
+impl SharedContext {
+    pub fn new() -> Self {
+        SharedContext {
+            sip: AtomicU64::new(0),
+        }
+    }
+
+    /// Assert interrupt using the given mask.
+    pub fn assert(&self, mask: u64) {
+        if self.sip.fetch_or(mask, MemOrder::Relaxed) & mask != mask {
+        }
+    }
+
+    /// Deassert interrupt using the given mask.
+    pub fn deassert(&self, mask: u64) {
+        self.sip.fetch_and(!mask, MemOrder::Relaxed);
+    }
+}
+
+/// Make #[derive(Clone)] happy for Context
+impl Clone for SharedContext {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
 /// Context representing the CPU state of a RISC-V hart.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Context {
     pub registers: [u64; 32],
     pub pc: u64,
@@ -28,6 +63,8 @@ pub struct Context {
     // in assembly.
     pub pending: u64,
     pub pending_tval: u64,
+
+    pub shared: SharedContext,
 
     // Floating point states
     pub fp_registers: [u64; 32],
@@ -45,7 +82,6 @@ pub struct Context {
     pub sepc: u64,
     pub scause: u64,
     pub stval: u64,
-    pub sip: u64,
     pub satp: u64,
 
     pub timecmp: u64,
@@ -86,7 +122,7 @@ impl Context {
         if (self.pending as i64) > 0 { return }
 
         // Find out which interrupts can be taken
-        let interrupt_mask = if (self.sstatus & 0x2) != 0 { self.sip & self.sie } else { 0 };
+        let interrupt_mask = if (self.sstatus & 0x2) != 0 { self.shared.sip.load(MemOrder::Relaxed) & self.sie } else { 0 };
         // No interrupt pending
         if interrupt_mask == 0 {
             self.pending = 0;
@@ -155,7 +191,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
         Csr::Sepc => ctx.sepc,
         Csr::Scause => ctx.scause,
         Csr::Stval => ctx.stval,
-        Csr::Sip => ctx.sip,
+        Csr::Sip => ctx.shared.sip.load(MemOrder::Relaxed),
         Csr::Satp => ctx.satp,
         _ => {
             error!("read illegal csr {:x}", csr as i32);
@@ -210,7 +246,11 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
         Csr::Stval => ctx.stval = value,
         Csr::Sip => {
             // Only SSIP flag can be cleared by software
-            ctx.sip = ctx.sip &! 0x2 | value & 0x2;
+            if value & 0x2 != 0 {
+                ctx.shared.sip.fetch_or(0x2, MemOrder::Relaxed);
+            } else {
+                ctx.shared.sip.fetch_and(!0x2, MemOrder::Relaxed);
+            }
             ctx.update_pending();
         }
         Csr::Satp => {
@@ -495,13 +535,13 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
     match nr {
         0 => {
             ctx.timecmp = arg0 * 100;
-            ctx.sip &= !32;
+            ctx.shared.deassert(32);
             // No need to update pending as we are deasserting sip
             let ctx_ptr = ctx as *mut Context;
             crate::event_loop().queue(ctx.timecmp, Box::new(move || {
                 let ctx = unsafe{ &mut *ctx_ptr };
                 if crate::event_loop().cycle() >= ctx.timecmp {
-                    ctx.sip |= 32;
+                    ctx.shared.assert(32);
                     ctx.update_pending();
                 }
             }));
@@ -513,7 +553,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
         }
         2 => crate::io::console::console_getchar() as u64,
         3 => {
-            ctx.sip &= !2;
+            ctx.shared.deassert(2);
             ctx.update_pending();
             0
         }

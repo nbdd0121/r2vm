@@ -110,10 +110,10 @@ pub static mut CONTEXTS: &'static mut [*mut emu::interp::Context] = &mut [];
 extern "C" fn interrupt(id: usize, level: bool) {
     let ctx = unsafe { &mut *CONTEXTS[id] };
     if level {
-        ctx.sip |= 512;
+        ctx.shared.assert(512);
         ctx.update_pending();
     } else {
-        ctx.sip &= !512;
+        ctx.shared.deassert(512);
     }
 }
 
@@ -122,7 +122,7 @@ unsafe extern "C" fn send_ipi(mask: u64) {
     for i in 0..CONTEXTS.len() {
         let actx = &mut *CONTEXTS[i];
         if (mask & (1 << i)) == 0 { continue }
-        actx.sip |= 2;
+        actx.shared.assert(2);
         actx.update_pending();
     }
 }
@@ -246,6 +246,7 @@ pub fn main() {
     }
 
     let mut ctx = emu::interp::Context {
+        shared: emu::interp::SharedContext::new(),
         registers: [0xCCCCCCCCCCCCCCCC; 32],
         fp_registers: [0xFFFFFFFFFFFFFFFF; 32],
         fcsr: 0,
@@ -258,7 +259,6 @@ pub fn main() {
         sepc: 0,
         stval: 0,
         satp: 0,
-        sip: 0,
         sie: 0,
         sscratch: 0,
         stvec: 0,
@@ -300,7 +300,7 @@ pub fn main() {
     fibers.push(event_fiber);
 
     for i in 0..num_cores {
-        let mut newctx = ctx;
+        let mut newctx = ctx.clone();
         newctx.registers[10] = i as u64;
         newctx.hartid = i as u64;
 
