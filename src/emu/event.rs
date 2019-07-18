@@ -49,6 +49,17 @@ extern {
     fn fiber_event_loop();
 }
 
+#[inline(always)]
+fn scaling_const() -> u64 {
+    if cfg!(feature = "thread") {
+        4000
+    } else if cfg!(feature = "fast") {
+        20
+    } else {
+        100
+    }
+}
+
 impl EventLoop {
     /// Create a new event loop.
     pub fn new() -> EventLoop {
@@ -76,10 +87,10 @@ impl EventLoop {
 
     /// Add a new event to the event loop for triggering. If it happens in the past it will be
     /// dequeued and triggered as soon as `cycle` increments for the next time.
-    pub fn queue(&self, time: u64, handler: Box<Fn()->()>) {
+    pub fn queue(&self, cycle: u64, handler: Box<Fn()->()>) {
         let mut guard = self.events.lock().unwrap();
         guard.push(Entry {
-            time,
+            time: cycle,
             handler,
         });
         // It's okay to be relaxed because guard's release op will order it.
@@ -87,6 +98,16 @@ impl EventLoop {
             Some(it) => it.time,
             None => u64::max_value(),
         }, Ordering::Relaxed);
+    }
+
+    /// Query the current time (we pretend to be operating at 100MHz at the moment)
+    #[inline(always)]
+    pub fn time(&self) -> u64 {
+        self.cycle() / scaling_const()
+    }
+
+    pub fn queue_time(&self, time: u64, handler: Box<Fn()->()>) {
+        self.queue(time * scaling_const(), handler);
     }
 }
 

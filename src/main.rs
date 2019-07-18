@@ -296,14 +296,24 @@ pub fn main() {
         fibers.push(fiber);
     }
 
-    // Chain fibers together
-    for i in 0..num_cores {
-        let fiber = &fibers[i];
-        let fiber2 = &fibers[i + 1];
-        fiber.chain(fiber2);
-    }
-
     unsafe { CONTEXTS = Box::leak(contexts.into_boxed_slice()) }
+
+    if cfg!(not(feature = "thread")) {
+        // Chain fibers together
+        for i in 0..num_cores {
+            let fiber = &fibers[i];
+            let fiber2 = &fibers[i + 1];
+            fiber.chain(fiber2);
+        }
+    } else {
+        // Chain fibers together
+        for i in 0..num_cores {
+            let fiber = fibers[i+1];
+            std::thread::spawn(move || {
+                unsafe { fiber.enter() }
+            });
+        }
+    }
 
     unsafe { fibers[0].enter() }
 }

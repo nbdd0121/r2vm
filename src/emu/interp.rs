@@ -194,8 +194,8 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
             ctx.test_and_set_fs()?;
             ctx.fcsr
         }
-        // Pretend that we're 100MHz
-        Csr::Time => crate::event_loop().cycle() / if cfg!(feature = "fast") { 20 } else { 100 },
+        Csr::Cycle => crate::event_loop().cycle(),
+        Csr::Time => crate::event_loop().time(),
         // We assume the instret is incremented already
         Csr::Instret => ctx.instret - 1,
         Csr::Sstatus => {
@@ -547,10 +547,10 @@ fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
 fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     match nr {
         0 => {
-            ctx.timecmp = arg0 * if cfg!(feature = "fast") { 20 } else { 100 };
+            ctx.timecmp = arg0;
             ctx.shared.deassert(32);
             let shared_ctx = unsafe { &*(&ctx.shared as *const SharedContext) };
-            crate::event_loop().queue(ctx.timecmp, Box::new(move || {
+            crate::event_loop().queue_time(arg0, Box::new(move || {
                 shared_ctx.alert()
             }));
             0
@@ -1694,7 +1694,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
 pub fn check_interrupt(ctx: &mut Context) {
     let _ = ctx.shared.new_interrupts.swap(0, MemOrder::Acquire);
 
-    if crate::event_loop().cycle() >= ctx.timecmp {
+    if crate::event_loop().time() >= ctx.timecmp {
         ctx.shared.sip.fetch_or(32, MemOrder::Relaxed);
     }
 

@@ -18,7 +18,10 @@ struct FiberStack {
     prev: usize,
 }
 
+#[derive(Clone, Copy)]
 pub struct Fiber(*mut FiberStack);
+
+unsafe impl Send for Fiber {}
 
 impl Fiber {
     pub fn new() -> Fiber {
