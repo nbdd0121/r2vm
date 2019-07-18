@@ -46,6 +46,9 @@ pub struct SharedContext {
 
 impl SharedContext {
     pub fn new() -> Self {
+        // Check the constant used in helper.s
+        assert_eq!(offset_of!(Context, scause), 32 * 8 + 32);
+
         SharedContext {
             sip: AtomicU64::new(0),
             new_interrupts: AtomicU64::new(0),
@@ -96,11 +99,10 @@ pub struct Context {
 
     pub shared: SharedContext,
 
-    // Pending trap
     // Note that changing the position of this field would need to change the hard-fixed constant
     // in assembly.
-    pub pending: u64,
-    pub pending_tval: u64,
+    pub scause: u64,
+    pub stval: u64,
 
     // Floating point states
     pub fp_registers: [u64; 32],
@@ -116,8 +118,6 @@ pub struct Context {
     pub stvec: u64,
     pub sscratch: u64,
     pub sepc: u64,
-    pub scause: u64,
-    pub stval: u64,
     pub satp: u64,
 
     pub timecmp: u64,
@@ -155,8 +155,8 @@ impl Context {
 
     pub fn test_and_set_fs(&mut self) -> Result<(), ()> {
         if self.sstatus & 0x6000 == 0 {
-            self.pending = 2;
-            self.pending_tval = 0;
+            self.scause = 2;
+            self.stval = 0;
             return Err(())
         }
         self.sstatus |= 0x6000;
@@ -177,8 +177,8 @@ impl Context {
 /// * U-mode code does not access floating point CSRs with FS == Off.
 fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
     if ctx.prv < csr.min_prv_level() as _ {
-        ctx.pending = 2;
-        ctx.pending_tval = 0;
+        ctx.scause = 2;
+        ctx.stval = 0;
         return Err(())
     }
     Ok(match csr {
@@ -217,8 +217,8 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
         Csr::Satp => ctx.satp,
         _ => {
             error!("read illegal csr {:x}", csr as i32);
-            ctx.pending = 2;
-            ctx.pending_tval = 0;
+            ctx.scause = 2;
+            ctx.stval = 0;
             return Err(())
         }
     })
@@ -226,8 +226,8 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
 
 fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
     if csr.readonly() || ctx.prv < csr.min_prv_level() as _ {
-        ctx.pending = 2;
-        ctx.pending_tval = 0;
+        ctx.scause = 2;
+        ctx.stval = 0;
         return Err(())
     }
     match csr {
@@ -247,7 +247,6 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
         Csr::Sstatus => {
             // Mask-out non-writable bits
             ctx.sstatus = value & 0xC6122;
-            // Update ctx.pending. Important!
             if ctx.interrupt_pending() !=0 { ctx.shared.alert() }
             // XXX: When MXR or SUM is changed, also clear local cache
         }
@@ -288,8 +287,8 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
         }
         _ => {
             error!("write illegal csr {:x} = {:x}", csr as i32, value);
-            ctx.pending = 2;
-            ctx.pending_tval = 0;
+            ctx.scause = 2;
+            ctx.stval = 0;
             return Err(())
         }
     }
@@ -335,8 +334,8 @@ fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let out = match translate(ctx, addr, false) {
         Err(trap) => {
-            ctx.pending = trap as u64;
-            ctx.pending_tval = addr;
+            ctx.scause = trap as u64;
+            ctx.stval = addr;
             return Err(())
         }
         Ok(out) => out,
@@ -370,8 +369,8 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let out = match translate(ctx, addr, write) {
         Err(trap) => {
-            ctx.pending = trap as u64;
-            ctx.pending_tval = addr;
+            ctx.scause = trap as u64;
+            ctx.stval = addr;
             return Err(())
         }
         Ok(out) => out,
@@ -708,8 +707,8 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     }
     macro_rules! trap {
         ($cause: expr, $tval: expr) => {{
-            ctx.pending = $cause;
-            ctx.pending_tval = $tval;
+            ctx.scause = $cause;
+            ctx.stval = $tval;
             return Err(())
         }}
     }
@@ -1706,16 +1705,13 @@ pub fn check_interrupt(ctx: &mut Context) {
     // Find out which interrupts can be taken
     let interrupt_mask = ctx.interrupt_pending();
     // No interrupt pending
-    if interrupt_mask == 0 {
-        ctx.pending = 0;
-        return
-    }
+    if interrupt_mask == 0 { return }
     // Find the highest priority interrupt
     let pending = 63 - interrupt_mask.leading_zeros() as u64;
     // Interrupts have the highest bit set
     // TODO: Reconsider atomicity
-    ctx.pending = (1 << 63) | pending;
-    ctx.pending_tval = 0;
+    ctx.scause = (1 << 63) | pending;
+    ctx.stval = 0;
     trap(ctx);
 }
 
@@ -1723,7 +1719,7 @@ pub fn check_interrupt(ctx: &mut Context) {
 #[no_mangle]
 pub fn trap(ctx: &mut Context) {
     if crate::get_flags().user_only {
-        eprintln!("unhandled trap {:x}, tval = {:x}", ctx.pending, ctx.pending_tval);
+        eprintln!("unhandled trap {:x}, tval = {:x}", ctx.scause, ctx.stval);
         eprintln!("pc  = {:16x}  ra  = {:16x}", ctx.pc, ctx.registers[1]);
         for i in (2..32).step_by(2) {
             eprintln!(
@@ -1735,8 +1731,6 @@ pub fn trap(ctx: &mut Context) {
         std::process::exit(1);
     }
 
-    ctx.scause = ctx.pending;
-    ctx.stval = ctx.pending_tval;
     ctx.sepc = ctx.pc;
 
     // Clear or set SPP bit
@@ -1756,7 +1750,6 @@ pub fn trap(ctx: &mut Context) {
     }
     // Clear SIE
     ctx.sstatus &= !0x2;
-    ctx.pending = 0;
     // Switch to S-mode
     ctx.prv = 1;
     ctx.pc = ctx.stvec;

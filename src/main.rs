@@ -245,8 +245,6 @@ pub fn main() {
         sie: 0,
         sscratch: 0,
         stvec: 0,
-        pending: 0,
-        pending_tval: 0,
         timecmp: u64::max_value(),
         // These are set by setup_mem, so we don't really care now.
         pc: 0,

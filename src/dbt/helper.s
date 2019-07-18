@@ -11,7 +11,7 @@
 .global helper_misalign
 helper_misalign:
     add edx, 4
-    # Set pending and pending_tval
+    # Set scause and stval
     mov [rbp + 32 * 8 + 32], rdx
     mov [rbp + 32 * 8 + 40], rsi
     # Fall-through to helper_trap
