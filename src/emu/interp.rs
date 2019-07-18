@@ -17,10 +17,10 @@ pub struct CacheLine {
 
 #[repr(C)]
 pub struct SharedContext {
-    /// This field stored interrupts that are not yet seen by the current hart. Interrupts can be
-    /// masked by setting SIE register or SSTATUS.SIE, yet we couldn't atomically fetch these
-    /// registers and determine if the hart should be interrupted if we are not the unique owner
-    /// of `Context`. The field exists to mitigate it.
+    /// This field stored wether there are interrupts not yet seen by the current hart. Interrupts
+    /// can be masked by setting SIE register or SSTATUS.SIE, yet we couldn't atomically fetch
+    /// these registers and determine if the hart should be interrupted if we are not the unique
+    /// owner of `Context`. The field exists to mitigate it.
     ///
     /// Our solution is to have the `new_interrupts` field. It is asserted when an external
     /// interrupt arrives, similar to SIP. This field will be periodically checked by the running
@@ -58,7 +58,7 @@ impl SharedContext {
     /// Assert interrupt using the given mask.
     pub fn assert(&self, mask: u64) {
         if self.sip.fetch_or(mask, MemOrder::Relaxed) & mask != mask {
-            self.new_interrupts.fetch_or(mask, MemOrder::Release);
+            self.alert();
         }
     }
 
@@ -195,7 +195,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
             ctx.fcsr
         }
         // Pretend that we're 100MHz
-        Csr::Time => crate::event_loop().cycle() / 100,
+        Csr::Time => crate::event_loop().cycle() / if cfg!(feature = "fast") { 20 } else { 100 },
         // We assume the instret is incremented already
         Csr::Instret => ctx.instret - 1,
         Csr::Sstatus => {
@@ -553,15 +553,11 @@ fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
 fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     match nr {
         0 => {
-            ctx.timecmp = arg0 * 100;
+            ctx.timecmp = arg0 * if cfg!(feature = "fast") { 20 } else { 100 };
             ctx.shared.deassert(32);
-            // No need to update pending as we are deasserting sip
-            let ctx_ptr = ctx as *mut Context;
+            let shared_ctx = unsafe { &*(&ctx.shared as *const SharedContext) };
             crate::event_loop().queue(ctx.timecmp, Box::new(move || {
-                let ctx = unsafe{ &mut *ctx_ptr };
-                if crate::event_loop().cycle() >= ctx.timecmp {
-                    ctx.shared.assert(32);
-                }
+                shared_ctx.alert()
             }));
             0
         }
@@ -1701,6 +1697,10 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
 /// Check if an enabled interrupt is pending, and take it if so.
 pub fn check_interrupt(ctx: &mut Context) {
     let _ = ctx.shared.new_interrupts.swap(0, MemOrder::Acquire);
+
+    if crate::event_loop().cycle() >= ctx.timecmp {
+        ctx.shared.sip.fetch_or(32, MemOrder::Relaxed);
+    }
 
     // Find out which interrupts can be taken
     let interrupt_mask = ctx.interrupt_pending();
