@@ -106,25 +106,8 @@ pub fn get_flags() -> &'static Flags {
 
 pub static mut CONTEXTS: &'static mut [*mut emu::interp::Context] = &mut [];
 
-#[no_mangle]
-extern "C" fn interrupt(id: usize, level: bool) {
-    let ctx = unsafe { &mut *CONTEXTS[id] };
-    if level {
-        ctx.shared.assert(512);
-        ctx.update_pending();
-    } else {
-        ctx.shared.deassert(512);
-    }
-}
-
-#[no_mangle]
-unsafe extern "C" fn send_ipi(mask: u64) {
-    for i in 0..CONTEXTS.len() {
-        let actx = &mut *CONTEXTS[i];
-        if (mask & (1 << i)) == 0 { continue }
-        actx.shared.assert(2);
-        actx.update_pending();
-    }
+pub fn shared_context(id: usize) -> &'static emu::interp::SharedContext {
+    unsafe { &(*CONTEXTS[id]).shared }
 }
 
 static mut EVENT_LOOP: *const emu::EventLoop = std::ptr::null_mut();

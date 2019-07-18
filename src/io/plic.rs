@@ -16,10 +16,6 @@ const ADDR_CONTEXT_SIZE          : usize = 0x1000;
 const OFFSET_PRIORITY_THRESHOLD  : usize = 0x000;
 const OFFSET_INTERRUPT_CLAIM     : usize = 0x004;
 
-extern {
-    fn interrupt(ctx: usize, level: bool);
-}
-
 /// An implementation of SiFive's PLIC controller. We support 31 interrupts at the moment.
 pub struct Plic {
     priority: [u8; 32],
@@ -62,7 +58,11 @@ impl Plic {
 
     fn recompute_pending(&mut self) {
         for ctx in 0..self.enable.len() {
-            unsafe { interrupt(ctx, self.pending(ctx)) }
+            if self.pending(ctx) {
+                crate::shared_context(ctx).assert(512);
+            } else {
+                crate::shared_context(ctx).deassert(512);
+            }
         }
     }
 

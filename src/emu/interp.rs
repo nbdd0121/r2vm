@@ -17,6 +17,26 @@ pub struct CacheLine {
 
 #[repr(C)]
 pub struct SharedContext {
+    /// This field stored interrupts that are not yet seen by the current hart. Interrupts can be
+    /// masked by setting SIE register or SSTATUS.SIE, yet we couldn't atomically fetch these
+    /// registers and determine if the hart should be interrupted if we are not the unique owner
+    /// of `Context`. The field exists to mitigate it.
+    ///
+    /// Our solution is to have the `new_interrupts` field. It is asserted when an external
+    /// interrupt arrives, similar to SIP. This field will be periodically checked by the running
+    /// hart, and the hart will stop and interrupt itself if this field is not zero, and check if
+    /// it actually should take an interrupt, or the interrupt is indeed masked out. It will then
+    /// reset this field to 0. By doing so, it woundn't need to check interrupts later.
+    ///
+    /// Timer interrupts are treated a little bit differently. To avoid to deal with atomicity
+    /// issues related to `mtimecmp`, we make `mtimecmp` local to the hart. Instead, when we think
+    /// there might be a new timer interrupt, we set the corresponding bit in `new_interrupts`.
+    /// The hart will check and set `sip` if there is indeed a timer interrupt.
+    ///
+    /// Technically a bool is sufficient because we only need zero check. However we prefer to keep
+    /// everything with same size and align so we will have AtomicU64 at the moment.
+    pub new_interrupts: AtomicU64,
+
     /// Interrupts currently pending. SIP is a very special register when doing simulation,
     /// because it could be updated from outside a running hart.
     /// * When an external interrupt asserts, it should be **OR**ed with corresponding bit.
@@ -28,18 +48,26 @@ impl SharedContext {
     pub fn new() -> Self {
         SharedContext {
             sip: AtomicU64::new(0),
+            new_interrupts: AtomicU64::new(0),
         }
     }
 
     /// Assert interrupt using the given mask.
     pub fn assert(&self, mask: u64) {
         if self.sip.fetch_or(mask, MemOrder::Relaxed) & mask != mask {
+            self.new_interrupts.fetch_or(mask, MemOrder::Release);
         }
     }
 
     /// Deassert interrupt using the given mask.
     pub fn deassert(&self, mask: u64) {
         self.sip.fetch_and(!mask, MemOrder::Relaxed);
+    }
+
+    /// Inform the hart that there might be a pending interrupt, but without actually touching
+    /// `sip`. This should be called, e.g. if SIE or SSTATUS is modified.
+    pub fn alert(&self) {
+        self.new_interrupts.fetch_or(1, MemOrder::Release);
     }
 }
 
@@ -51,6 +79,14 @@ impl Clone for SharedContext {
 }
 
 /// Context representing the CPU state of a RISC-V hart.
+///
+/// # Memory Layout
+/// As this structure is going to be accessed directly by assembly, it is important that the fields
+/// are ordered well, so it can produce more optimal assembly code. We use the following order:
+/// * Firstly, most commonly accessed fields are placed at the front, for example, registers,
+///   counters, etc.
+/// * After that, we place a shared contexts.
+/// * All other items are placed at the back.
 #[repr(C)]
 #[derive(Clone)]
 pub struct Context {
@@ -58,13 +94,13 @@ pub struct Context {
     pub pc: u64,
     pub instret: u64,
 
+    pub shared: SharedContext,
+
     // Pending trap
     // Note that changing the position of this field would need to change the hard-fixed constant
     // in assembly.
     pub pending: u64,
     pub pending_tval: u64,
-
-    pub shared: SharedContext,
 
     // Floating point states
     pub fp_registers: [u64; 32],
@@ -117,25 +153,6 @@ impl Context {
         }
     }
 
-    pub fn update_pending(&mut self) {
-        // If there is a trap already pending, then we couldn't take interrupt
-        if (self.pending as i64) > 0 { return }
-
-        // Find out which interrupts can be taken
-        let interrupt_mask = if (self.sstatus & 0x2) != 0 { self.shared.sip.load(MemOrder::Relaxed) & self.sie } else { 0 };
-        // No interrupt pending
-        if interrupt_mask == 0 {
-            self.pending = 0;
-            return
-        }
-        // Find the highest priority interrupt
-        let pending = 63 - interrupt_mask.leading_zeros() as u64;
-        // Interrupts have the highest bit set
-        // TODO: Reconsider atomicity
-        self.pending = (1 << 63) | pending;
-        self.pending_tval = 0;
-    }
-
     pub fn test_and_set_fs(&mut self) -> Result<(), ()> {
         if self.sstatus & 0x6000 == 0 {
             self.pending = 2;
@@ -144,6 +161,11 @@ impl Context {
         }
         self.sstatus |= 0x6000;
         Ok(())
+    }
+
+    /// Obtaining a bitmask of pending interrupts
+    pub fn interrupt_pending(&mut self) -> u64 {
+        if (self.sstatus & 0x2) != 0 { self.shared.sip.load(MemOrder::Relaxed) & self.sie } else { 0 }
     }
 }
 
@@ -226,12 +248,12 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
             // Mask-out non-writable bits
             ctx.sstatus = value & 0xC6122;
             // Update ctx.pending. Important!
-            ctx.update_pending();
+            if ctx.interrupt_pending() !=0 { ctx.shared.alert() }
             // XXX: When MXR or SUM is changed, also clear local cache
         }
         Csr::Sie => {
             ctx.sie = value;
-            ctx.update_pending();
+            if ctx.interrupt_pending() != 0 { ctx.shared.alert() }
         }
         Csr::Stvec => {
             // We support MODE 0 only at the moment
@@ -247,11 +269,10 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
         Csr::Sip => {
             // Only SSIP flag can be cleared by software
             if value & 0x2 != 0 {
-                ctx.shared.sip.fetch_or(0x2, MemOrder::Relaxed);
+                ctx.shared.assert(2);
             } else {
-                ctx.shared.sip.fetch_and(!0x2, MemOrder::Relaxed);
+                ctx.shared.deassert(2);
             }
-            ctx.update_pending();
         }
         Csr::Satp => {
             match value >> 60 {
@@ -513,7 +534,6 @@ impl Heap {
 }
 
 extern {
-    fn send_ipi(mask: u64);
     #[allow(dead_code)]
     fn fiber_interp_block();
 }
@@ -542,7 +562,6 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
                 let ctx = unsafe{ &mut *ctx_ptr };
                 if crate::event_loop().cycle() >= ctx.timecmp {
                     ctx.shared.assert(32);
-                    ctx.update_pending();
                 }
             }));
             0
@@ -554,12 +573,14 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
         2 => crate::io::console::console_getchar() as u64,
         3 => {
             ctx.shared.deassert(2);
-            ctx.update_pending();
             0
         }
         4 => {
             let mask: u64 = crate::emu::read_memory(translate(ctx, arg0, false).unwrap());
-            unsafe { send_ipi(mask) };
+            for i in 0..unsafe{crate::CONTEXTS.len()} {
+                if mask & (1 << i) == 0 { continue }
+                crate::shared_context(i).assert(2);
+            }
             0
         }
         5 => {
@@ -1675,6 +1696,27 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
 
     ctx.cur_block = Some(dbtblk);
     unsafe { std::mem::transmute(dbtblk.code.as_ptr() as usize) }
+}
+
+#[no_mangle]
+/// Check if an enabled interrupt is pending, and take it if so.
+pub fn check_interrupt(ctx: &mut Context) {
+    let _ = ctx.shared.new_interrupts.swap(0, MemOrder::Acquire);
+
+    // Find out which interrupts can be taken
+    let interrupt_mask = ctx.interrupt_pending();
+    // No interrupt pending
+    if interrupt_mask == 0 {
+        ctx.pending = 0;
+        return
+    }
+    // Find the highest priority interrupt
+    let pending = 63 - interrupt_mask.leading_zeros() as u64;
+    // Interrupts have the highest bit set
+    // TODO: Reconsider atomicity
+    ctx.pending = (1 << 63) | pending;
+    ctx.pending_tval = 0;
+    trap(ctx);
 }
 
 /// Trigger a trap. pc must be already adjusted properly before calling.

@@ -59,6 +59,7 @@ fiber_start:
 
 .extern find_block
 .extern trap
+.extern check_interrupt
 .global fiber_interp_run
 fiber_interp_run:
     mov rdi, rbp
@@ -72,7 +73,7 @@ fiber_interp_run:
     jmp fiber_interp_run
 1:
     mov rdi, rbp
-    call trap
+    call check_interrupt
     jmp 2b
 
 .extern interp_block
