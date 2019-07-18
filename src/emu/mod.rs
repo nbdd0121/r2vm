@@ -7,6 +7,7 @@ pub mod interp;
 mod abi;
 mod event;
 mod syscall;
+mod dbt;
 pub mod signal;
 pub mod loader;
 pub use event::EventLoop;

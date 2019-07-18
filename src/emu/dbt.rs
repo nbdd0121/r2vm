@@ -9,7 +9,7 @@
 use crate::x86::{Op as X86Op, Op::*, Register, Memory, Size, ConditionCode};
 use crate::x86::builder::*;
 use crate::riscv::Op;
-use crate::emu::interp::Context;
+use super::interp::Context;
 
 /// Reverse translate AMD64 program counter into RISC-V program counter.
 /// `host_pc_offset` should be the PC offset in relation to `self.code`.
@@ -205,7 +205,7 @@ impl DbtCompiler {
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(crate::emu::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(super::interp::CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
@@ -244,7 +244,7 @@ impl DbtCompiler {
         // 3 bytes
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
         // 4 bytes
-        self.emit(Shr(Reg(Register::RCX), Imm(crate::emu::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(super::interp::CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         // 2 bytes
@@ -307,7 +307,7 @@ impl DbtCompiler {
         // 3 bytes
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
         // 4 bytes
-        self.emit(Shr(Reg(Register::RCX), Imm(crate::emu::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(super::interp::CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         // 2 bytes
@@ -1265,7 +1265,7 @@ impl DbtCompiler {
             }
 
             if cfg!(not(feature = "fast")) {
-                let cache_line_size = 1 << crate::emu::interp::CACHE_LINE_LOG2_SIZE;
+                let cache_line_size = 1 << super::interp::CACHE_LINE_LOG2_SIZE;
                 if cur_pc & (cache_line_size - 1) == 0 || cur_pc & (cache_line_size - 1) == cache_line_size - 2 {
                     self.emit_icache_access(block.2 - cur_pc);
                 }

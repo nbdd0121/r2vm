@@ -439,11 +439,12 @@ pub struct DbtBlock {
 #[no_mangle]
 extern "C" fn handle_trap(ctx: &mut Context, pc: usize) {
     let blk = ctx.cur_block.unwrap();
-    let i = crate::dbt::get_index_by_pc(&blk.pc_map, pc - blk.code.as_ptr() as usize);
+    let i = super::dbt::get_index_by_pc(&blk.pc_map, pc - blk.code.as_ptr() as usize);
     for j in i..blk.block.len() {
         ctx.pc -= if blk.block[j].1 { 2 } else { 4 };
     }
     ctx.instret -= (blk.block.len() - i) as u64;
+    trap(ctx);
 }
 
 /// DBT-ed instruction cache
@@ -1662,7 +1663,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             let op_slice = unsafe { code_cache.alloc_slice(vec.len()) };
             op_slice.copy_from_slice(&vec);
 
-            let mut compiler = crate::dbt::DbtCompiler::new();
+            let mut compiler = super::dbt::DbtCompiler::new();
             compiler.compile((&op_slice, start, end));
             
             let code = unsafe { code_cache.alloc_slice(compiler.enc.buffer.len()) };
@@ -1712,7 +1713,6 @@ pub fn check_interrupt(ctx: &mut Context) {
 }
 
 /// Trigger a trap. pc must be already adjusted properly before calling.
-#[no_mangle]
 pub fn trap(ctx: &mut Context) {
     if crate::get_flags().user_only {
         eprintln!("unhandled trap {:x}, tval = {:x}", ctx.scause, ctx.stval);

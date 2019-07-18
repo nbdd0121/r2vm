@@ -2,7 +2,6 @@
 
 .global helper_trap
 .extern handle_trap
-.extern trap
 
 # All helper functions are called with RSP misaligned to 16-byte boundary
 # So when return address is pushed, they are properly aligned
@@ -22,9 +21,6 @@ helper_trap:
     # RDI -> trapping PC. Do not pop here as it will cause misalignment
     mov rsi, [rsp]
     call handle_trap
-    # For synchronous traps, take them now instead of falling back to the main loop.
-    mov rdi, rbp
-    call trap
     # Pop out trapping PC
     add rsp, 8
     ret

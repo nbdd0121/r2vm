@@ -18,7 +18,6 @@ pub mod io;
 pub mod util;
 pub mod emu;
 pub mod fiber;
-pub mod dbt;
 
 use std::ffi::{CString};
 use std::ptr;
