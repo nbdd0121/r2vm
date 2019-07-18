@@ -1566,7 +1566,7 @@ extern "C" fn interp_block(ctx: &mut Context) {
         // The instruction is on a new cache line, force an access to I$
         let cache_line_size = 1 << CACHE_LINE_LOG2_SIZE;
         if ctx.pc & (cache_line_size - 1) == 0 || ctx.pc & (cache_line_size - 1) == cache_line_size - 2 {
-            let _ = insn_translate(ctx, ctx.pc);
+            insn_translate(ctx, ctx.pc).unwrap();
         }
 
         let (ref inst, compressed) = dbtblk.block[i];
@@ -1576,6 +1576,7 @@ extern "C" fn interp_block(ctx: &mut Context) {
             Err(()) => {
                 ctx.pc = ctx.pc - if compressed { 2 } else { 4 };
                 ctx.instret -= (dbtblk.block.len() - i) as u64;
+                trap(ctx);
                 return;
             }
         }
@@ -1632,7 +1633,10 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
     let pc = ctx.pc;
     let phys_pc = match insn_translate(ctx, pc) {
         Ok(pc) => pc,
-        Err(_) => return no_op,
+        Err(_) => {
+            trap(ctx);
+            return no_op
+        }
     };
     let dbtblk: &DbtBlock = match unsafe { icache().get(&phys_pc) } {
         Some(v) => v,
