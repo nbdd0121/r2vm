@@ -30,14 +30,14 @@ const ADDR_CONFIG_GENERATION   : usize = 0x0fc;
 const ADDR_CONFIG              : usize = 0x100;
 
 pub struct Mmio {
-    device: Box<dyn Device>,
+    device: Box<dyn Device + Send>,
     device_features_sel: bool,
     driver_features_sel: bool,
     queue_sel: usize,
 }
 
 impl Mmio {
-    pub fn new(dev: Box<dyn Device>) -> Mmio {
+    pub fn new(dev: Box<dyn Device + Send>) -> Mmio {
         Mmio {
             device: dev,
             device_features_sel: false,

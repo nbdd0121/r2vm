@@ -21,11 +21,11 @@ pub struct Block {
     status: u32,
     queue: Queue,
     config: [u8; 8],
-    file: Box<dyn BlockDevice>,
+    file: Box<dyn BlockDevice + Send>,
 }
 
 impl Block {
-    pub fn new(mut file: Box<dyn BlockDevice>) -> Block {
+    pub fn new(mut file: Box<dyn BlockDevice + Send>) -> Block {
         let len = file.len().unwrap();
         if len % 512 != 0 {
             panic!("Size of block device must be multiple of 512 bytes");
@@ -93,7 +93,7 @@ impl Device for Block {
         }
 
         // TODO
-        unsafe { crate::emu::PLIC.as_mut().unwrap().trigger(1) };
+        crate::emu::PLIC.lock().trigger(1);
     }
 
 }

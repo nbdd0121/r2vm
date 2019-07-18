@@ -384,7 +384,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
         let start = page.saturating_sub(4096);
         let end = page + 4096;
         {
-            let mut icache = icache();
+            let mut icache = ICACHE.lock();
             let keys: Vec<u64> = icache.range(start .. end).map(|(k,_)|*k).collect();
             for key in keys {
                 icache.remove(&key);
@@ -477,13 +477,7 @@ lazy_static! {
     static ref ICACHE: spin::Mutex<BTreeMap<u64, &'static DbtBlock>> = {
         spin::Mutex::new(BTreeMap::default())
     };
-}
 
-fn icache() -> spin::MutexGuard<'static, BTreeMap<u64, &'static DbtBlock>> {
-    ICACHE.lock()
-}
-
-lazy_static! {
     static ref CODE_CACHE: spin::Mutex<Heap> = {
         spin::Mutex::new(Heap::new())
     };
@@ -512,7 +506,8 @@ impl Heap {
         };
 
         if rollover {
-            icache().clear()
+            let mut icache = ICACHE.lock();
+            icache.clear()
         }
 
         let ret = self.1 + self.0;
@@ -1653,7 +1648,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             return no_op
         }
     };
-    let dbtblk: &DbtBlock = match { let icache = icache(); icache.get(&phys_pc).map(|x|*x) } {
+    let dbtblk: &DbtBlock = match { let icache = ICACHE.lock(); icache.get(&phys_pc).map(|x|*x) } {
         Some(v) => v,
         None => {
             // Ignore error in this case
@@ -1684,7 +1679,8 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
                 pc_start: start,
                 pc_end: end,
             };
-            icache().insert(phys_pc, block);
+            let mut icache = ICACHE.lock();
+            icache.insert(phys_pc, block);
             block
         }
     };

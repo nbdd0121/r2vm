@@ -5,12 +5,12 @@ use rand::SeedableRng;
 pub struct Rng {
     status: u32,
     queue: Queue,
-    rng: Box<dyn rand::RngCore>,
+    rng: Box<dyn rand::RngCore + Send>,
 }
 
 impl Rng {
     /// Create a virtio entropy source device using a given random number generator.
-    pub fn new(rng: Box<dyn rand::RngCore>) -> Rng {
+    pub fn new(rng: Box<dyn rand::RngCore + Send>) -> Rng {
         Rng {
             status: 0,
             queue: Queue::new(),
@@ -53,6 +53,6 @@ impl Device for Rng {
             unsafe { self.queue.put(buffer); }
         }
 
-        unsafe { crate::emu::PLIC.as_mut().unwrap().trigger(2) };
+        crate::emu::PLIC.lock().trigger(2);
     }
 }

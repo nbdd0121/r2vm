@@ -74,7 +74,7 @@ impl Device for P9 {
         }
 
         // TODO
-        unsafe { crate::emu::PLIC.as_mut().unwrap().trigger(3) };
+        crate::emu::PLIC.lock().trigger(3);
     }
 
 }

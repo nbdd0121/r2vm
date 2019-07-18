@@ -24,3 +24,19 @@ pub trait IoMemory {
     /// e.g. when `size` is 4, the least significant 2 bits of `addr` should be zero.
     fn write(&mut self, addr: usize, value: u64, size: u32);
 }
+
+/// An IoMemory which is synchronised internally, so it is suitable for multi-threaded access.
+pub trait IoMemorySync: Sync {
+    fn read_sync(&self, addr: usize, size: u32) -> u64;
+    fn write_sync(&self, addr: usize, value: u64, size: u32);
+}
+
+impl IoMemory for IoMemorySync {
+    fn read(&mut self, addr: usize, size: u32) -> u64 { self.read_sync(addr, size) }
+    fn write(&mut self, addr: usize, value: u64, size: u32) { self.write_sync(addr, value, size) }
+}
+
+impl<T: IoMemory + Send> IoMemorySync for spin::Mutex<T> {
+    fn read_sync(&self, addr: usize, size: u32) -> u64 { self.lock().read(addr, size) }
+    fn write_sync(&self, addr: usize, value: u64, size: u32) { self.lock().write(addr, value, size) }
+}
