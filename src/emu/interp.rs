@@ -1572,8 +1572,6 @@ extern "C" fn interp_block(ctx: &mut Context) {
     ctx.instret += dbtblk.block.len() as u64;
 
     for i in 0..dbtblk.block.len() {
-        if i != 0 { crate::fiber::Fiber::sleep(1) }
-
         // The instruction is on a new cache line, force an access to I$
         let cache_line_size = 1 << CACHE_LINE_LOG2_SIZE;
         if ctx.pc & (cache_line_size - 1) == 0 || ctx.pc & (cache_line_size - 1) == cache_line_size - 2 {
@@ -1591,6 +1589,8 @@ extern "C" fn interp_block(ctx: &mut Context) {
                 return;
             }
         }
+
+        crate::fiber::Fiber::sleep(1)
     }
 }
 
@@ -1749,4 +1749,6 @@ pub fn trap(ctx: &mut Context) {
     // Switch to S-mode
     ctx.prv = 1;
     ctx.pc = ctx.stvec;
+
+    crate::fiber::Fiber::sleep(1)
 }

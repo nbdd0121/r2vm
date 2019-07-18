@@ -1258,12 +1258,6 @@ impl DbtCompiler {
         let mut cur_pc = block.1;
 
         for i in 0..opblock.len() {
-            if i != 0 && cfg!(not(feature = "fast")) {
-                let step_fn: usize = fiber_yield_raw as *const () as usize;
-                self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
-                self.emit(Call(OpReg(Register::RAX)));
-            }
-
             if cfg!(not(feature = "fast")) {
                 let cache_line_size = 1 << super::interp::CACHE_LINE_LOG2_SIZE;
                 if cur_pc & (cache_line_size - 1) == 0 || cur_pc & (cache_line_size - 1) == cache_line_size - 2 {
@@ -1281,6 +1275,12 @@ impl DbtCompiler {
             let pc_end = self.enc.buffer.len();
             self.pc_map.push((pc_end - pc_start) as u8);
             pc_start = pc_end;
+
+            if cfg!(not(feature = "fast")) {
+                let step_fn: usize = fiber_yield_raw as *const () as usize;
+                self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
+                self.emit(Call(OpReg(Register::RAX)));
+            }
         }
 
         // Epilogue

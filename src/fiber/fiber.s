@@ -67,14 +67,10 @@ fiber_interp_run:
     call rax
     # Read the pending register
     cmp qword ptr [rbp + 32 * 8 + 16], 0
-    jnz 1f
-2:
-    call fiber_yield_raw
-    jmp fiber_interp_run
-1:
+    jz fiber_interp_run
     mov rdi, rbp
     call check_interrupt
-    jmp 2b
+    jmp fiber_interp_run
 
 .extern interp_block
 .global fiber_interp_block
