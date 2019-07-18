@@ -383,8 +383,8 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
         let page = out >> 12 << 12;
         let start = page.saturating_sub(4096);
         let end = page + 4096;
-        unsafe {
-            let icache = icache();
+        {
+            let mut icache = icache();
             let keys: Vec<u64> = icache.range(start .. end).map(|(k,_)|*k).collect();
             for key in keys {
                 icache.remove(&key);
@@ -471,26 +471,25 @@ extern "C" fn handle_trap(ctx: &mut Context, pc: usize) {
 /// Things may be a lot more complicated if we start to implement basic block chaining for extra
 /// speedup. In that case we probably need some pseudo-IPI stuff to make sure nobody is executing
 /// flushed or overwritten basic blocks.
-static mut ICACHE: Option<BTreeMap<u64, &'static DbtBlock>> = None;
+const HEAP_SIZE: usize = 1024 * 1024 * 128;
 
-unsafe fn icache() -> &'static mut BTreeMap<u64, &'static DbtBlock> {
-    if ICACHE.is_none() {
-        ICACHE = Some(BTreeMap::default())
-    }
-    ICACHE.as_mut().unwrap()
+lazy_static! {
+    static ref ICACHE: spin::Mutex<BTreeMap<u64, &'static DbtBlock>> = {
+        spin::Mutex::new(BTreeMap::default())
+    };
 }
 
-static mut ICACHE_CODE: Option<Heap> = None;
+fn icache() -> spin::MutexGuard<'static, BTreeMap<u64, &'static DbtBlock>> {
+    ICACHE.lock()
+}
 
-unsafe fn icache_code() -> &'static mut Heap {
-    if ICACHE_CODE.is_none() {
-        ICACHE_CODE = Some(Heap::new())
-    }
-    ICACHE_CODE.as_mut().unwrap()
+lazy_static! {
+    static ref CODE_CACHE: spin::Mutex<Heap> = {
+        spin::Mutex::new(Heap::new())
+    };
 }
 
 struct Heap(usize, usize);
-const HEAP_SIZE: usize = 1024 * 1024 * 128;
 
 impl Heap {
     fn new() -> Heap {
@@ -513,7 +512,7 @@ impl Heap {
         };
 
         if rollover {
-            unsafe { icache().clear() }
+            icache().clear()
         }
 
         let ret = self.1 + self.0;
@@ -1654,7 +1653,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             return no_op
         }
     };
-    let dbtblk: &DbtBlock = match unsafe { icache().get(&phys_pc) } {
+    let dbtblk: &DbtBlock = match { let icache = icache(); icache.get(&phys_pc).map(|x|*x) } {
         Some(v) => v,
         None => {
             // Ignore error in this case
@@ -1664,19 +1663,20 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             };
 
             let (vec, start, end) = decode_block(phys_pc, phys_pc_next);
-            let op_slice = unsafe { icache_code().alloc_slice(vec.len()) };
+            let mut code_cache = CODE_CACHE.lock();
+            let op_slice = unsafe { code_cache.alloc_slice(vec.len()) };
             op_slice.copy_from_slice(&vec);
 
             let mut compiler = crate::dbt::DbtCompiler::new();
             compiler.compile((&op_slice, start, end));
             
-            let code = unsafe { icache_code().alloc_slice(compiler.enc.buffer.len()) };
+            let code = unsafe { code_cache.alloc_slice(compiler.enc.buffer.len()) };
             code.copy_from_slice(&compiler.enc.buffer);
 
-            let map = unsafe { icache_code().alloc_slice(compiler.pc_map.len()) };
+            let map = unsafe { code_cache.alloc_slice(compiler.pc_map.len()) };
             map.copy_from_slice(&compiler.pc_map);
 
-            let block = unsafe { icache_code().alloc() };
+            let block = unsafe { code_cache.alloc() };
             *block = DbtBlock {
                 block: op_slice,
                 code: code,
@@ -1684,7 +1684,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
                 pc_start: start,
                 pc_end: end,
             };
-            unsafe { icache().insert(phys_pc, block) };
+            icache().insert(phys_pc, block);
             block
         }
     };

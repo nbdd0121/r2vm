@@ -1,5 +1,8 @@
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate lazy_static;
+extern crate spin;
 extern crate pretty_env_logger;
 extern crate rand;
 extern crate fnv;
