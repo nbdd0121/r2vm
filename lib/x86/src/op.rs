@@ -1,4 +1,5 @@
 use core::fmt::{self, Write};
+use core::convert::TryFrom;
 
 /// Helper for displaying signed hex
 struct Signed(i64);
@@ -347,6 +348,17 @@ impl ConditionCode {
             ConditionCode::Below => ConditionCode::Above,
             ConditionCode::AboveEqual => ConditionCode::BelowEqual,
             cc => cc,
+        }
+    }
+}
+
+impl TryFrom<u8> for ConditionCode {
+    type Error = ();
+    fn try_from(value: u8) -> Result<Self, ()> {
+        if value <= 0xF {
+            Ok(unsafe { core::mem::transmute(value) })
+        } else {
+            Err(())
         }
     }
 }

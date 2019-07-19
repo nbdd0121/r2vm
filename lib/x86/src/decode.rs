@@ -1,6 +1,7 @@
 use super::{Location, Operand, Register, Memory, Size, Op};
 use super::builder::*;
 use super::op::{REG_GPB, REG_GPB2, REG_GPW, REG_GPD, REG_GPQ};
+use core::convert::TryInto;
 
 pub struct Decoder<'a> {
     iter: &'a mut dyn Iterator<Item=u8>,
@@ -196,15 +197,43 @@ impl<'a> Decoder<'a> {
             // These are all RAX short encoded ALU ops
             0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x34 | 0x3C |
             0x80 | 0x88 | 0x8A |
-            0xC0 | 0xD0 | 0xD2 |
+            0xC0 | 0xC6 | 0xD0 | 0xD2 |
             0xF6 => {
                 opcode += 1;
+                opsize = Size::Byte;
+            }
+            0xB0 => {
+                opcode += 8;
                 opsize = Size::Byte;
             }
             _ => (),
         }
 
         match opcode {
+            0x0F40 ..= 0x0F4F => {
+                let cc = (opcode as u8 & 0xF).try_into().unwrap();
+                let (src, dst) = self.modrm(rex, opsize);
+                Op::Cmovcc(dst, src, cc)
+            }
+            0x0F80 ..= 0x0F8F => {
+                let cc = (opcode as u8 & 0xF).try_into().unwrap();
+                Op::Jcc(self.dword() as i32, cc)
+            }
+            0x0F90 ..= 0x0F9F => {
+                let cc = (opcode as u8 & 0xF).try_into().unwrap();
+                let (dst, reg) = self.modrm(rex, Size::Byte);
+                assert!(reg as u8 & 7 == 0);
+                Op::Setcc(dst, cc)
+            }
+            0x0FAE => {
+                let next = self.byte();
+                assert_eq!(next, 0xF0);
+                Op::Mfence
+            }
+            0x0FAF => {
+                let (src, dst) = self.modrm(rex, opsize);
+                Op::Imul2(dst, src)
+            }
             0x0FB6 => {
                 let (src, dst) = self.modrm(rex, opsize);
                 Op::Movzx(dst, src.resize(Size::Byte))
@@ -240,6 +269,10 @@ impl<'a> Decoder<'a> {
                 let (src, dst) = self.modrm(rex, opsize);
                 Op::Movsx(dst, src.resize(Size::Dword))
             }
+            0x70 ..= 0x7F => {
+                let cc = (opcode as u8 & 0xF).try_into().unwrap();
+                Op::Jcc(self.byte() as i8 as i32, cc)
+            }
             0x81 => {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Self::decode_alu(operand, Imm(self.dword() as i32 as i64), reg as u8)
@@ -256,9 +289,31 @@ impl<'a> Decoder<'a> {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Op::Mov(reg.into(), operand.into())
             }
+            0x98 => match opsize {
+                Size::Qword => Op::Cdqe,
+                _ => unimplemented!(),
+            }
+            0x99 => match opsize {
+                Size::Dword => Op::Cdq,
+                Size::Qword => Op::Cqo,
+                _ => unimplemented!(),
+            }
+            0xB8 ..= 0xBF => {
+                let reg_id = if rex & 0x1 != 0 { 8 } else { 0 } | opcode as u8 & 7;
+                let reg = Self::register_of_size(reg_id, opsize, rex);
+                let imm = self.immediate(opsize);
+                Op::Mov(Reg(reg), Imm(imm))
+            }
             0xC1 => {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Self::decode_shift(operand, Imm(self.byte() as i64), reg)
+            }
+            0xC2 => Op::Ret(self.word()),
+            0xC3 => Op::Ret(0),
+            0xC7 => {
+                let (operand, reg) = self.modrm(rex, opsize);
+                if reg as u8 & 7 != 0 { unimplemented!() }
+                Op::Mov(operand, Imm(self.immediate(opsize.cap_to_dword())))
             }
             0xD1 => {
                 let (operand, reg) = self.modrm(rex, opsize);
@@ -268,11 +323,27 @@ impl<'a> Decoder<'a> {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Self::decode_shift(operand, OpReg(Register::CL), reg)
             }
+            0xE9 => Op::Jmp(Imm(self.dword() as i32 as i64)),
+            0xEB => Op::Jmp(Imm(self.byte() as i8 as i64)),
             0xF7 => {
                 let (operand, reg) = self.modrm(rex, opsize);
                 match reg as u8 & 7 {
+                    0 => Op::Test(operand, Imm(self.immediate(opsize.cap_to_dword()))),
+                    2 => Op::Not(operand),
+                    3 => Op::Neg(operand),
+                    4 => Op::Mul(operand),
+                    5 => Op::Imul1(operand),
                     6 => Op::Div(operand),
                     7 => Op::Idiv(operand),
+                    _ => unimplemented!(),
+                }
+            }
+            0xFF => {
+                let (operand, reg) = self.modrm(rex, Size::Qword);
+                match reg as u8 & 7 {
+                    0 => Op::Push(operand.into()),
+                    2 => Op::Call(operand.into()),
+                    4 => Op::Jmp(operand.into()),
                     _ => unimplemented!(),
                 }
             }
