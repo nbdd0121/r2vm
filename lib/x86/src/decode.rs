@@ -18,6 +18,15 @@ impl<'a> Decoder<'a> {
         self.iter.next().unwrap()
     }
 
+    /// Decode a word
+    pub fn word(&mut self) -> u16 {
+        let mut result = 0;
+        for i in 0..2 {
+            result |= (self.byte() as u16) << (i * 8);
+        }
+        result
+    }
+
     /// Decode a dword
     pub fn dword(&mut self) -> u32 {
         let mut result = 0;
@@ -25,6 +34,25 @@ impl<'a> Decoder<'a> {
             result |= (self.byte() as u32) << (i * 8);
         }
         result
+    }
+
+    /// Decode a dword
+    pub fn qword(&mut self) -> u64 {
+        let mut result = 0;
+        for i in 0..8 {
+            result |= (self.byte() as u64) << (i * 8);
+        }
+        result
+    }
+
+    /// Decode an immediate
+    pub fn immediate(&mut self, size: Size) -> i64 {
+        match size {
+            Size::Byte => self.byte() as i8 as i64,
+            Size::Word => self.word() as i16 as i64,
+            Size::Dword => self.dword() as i32 as i64,
+            Size::Qword => self.qword() as i64,
+        }
     }
 
     pub fn register_of_size(reg: u8, size: Size, rex: u8) -> Register {
@@ -107,8 +135,8 @@ impl<'a> Decoder<'a> {
         (Location::Mem(mem), reg)
     }
 
-    fn decode_alu(dst: Location, src: Operand, id: Register) -> Op {
-        match (id as u8) & 7 {
+    fn decode_alu(dst: Location, src: Operand, id: u8) -> Op {
+        match id & 7 {
             0 => Op::Add(dst, src),
             1 => Op::Or (dst, src),
             2 => Op::Adc(dst, src),
@@ -118,6 +146,19 @@ impl<'a> Decoder<'a> {
             6 => Op::Xor(dst, src),
             7 => Op::Cmp(dst, src),
             _ => unsafe { std::hint::unreachable_unchecked() }
+        }
+    }
+
+    fn decode_shift(dst: Location, src: Operand, id: Register) -> Op {
+        match (id as u8) & 7 {
+            // 0 => Op::Rol(dst, src),
+            // 1 => Op::Ror(dst, src),
+            // 2 => Op::Rcl(dst, src),
+            // 3 => Op::Rcr(dst, src),
+            4 => Op::Shl(dst, src),
+            5 => Op::Shr(dst, src),
+            7 => Op::Sar(dst, src),
+            _ => unimplemented!(),
         }
     }
 
@@ -148,7 +189,15 @@ impl<'a> Decoder<'a> {
 
         // Handling byte-sized ops
         match opcode {
-            0x88 | 0x8A | 0xF6 => {
+            // These are all INST r/m, r ALU ops
+            0x00 | 0x08 | 0x10 | 0x18 | 0x20 | 0x28 | 0x30 | 0x38 |
+            // These are all INST r, r/m ALU ops
+            0x02 | 0x0A | 0x12 | 0x1A | 0x22 | 0x2A | 0x32 | 0x3A |
+            // These are all RAX short encoded ALU ops
+            0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x34 | 0x3C |
+            0x80 | 0x88 | 0x8A |
+            0xC0 | 0xD0 | 0xD2 |
+            0xF6 => {
                 opcode += 1;
                 opsize = Size::Byte;
             }
@@ -172,13 +221,32 @@ impl<'a> Decoder<'a> {
                 let (src, dst) = self.modrm(rex, opsize);
                 Op::Movsx(dst, src.resize(Size::Word))
             }
+            // These are all INST r/m, r ALU ops
+            0x01 | 0x09 | 0x11 | 0x19 | 0x21 | 0x29 | 0x31 | 0x39 => {
+                let (dst, src) = self.modrm(rex, opsize);
+                Self::decode_alu(dst, OpReg(src), (opcode as u8) >> 3)
+            }
+            // These are all INST r, r/m ALU ops
+            0x03 | 0x0B | 0x13 | 0x1B | 0x23 | 0x2B | 0x33 | 0x3B => {
+                let (src, dst) = self.modrm(rex, opsize);
+                Self::decode_alu(Reg(dst), src.into(), (opcode as u8) >> 3)
+            }
+            // These are all RAX short encoded ALU ops
+            0x05 | 0x0D | 0x15 | 0x1D | 0x25 | 0x2D | 0x35 | 0x3D => {
+                let imm = self.immediate(opsize.cap_to_dword());
+                Self::decode_alu(Reg(Self::register_of_size(0, opsize, rex)), Imm(imm), (opcode as u8) >> 3)
+            }
             0x63 => {
                 let (src, dst) = self.modrm(rex, opsize);
                 Op::Movsx(dst, src.resize(Size::Dword))
             }
+            0x81 => {
+                let (operand, reg) = self.modrm(rex, opsize);
+                Self::decode_alu(operand, Imm(self.dword() as i32 as i64), reg as u8)
+            }
             0x83 => {
                 let (operand, reg) = self.modrm(rex, opsize);
-                Self::decode_alu(operand, Imm(self.byte() as i8 as i64), reg)
+                Self::decode_alu(operand, Imm(self.byte() as i8 as i64), reg as u8)
             }
             0x89 => {
                 let (operand, reg) = self.modrm(rex, opsize);
@@ -187,6 +255,18 @@ impl<'a> Decoder<'a> {
             0x8B => {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Op::Mov(reg.into(), operand.into())
+            }
+            0xC1 => {
+                let (operand, reg) = self.modrm(rex, opsize);
+                Self::decode_shift(operand, Imm(self.byte() as i64), reg)
+            }
+            0xD1 => {
+                let (operand, reg) = self.modrm(rex, opsize);
+                Self::decode_shift(operand, Imm(1), reg)
+            }
+            0xD3 => {
+                let (operand, reg) = self.modrm(rex, opsize);
+                Self::decode_shift(operand, OpReg(Register::CL), reg)
             }
             0xF7 => {
                 let (operand, reg) = self.modrm(rex, opsize);
