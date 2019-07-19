@@ -1592,6 +1592,8 @@ extern "C" fn interp_block(ctx: &mut Context) {
 
         crate::fiber::Fiber::sleep(1)
     }
+
+    if ctx.shared.new_interrupts.load(MemOrder::Relaxed) != 0 { check_interrupt(ctx) }
 }
 
 fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
@@ -1713,6 +1715,7 @@ pub fn check_interrupt(ctx: &mut Context) {
 }
 
 /// Trigger a trap. pc must be already adjusted properly before calling.
+#[no_mangle]
 pub fn trap(ctx: &mut Context) {
     if crate::get_flags().user_only {
         eprintln!("unhandled trap {:x}, tval = {:x}", ctx.scause, ctx.stval);

@@ -9,7 +9,7 @@
 use crate::x86::{Op as X86Op, Op::*, Register, Memory, Size, ConditionCode};
 use crate::x86::builder::*;
 use crate::riscv::Op;
-use super::interp::Context;
+use super::interp::{Context, SharedContext};
 
 /// Reverse translate AMD64 program counter into RISC-V program counter.
 /// `host_pc_offset` should be the PC offset in relation to `self.code`.
@@ -52,6 +52,8 @@ extern "C" {
 
     #[allow(improper_ctypes)]
     fn helper_icache_miss(ctx: &mut Context, addr: u64);
+
+    fn helper_check_interrupt();
 
     fn helper_misalign();
 
@@ -222,6 +224,17 @@ impl DbtCompiler {
         self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
         // 2 bytes
         self.emit(Call(OpReg(Register::RAX)));
+    }
+
+    fn emit_interrupt_check(&mut self) {
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, new_interrupts);
+        self.emit(Cmp(Mem(Register::RBP + offset as i32), Imm(0)));
+        self.emit(Jcc(12, ConditionCode::Equal));
+        let ffn = helper_check_interrupt as *const () as usize;
+        // 10 bytes
+        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
+        // 2 bytes
+        self.emit(Jmp(OpReg(Register::RAX)));
     }
 
     /// Shared routine for generating load code. Note that this routine does not perform the
@@ -1276,7 +1289,7 @@ impl DbtCompiler {
             self.pc_map.push((pc_end - pc_start) as u8);
             pc_start = pc_end;
 
-            if cfg!(not(feature = "fast")) {
+            if cfg!(not(feature = "fast")) || i == opblock.len() - 1 {
                 let step_fn: usize = fiber_yield_raw as *const () as usize;
                 self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
                 self.emit(Call(OpReg(Register::RAX)));
@@ -1284,6 +1297,7 @@ impl DbtCompiler {
         }
 
         // Epilogue
+        self.emit_interrupt_check();
         self.emit(Ret(0));
 
         // Patch up minstret

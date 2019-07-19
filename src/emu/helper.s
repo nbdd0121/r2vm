@@ -56,3 +56,9 @@ helper_icache_miss:
 1:
     # we're not yet prepared for this
     ud2
+
+.global helper_check_interrupt
+.extern check_interrupt
+helper_check_interrupt:
+    mov rdi, rbp
+    jmp check_interrupt

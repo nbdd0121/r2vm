@@ -65,11 +65,6 @@ fiber_interp_run:
     mov rdi, rbp
     call find_block
     call rax
-    # Read the pending register
-    cmp qword ptr [rbp + 32 * 8 + 16], 0
-    jz fiber_interp_run
-    mov rdi, rbp
-    call check_interrupt
     jmp fiber_interp_run
 
 .extern interp_block
