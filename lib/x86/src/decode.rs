@@ -1,4 +1,4 @@
-use super::{Location, Register, Memory, Size, Op};
+use super::{Location, Operand, Register, Memory, Size, Op};
 use super::builder::*;
 use super::op::{REG_GPB, REG_GPB2, REG_GPW, REG_GPD, REG_GPQ};
 
@@ -107,6 +107,20 @@ impl<'a> Decoder<'a> {
         (Location::Mem(mem), reg)
     }
 
+    fn decode_alu(dst: Location, src: Operand, id: Register) -> Op {
+        match (id as u8) & 7 {
+            0 => Op::Add(dst, src),
+            1 => Op::Or (dst, src),
+            2 => Op::Adc(dst, src),
+            3 => Op::Sbb(dst, src),
+            4 => Op::And(dst, src),
+            5 => Op::Sub(dst, src),
+            6 => Op::Xor(dst, src),
+            7 => Op::Cmp(dst, src),
+            _ => unsafe { std::hint::unreachable_unchecked() }
+        }
+    }
+
     pub fn op(&mut self) -> Op {
         let mut rex = 0;
         let mut opsize = Size::Dword;
@@ -161,6 +175,10 @@ impl<'a> Decoder<'a> {
             0x63 => {
                 let (src, dst) = self.modrm(rex, opsize);
                 Op::Movsx(dst, src.resize(Size::Dword))
+            }
+            0x83 => {
+                let (operand, reg) = self.modrm(rex, opsize);
+                Self::decode_alu(operand, Imm(self.byte() as i8 as i64), reg)
             }
             0x89 => {
                 let (operand, reg) = self.modrm(rex, opsize);

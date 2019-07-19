@@ -378,6 +378,7 @@ impl fmt::Display for ConditionCode {
 #[derive(Clone, Copy)]
 pub enum Op {
     Illegal,
+    Adc(Location, Operand),
     Add(Location, Operand),
     And(Location, Operand),
     Call(Operand),

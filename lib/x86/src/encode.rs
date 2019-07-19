@@ -654,6 +654,7 @@ impl Encoder {
             // ALU instructions
             Op::Add(dst, src) => self.emit_alu(dst, src, 0),
             Op::Or (dst, src) => self.emit_alu(dst, src, 1),
+            Op::Adc(dst, src) => self.emit_alu(dst, src, 2),
             Op::Sbb(dst, src) => self.emit_alu(dst, src, 3),
             Op::And(dst, src) => self.emit_alu(dst, src, 4),
             Op::Sub(dst, src) => self.emit_alu(dst, src, 5),

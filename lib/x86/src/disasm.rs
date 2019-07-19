@@ -3,6 +3,7 @@ use super::{Op};
 pub fn mnemonic(op: &Op) -> &'static str {
     match *op {
         Op::Illegal {..} => "illegal",
+        Op::Adc {..} => "adc",
         Op::Add {..} => "add",
         Op::And {..} => "and",
         Op::Call {..} => "call",
@@ -77,6 +78,7 @@ pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
         Op::Cqo |
         Op::Mfence => (),
         Op::Nop => (),
+        Op::Adc(dst, src) |
         Op::Add(dst, src) |
         Op::And(dst, src) |
         Op::Cmp(dst, src) |
