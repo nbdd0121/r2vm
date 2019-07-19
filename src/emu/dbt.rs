@@ -1336,10 +1336,12 @@ impl DbtCompiler {
         if crate::get_flags().disassemble {
             let mut pc = 0;
             while pc < self.buffer.len() {
-                let mut iter = self.buffer[pc..].iter().map(|x|*x);
-                let mut decoder = crate::x86::Decoder::new(&mut iter);
-                let op = decoder.op();
-                let pc_next = self.buffer.len() - iter.size_hint().0;
+                let mut pc_next = pc;
+                let op = crate::x86::decode(&mut || {
+                    let ret = self.buffer[pc_next];
+                    pc_next += 1;
+                    ret
+                });
                 crate::x86::disasm::print_instr(pc as u64, &self.buffer[pc..pc_next], &op);
                 pc = pc_next;
             }

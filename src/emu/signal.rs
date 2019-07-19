@@ -14,12 +14,13 @@ const REG_LIST: [usize; 16] = [
 
 struct MemReader(usize);
 
-impl Iterator for MemReader {
-    type Item = u8;
-    fn next(&mut self) -> Option<Self::Item> {
-        let ptr = self.0;
-        self.0 += 1;
-        Some(unsafe { *(ptr as *const u8) })
+impl MemReader {
+    fn iter_func<'a>(&'a mut self) -> impl FnMut()->u8 + 'a {
+        move || {
+            let ptr = self.0;
+            self.0 += 1;
+            unsafe { *(ptr as *const u8) }
+        }
     }
 }
 
@@ -100,10 +101,7 @@ unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &m
 
     // Decode the faulting instruction
     let mut reader = MemReader(current_ip as usize);
-    let op = {
-        let mut decoder = crate::x86::Decoder::new(&mut reader);
-        decoder.op()
-    };
+    let op = crate::x86::decode(&mut reader.iter_func());
 
     let opr = match op {
         Op::Div(opr) |
@@ -138,10 +136,7 @@ pub unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ct
 
     // Decode the faulting instruction
     let mut reader = MemReader(current_ip as usize);
-    let op = {
-        let mut decoder = crate::x86::Decoder::new(&mut reader);
-        decoder.op()
-    };
+    let op = crate::x86::decode(&mut reader.iter_func());
 
     // Replay the read/write, as if they are accessing directly to guest physical memory
     match op {

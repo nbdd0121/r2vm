@@ -4,19 +4,13 @@ use super::op::{REG_GPB, REG_GPB2, REG_GPW, REG_GPD, REG_GPQ};
 use core::convert::TryInto;
 
 pub struct Decoder<'a> {
-    iter: &'a mut dyn Iterator<Item=u8>,
+    pub iter: &'a mut dyn FnMut() -> u8,
 }
 
 impl<'a> Decoder<'a> {
-    pub fn new(iter: &'a mut dyn Iterator<Item=u8>) -> Self {
-        Decoder {
-            iter,
-        }
-    }
-
     /// Decode a single byte
     pub fn byte(&mut self) -> u8 {
-        self.iter.next().unwrap()
+        (self.iter)()
     }
 
     /// Decode a word
@@ -352,7 +346,7 @@ impl<'a> Decoder<'a> {
     }
 }
 
-pub fn decode(iter: &mut dyn Iterator<Item=u8>) -> Op {
+pub fn decode(iter: &mut FnMut()->u8) -> Op {
     let mut decoder = Decoder { iter };
     decoder.op()
 }
