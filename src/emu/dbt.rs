@@ -70,12 +70,7 @@ impl DbtCompiler {
     }
 
     fn emit(&mut self, op: X86Op) {
-        let disassemble = crate::get_flags().disassemble;
-        let pc = self.enc.buffer.len();
         self.enc.encode(op);
-        if disassemble {
-            crate::x86::disasm::print_instr(pc as u64, &self.enc.buffer[pc..], &op);
-        }
     }
 
     // #region Helper functions
@@ -1302,5 +1297,17 @@ impl DbtCompiler {
 
         // Patch up minstret
         self.enc.buffer[fixup-4..fixup].copy_from_slice(&self.minstret.to_le_bytes());
+
+        if crate::get_flags().disassemble {
+            let mut pc = 0;
+            while pc < self.enc.buffer.len() {
+                let mut iter = self.enc.buffer[pc..].iter().map(|x|*x);
+                let mut decoder = crate::x86::Decoder::new(&mut iter);
+                let op = decoder.op();
+                let pc_next = self.enc.buffer.len() - iter.size_hint().0;
+                crate::x86::disasm::print_instr(pc as u64, &self.enc.buffer[pc..pc_next], &op);
+                pc = pc_next;
+            }
+        }
     }
 }
