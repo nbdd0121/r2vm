@@ -64,6 +64,7 @@ extern "C" {
 struct Label(usize);
 enum PlaceHolder {
     Byte(usize),
+    Dword(usize),
 }
 
 impl Drop for PlaceHolder {
@@ -90,6 +91,11 @@ impl DbtCompiler {
         PlaceHolder::Byte(self.enc.buffer.len())
     }
 
+    fn emit_jcc_long(&mut self, cc: ConditionCode) -> PlaceHolder {
+        self.enc.encode(Jcc(0x80, cc));
+        PlaceHolder::Dword(self.enc.buffer.len())
+    }
+
     fn emit_jmp_short(&mut self) -> PlaceHolder {
         self.enc.encode(Jmp(Imm(0)));
         PlaceHolder::Byte(self.enc.buffer.len())
@@ -104,6 +110,10 @@ impl DbtCompiler {
             PlaceHolder::Byte(ptr) => {
                 let offset = label.0 as isize - ptr as isize;
                 self.enc.buffer[ptr - 1] = i8::try_from(offset).unwrap() as u8
+            }
+            PlaceHolder::Dword(ptr) => {
+                let offset = i32::try_from(label.0 as isize - ptr as isize).unwrap();
+                self.enc.buffer[ptr-4..ptr].copy_from_slice(&offset.to_le_bytes());
             }
         }
         std::mem::forget(place)
@@ -183,8 +193,6 @@ impl DbtCompiler {
             return;
         }
 
-        self.emit(Xor(Reg(Register::EAX), OpReg(Register::EAX)));
-
         // Compare and set flags.
         // If either operand is 0, it should be treated specially.
         if rs2 == 0 {
@@ -198,10 +206,12 @@ impl DbtCompiler {
             self.emit(Cmp(Reg(Register::RDX), OpMem(memory_of_register(rs2))));
         }
 
-        // If flag set, then change rax to offset of new target
-        self.emit(Mov(Reg(Register::RDX), Imm(imm.wrapping_sub(4) as i64)));
-        self.emit(Cmovcc(Register::RAX, Reg(Register::RDX), cc));
-        self.emit(Add(Mem(memory_of_pc()), OpReg(Register::RAX)));
+        let jcc_not = self.emit_jcc_short(!cc);
+
+        self.emit(Add(Mem(memory_of_pc()), Imm(imm.wrapping_sub(4) as i64)));
+
+        let label_not = self.label();
+        self.patch(jcc_not, label_not);
     }
 
     fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32) {
