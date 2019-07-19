@@ -1,8 +1,8 @@
 use core::convert::TryFrom;
 use super::op::{ConditionCode, Location, Operand, Memory, Register, Op, Size, REG_GPB2, REG_GPQ};
 
-pub struct Encoder {
-    pub buffer: alloc::vec::Vec<u8>,
+pub struct Encoder<'a> {
+    pub emitter: &'a mut dyn FnMut(u8),
 }
 
 // For most instructions taking immediates:
@@ -20,32 +20,32 @@ fn check_imm_size(size: Size, imm: i64) {
 // #region Routines for emitting constants
 //
 
-impl Encoder {
+impl<'a> Encoder<'a> {
     fn emit_u8(&mut self, value: u8) {
-        self.buffer.push(value);
+        (self.emitter)(value);
     }
 
     fn emit_u16(&mut self, value: u16) {
-        self.buffer.push(value as u8);
-        self.buffer.push((value >> 8) as u8);
+        (self.emitter)(value as u8);
+        (self.emitter)((value >> 8) as u8);
     }
 
     fn emit_u32(&mut self, value: u32) {
-        self.buffer.push(value as u8);
-        self.buffer.push((value >> 8) as u8);
-        self.buffer.push((value >> 16) as u8);
-        self.buffer.push((value >> 24) as u8);
+        (self.emitter)(value as u8);
+        (self.emitter)((value >> 8) as u8);
+        (self.emitter)((value >> 16) as u8);
+        (self.emitter)((value >> 24) as u8);
     }
 
     fn emit_u64(&mut self, value: u64) {
-        self.buffer.push(value as u8);
-        self.buffer.push((value >> 8) as u8);
-        self.buffer.push((value >> 16) as u8);
-        self.buffer.push((value >> 24) as u8);
-        self.buffer.push((value >> 32) as u8);
-        self.buffer.push((value >> 40) as u8);
-        self.buffer.push((value >> 48) as u8);
-        self.buffer.push((value >> 56) as u8);
+        (self.emitter)(value as u8);
+        (self.emitter)((value >> 8) as u8);
+        (self.emitter)((value >> 16) as u8);
+        (self.emitter)((value >> 24) as u8);
+        (self.emitter)((value >> 32) as u8);
+        (self.emitter)((value >> 40) as u8);
+        (self.emitter)((value >> 48) as u8);
+        (self.emitter)((value >> 56) as u8);
     }
 
     fn emit_imm(&mut self, size: Size, value: i64) {
@@ -61,7 +61,7 @@ impl Encoder {
 //
 // #endregion
 
-impl Encoder {
+impl<'a> Encoder<'a> {
 
     /// Emit REX prefix given r/m operand.
     /// Parameter rex specifies the bits that needs to be true in REX prefix.
@@ -709,4 +709,9 @@ impl Encoder {
             Op::Xchg(dst, src) => self.emit_xchg(dst, src),
         }
     }
+}
+
+pub fn encode(op: Op, emitter: &mut FnMut(u8)) {
+    let mut encoder = Encoder { emitter };
+    encoder.encode(op);
 }

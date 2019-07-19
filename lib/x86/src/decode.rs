@@ -351,3 +351,8 @@ impl<'a> Decoder<'a> {
         }
     }
 }
+
+pub fn decode(iter: &mut dyn Iterator<Item=u8>) -> Op {
+    let mut decoder = Decoder { iter };
+    decoder.op()
+}

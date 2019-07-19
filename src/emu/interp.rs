@@ -1668,8 +1668,8 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             let mut compiler = super::dbt::DbtCompiler::new();
             compiler.compile((&op_slice, start, end));
             
-            let code = unsafe { code_cache.alloc_slice(compiler.enc.buffer.len()) };
-            code.copy_from_slice(&compiler.enc.buffer);
+            let code = unsafe { code_cache.alloc_slice(compiler.buffer.len()) };
+            code.copy_from_slice(&compiler.buffer);
 
             let map = unsafe { code_cache.alloc_slice(compiler.pc_map.len()) };
             map.copy_from_slice(&compiler.pc_map);

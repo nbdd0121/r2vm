@@ -27,7 +27,7 @@ pub fn get_index_by_pc(pc_map: &[u8], mut host_pc_offset: usize) -> usize {
 }
 
 pub struct DbtCompiler {
-    pub enc: crate::x86::Encoder,
+    pub buffer: Vec<u8>,
     // This stores the PC where an instruction end, used to track the guest PC <-> DBT PC
     // relation.
     pub pc_map: Vec<u8>,
@@ -76,44 +76,46 @@ impl Drop for PlaceHolder {
 impl DbtCompiler {
     pub fn new() -> DbtCompiler {
         DbtCompiler {
-            enc: crate::x86::Encoder { buffer: Vec::new() },
+            buffer: Vec::new(),
             pc_map: Vec::new(),
             minstret: 0,
         }
     }
 
     fn emit(&mut self, op: X86Op) {
-        self.enc.encode(op);
+        crate::x86::encode(op, &mut |x| {
+            self.buffer.push(x)
+        });
     }
 
     fn emit_jcc_short(&mut self, cc: ConditionCode) -> PlaceHolder {
-        self.enc.encode(Jcc(0, cc));
-        PlaceHolder::Byte(self.enc.buffer.len())
+        self.emit(Jcc(0, cc));
+        PlaceHolder::Byte(self.buffer.len())
     }
 
     fn emit_jcc_long(&mut self, cc: ConditionCode) -> PlaceHolder {
-        self.enc.encode(Jcc(0x80, cc));
-        PlaceHolder::Dword(self.enc.buffer.len())
+        self.emit(Jcc(0x80, cc));
+        PlaceHolder::Dword(self.buffer.len())
     }
 
     fn emit_jmp_short(&mut self) -> PlaceHolder {
-        self.enc.encode(Jmp(Imm(0)));
-        PlaceHolder::Byte(self.enc.buffer.len())
+        self.emit(Jmp(Imm(0)));
+        PlaceHolder::Byte(self.buffer.len())
     }
 
     fn label(&mut self) -> Label {
-        Label(self.enc.buffer.len())
+        Label(self.buffer.len())
     }
 
     fn patch(&mut self, place: PlaceHolder, label: Label) {
         match place {
             PlaceHolder::Byte(ptr) => {
                 let offset = label.0 as isize - ptr as isize;
-                self.enc.buffer[ptr - 1] = i8::try_from(offset).unwrap() as u8
+                self.buffer[ptr - 1] = i8::try_from(offset).unwrap() as u8
             }
             PlaceHolder::Dword(ptr) => {
                 let offset = i32::try_from(label.0 as isize - ptr as isize).unwrap();
-                self.enc.buffer[ptr-4..ptr].copy_from_slice(&offset.to_le_bytes());
+                self.buffer[ptr-4..ptr].copy_from_slice(&offset.to_le_bytes());
             }
         }
         std::mem::forget(place)
@@ -1293,7 +1295,7 @@ impl DbtCompiler {
         // Note minstret is not precisely tracked in case of exception
         let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
         self.emit(Add(Mem(mem_of_minstret), Imm(0x77777777)));
-        let fixup = self.enc.buffer.len();
+        let fixup = self.buffer.len();
 
         let mut pc_start = 0;
         let mut cur_pc = block.1;
@@ -1313,7 +1315,7 @@ impl DbtCompiler {
             } else {
                 self.emit_op(op);
             }
-            let pc_end = self.enc.buffer.len();
+            let pc_end = self.buffer.len();
             self.pc_map.push((pc_end - pc_start) as u8);
             pc_start = pc_end;
 
@@ -1329,16 +1331,16 @@ impl DbtCompiler {
         self.emit(Ret(0));
 
         // Patch up minstret
-        self.enc.buffer[fixup-4..fixup].copy_from_slice(&self.minstret.to_le_bytes());
+        self.buffer[fixup-4..fixup].copy_from_slice(&self.minstret.to_le_bytes());
 
         if crate::get_flags().disassemble {
             let mut pc = 0;
-            while pc < self.enc.buffer.len() {
-                let mut iter = self.enc.buffer[pc..].iter().map(|x|*x);
+            while pc < self.buffer.len() {
+                let mut iter = self.buffer[pc..].iter().map(|x|*x);
                 let mut decoder = crate::x86::Decoder::new(&mut iter);
                 let op = decoder.op();
-                let pc_next = self.enc.buffer.len() - iter.size_hint().0;
-                crate::x86::disasm::print_instr(pc as u64, &self.enc.buffer[pc..pc_next], &op);
+                let pc_next = self.buffer.len() - iter.size_hint().0;
+                crate::x86::disasm::print_instr(pc as u64, &self.buffer[pc..pc_next], &op);
                 pc = pc_next;
             }
         }
