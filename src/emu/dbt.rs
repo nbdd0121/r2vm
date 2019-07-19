@@ -10,6 +10,7 @@ use crate::x86::{Op as X86Op, Op::*, Register, Memory, Size, ConditionCode};
 use crate::x86::builder::*;
 use crate::riscv::Op;
 use super::interp::{Context, SharedContext};
+use std::convert::TryFrom;
 
 /// Reverse translate AMD64 program counter into RISC-V program counter.
 /// `host_pc_offset` should be the PC offset in relation to `self.code`.
@@ -60,6 +61,11 @@ extern "C" {
     fn fiber_yield_raw();
 }
 
+struct Label(usize);
+enum PlaceHolder {
+    Byte(usize),
+}
+
 impl DbtCompiler {
     pub fn new() -> DbtCompiler {
         DbtCompiler {
@@ -71,6 +77,29 @@ impl DbtCompiler {
 
     fn emit(&mut self, op: X86Op) {
         self.enc.encode(op);
+    }
+
+    fn emit_jcc_short(&mut self, cc: ConditionCode) -> PlaceHolder {
+        self.enc.encode(Jcc(0, cc));
+        PlaceHolder::Byte(self.enc.buffer.len())
+    }
+
+    fn emit_jmp_short(&mut self) -> PlaceHolder {
+        self.enc.encode(Jmp(Imm(0)));
+        PlaceHolder::Byte(self.enc.buffer.len())
+    }
+
+    fn label(&mut self) -> Label {
+        Label(self.enc.buffer.len())
+    }
+
+    fn patch(&mut self, place: PlaceHolder, label: Label) {
+        match place {
+            PlaceHolder::Byte(ptr) => {
+                let offset = label.0 as isize - ptr as isize;
+                self.enc.buffer[ptr - 1] = i8::try_from(offset).unwrap() as u8
+            }
+        }
     }
 
     // #region Helper functions
@@ -243,58 +272,50 @@ impl DbtCompiler {
         if imm != 0 { self.emit(Add(Reg(Register::RSI), Imm(imm as i64))); }
 
         // Check for alignment
-        if size != Size::Byte {
+        let jcc_misalign = if size != Size::Byte {
             self.emit(Test(Reg(Register::RSI), Imm(size.bytes() as i64 - 1)));
-            self.emit(Jcc(43, ConditionCode::NotEqual));
-        }
+            Some(self.emit_jcc_short(ConditionCode::NotEqual))
+        } else { None };
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
-        // 3 bytes
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        // 4 bytes
         self.emit(Shr(Reg(Register::RCX), Imm(super::interp::CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
-        // 2 bytes
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
-        // 5 bytes
         self.emit(And(Reg(Register::EAX), Imm(1023)));
-        // 3 bytes
         self.emit(Shl(Reg(Register::EAX), Imm(4)));
 
         // RDX = ctx.line[(idx & 1023)].tag >> 1
-        // 8 bytes
         self.emit(Mov(Reg(Register::RDX), OpMem(Register::RBP + Register::RAX + offset as i32)));
-        // 3 bytes
         self.emit(Shr(Reg(Register::RDX), Imm(1)));
-        // 3 bytes
         self.emit(Cmp(Reg(Register::RDX), OpReg(Register::RCX)));
-        // 2 bytes
-        self.emit(Jcc(if size == Size::Byte { 10 } else { 24 }, ConditionCode::NotEqual));
+        let jcc_miss = self.emit_jcc_short(ConditionCode::NotEqual);
 
         // RSI = ctx.line[(idx & 1023)].paddr ^ addr
-        // 8 bytes
         self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
-        // 2 bytes
-        self.emit(Jmp(Imm(if size == Size::Byte { 14 } else { 28 })));
+        let jmp_fin = self.emit_jmp_short();
 
         if size != Size::Byte {
-            // 2 bytes
+            let label_misalign = self.label();
+            self.patch(jcc_misalign.unwrap(), label_misalign);
+
             self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
             let ffn = helper_misalign as *const () as usize;
-            // 10 bytes
             self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-            // 2 bytes
             self.emit(Call(OpReg(Register::RAX)));
         }
 
-        // 2 bytes
+        let label_miss = self.label();
+        self.patch(jcc_miss, label_miss);
+
         self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
         let ffn = helper_translate_cache_miss as *const () as usize;
-        // 10 bytes
         self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-        // 2 bytes
         self.emit(Call(OpReg(Register::RAX)));
+
+        let label_fin = self.label();
+        self.patch(jmp_fin, label_fin);
     }
 
     fn emit_store(&mut self, rs1: u8, rs2: u8, imm: i32, size: Size) {
