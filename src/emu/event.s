@@ -4,6 +4,9 @@
 .extern event_loop_handle
 .global fiber_event_loop
 fiber_event_loop:
+    mov rdi, rbp
+    call event_loop_handle
+3:
     # Increase the global cycle counter
     mov rax, [rbp]
     add rax, 1
@@ -13,7 +16,7 @@ fiber_event_loop:
     jae 1f
 2:
     call fiber_yield_raw
-    jmp fiber_event_loop
+    jmp 3b
 1:
     mov rdi, rbp
     call event_loop_handle

@@ -36,3 +36,4 @@ debug = true
 [features]
 default = []
 fast = []
+thread = []

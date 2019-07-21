@@ -1,8 +1,15 @@
 //! This module handles event-driven simulation
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::collections::BinaryHeap;
-use std::sync::Mutex;
+use spin::Mutex;
+
+#[cfg(not(feature = "thread"))]
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(feature = "thread")]
+use std::thread::Thread;
+#[cfg(feature = "thread")]
+use std::time::{Duration, Instant};
 
 struct Entry {
     time: u64,
@@ -38,8 +45,16 @@ impl Ord for Entry {
 
 #[repr(C)]
 pub struct EventLoop {
+    #[cfg(not(feature = "thread"))]
     cycle: AtomicU64,
+    #[cfg(not(feature = "thread"))]
     next_event: AtomicU64,
+    /// The thread of this event loop. It should be noted that when trying to notify the EventLoop
+    /// via unparking, it must hold the lock of `events`, so we wouldn't lose any update to evnets.
+    #[cfg(feature = "thread")]
+    thread: Thread,
+    #[cfg(feature = "thread")]
+    epoch: Instant,
     // This has to be a Box to allow repr(C)
     events: Box<Mutex<BinaryHeap<Entry>>>,
 }
@@ -52,7 +67,7 @@ extern {
 #[inline(always)]
 fn scaling_const() -> u64 {
     if cfg!(feature = "thread") {
-        4000
+        1
     } else if cfg!(feature = "fast") {
         20
     } else {
@@ -62,10 +77,21 @@ fn scaling_const() -> u64 {
 
 impl EventLoop {
     /// Create a new event loop.
+    #[cfg(not(feature = "thread"))]
     pub fn new() -> EventLoop {
         EventLoop {
             cycle: AtomicU64::new(0),
             next_event: AtomicU64::new(u64::max_value()),
+            events: Box::new(Mutex::new(BinaryHeap::new())),
+        }
+    }
+
+    /// Create a new event loop.
+    #[cfg(feature = "thread")]
+    pub fn new() -> EventLoop {
+        EventLoop {
+            thread: std::thread::current(),
+            epoch: Instant::now(),
             events: Box::new(Mutex::new(BinaryHeap::new())),
         }
     }
@@ -80,15 +106,24 @@ impl EventLoop {
     }
 
     /// Query the current cycle count.
+    #[cfg(not(feature = "thread"))]
     #[inline(always)]
     pub fn cycle(&self) -> u64 {
         self.cycle.load(Ordering::Relaxed)
     }
 
+    /// Query the current cycle count.
+    #[cfg(feature = "thread")]
+    pub fn cycle(&self) -> u64 {
+        let duration = Instant::now().duration_since(self.epoch);
+        (duration.as_micros() as u64) * scaling_const()
+    }
+
     /// Add a new event to the event loop for triggering. If it happens in the past it will be
     /// dequeued and triggered as soon as `cycle` increments for the next time.
+    #[cfg(not(feature = "thread"))]
     pub fn queue(&self, cycle: u64, handler: Box<Fn()->()>) {
-        let mut guard = self.events.lock().unwrap();
+        let mut guard = self.events.lock();
         guard.push(Entry {
             time: cycle,
             handler,
@@ -100,6 +135,22 @@ impl EventLoop {
         }, Ordering::Relaxed);
     }
 
+    /// Add a new event to the event loop for triggering. If it happens in the past it will be
+    /// dequeued and triggered as soon as `cycle` increments for the next time.
+    #[cfg(feature = "thread")]
+    pub fn queue(&self, cycle: u64, handler: Box<Fn()->()>) {
+        let mut guard = self.events.lock();
+        guard.push(Entry {
+            time: cycle,
+            handler,
+        });
+
+        // If the event just queued is the next event, we need to wake the event loop up.
+        if guard.peek().unwrap().time == cycle {
+            self.thread.unpark();
+        }
+    }
+
     /// Query the current time (we pretend to be operating at 100MHz at the moment)
     #[inline(always)]
     pub fn time(&self) -> u64 {
@@ -109,23 +160,41 @@ impl EventLoop {
     pub fn queue_time(&self, time: u64, handler: Box<Fn()->()>) {
         self.queue(time * scaling_const(), handler);
     }
+
+    /// Handle all events at or before `cycle`, and return the cycle of next event if any.
+    fn handle_events(&self, cycle: u64) -> Option<u64> {
+        let mut guard = self.events.lock();
+        loop {
+            let time = match guard.peek() {
+                None => return None,
+                Some(v) => v.time,
+            };
+            if time > cycle {
+                return Some(time)
+            }
+            let entry = guard.pop().unwrap();
+            (entry.handler)();
+        }
+    }
+
 }
 
+#[cfg(not(feature = "thread"))]
 #[no_mangle]
 extern "C" fn event_loop_handle(this: &EventLoop) {
     let cycle = this.cycle();
-    let mut guard = this.events.lock().unwrap();
+    let next_event = this.handle_events(cycle).unwrap_or(u64::max_value());
+    this.next_event.store(next_event, Ordering::Relaxed);
+}
+
+#[cfg(feature = "thread")]
+#[no_mangle]
+extern "C" fn event_loop_handle(this: &EventLoop) {
     loop {
-        let entry = guard.pop().unwrap();
-        (entry.handler)();
-        let next_event = match guard.peek() {
-            Some(it) => it.time,
-            None => u64::max_value(),
-        };
-        if cycle < next_event {
-            // It's okay to be relaxed because guard's release op will order it.
-            this.next_event.store(next_event, Ordering::Relaxed);
-            break
+        let cycle = this.cycle();
+        match this.handle_events(cycle) {
+            None => std::thread::park(),
+            Some(v) => std::thread::park_timeout(Duration::from_micros(v - cycle)),
         }
     }
 }
