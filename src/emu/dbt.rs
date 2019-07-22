@@ -1319,7 +1319,7 @@ impl DbtCompiler {
             self.pc_map.push((pc_end - pc_start) as u8);
             pc_start = pc_end;
 
-            if cfg!(not(feature = "fast")) || i == opblock.len() - 1 {
+            if cfg!(not(feature = "fast")) || (cfg!(not(feature = "thread")) && i == opblock.len() - 1) {
                 let step_fn: usize = fiber_yield_raw as *const () as usize;
                 self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
                 self.emit(Call(OpReg(Register::RAX)));
