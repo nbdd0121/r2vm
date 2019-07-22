@@ -436,16 +436,6 @@ pub struct DbtBlock {
     pub pc_end: u64,
 }
 
-#[no_mangle]
-extern "C" fn handle_trap(ctx: &mut Context, i: usize) {
-    let blk = ctx.cur_block.unwrap();
-    for j in i..blk.block.len() {
-        ctx.pc -= if blk.block[j].1 { 2 } else { 4 };
-    }
-    ctx.instret -= (blk.block.len() - i) as u64;
-    trap(ctx);
-}
-
 /// DBT-ed instruction cache
 /// ========================
 ///

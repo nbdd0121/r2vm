@@ -1,7 +1,7 @@
 .intel_syntax noprefix
 
 .global helper_trap
-.extern handle_trap
+.extern trap
 
 # All helper functions are called with RSP misaligned to 16-byte boundary
 # So when return address is pushed, they are properly aligned
@@ -19,8 +19,12 @@ helper_trap:
     # RDI -> context
     mov rdi, rbp
     # We use EBX to store the instruction offset within the current basic block
-    mov esi, ebx
-    call handle_trap
+    # Lower 16 bits are PC offset and upper 16 bits are INSTRET offset.
+    movzx eax, bx
+    sub [rbp + 0x100], rax
+    shr ebx, 16
+    sub [rbp + 0x108], rbx
+    call trap
     # Pop out trapping PC
     add rsp, 8
     ret

@@ -15,7 +15,8 @@ use std::convert::TryFrom;
 pub struct DbtCompiler {
     pub buffer: Vec<u8>,
     minstret: u32,
-    i: usize,
+    i_rel: usize,
+    pc_rel: u64,
 }
 
 #[inline]
@@ -64,7 +65,8 @@ impl DbtCompiler {
         DbtCompiler {
             buffer: Vec::new(),
             minstret: 0,
-            i: 0,
+            i_rel: 0,
+            pc_rel: 0,
         }
     }
 
@@ -156,10 +158,19 @@ impl DbtCompiler {
         self.emit(Mov(Mem(memory_of_register(rd)), Imm(imm)));
     }
 
+    /// We use EBX to convey message to helper_trap, which will adjust PC and INSTRET to reflect
+    /// the precise location of exception.
+    /// EBX encodes both the pc offset and the insret offset of the instruction relative to
+    /// the end of the basic block.
+    fn emit_set_ebx(&mut self) {
+        let ebx = (self.i_rel as u32) << 16 | self.pc_rel as u32;
+        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
+    }
+
     fn emit_step_call(&mut self, op: &Op) {
         // Functional-unit type instruction. Simply step through them.
         self.emit(Mov(Reg(Register::RSI), Imm(op as *const Op as usize as i64)));
-        self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
+        self.emit_set_ebx();
         let step_fn: usize = helper_step as *const () as usize;
         self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
         self.emit(Call(OpReg(Register::RAX)));
@@ -368,7 +379,7 @@ impl DbtCompiler {
             self.patch(jcc_misalign.unwrap(), label_misalign);
 
             self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
-            self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
+            self.emit_set_ebx();
             let ffn = helper_misalign as *const () as usize;
             self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
             self.emit(Call(OpReg(Register::RAX)));
@@ -378,7 +389,7 @@ impl DbtCompiler {
         self.patch(jcc_miss, label_miss);
 
         self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
-        self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
+        self.emit_set_ebx();
         let ffn = helper_translate_cache_miss as *const () as usize;
         self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
         self.emit(Call(OpReg(Register::RAX)));
@@ -424,7 +435,7 @@ impl DbtCompiler {
             self.patch(jcc_misalign.unwrap(), label_misalign);
 
             self.emit(Mov(Reg(Register::EDX), Imm(1)));
-            self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
+            self.emit_set_ebx();
             let ffn = helper_misalign as *const () as usize;
             self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
             self.emit(Call(OpReg(Register::RAX)));
@@ -434,7 +445,7 @@ impl DbtCompiler {
         self.patch(jcc_miss, label_miss);
 
         self.emit(Mov(Reg(Register::EDX), Imm(1)));
-        self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
+        self.emit_set_ebx();
         let ffn = helper_translate_cache_miss as *const () as usize;
         self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
         self.emit(Call(OpReg(Register::RAX)));
@@ -1356,10 +1367,11 @@ impl DbtCompiler {
                     self.emit_icache_access(block.2 - cur_pc);
                 }
             }
+            self.pc_rel = block.2 - cur_pc;
             cur_pc += if opblock[i].1 { 2 } else { 4 };
 
             let op = &opblock[i].0;
-            self.i = i;
+            self.i_rel = opblock.len() - i;
             if let Op::Auipc { rd, imm } = op {
                 self.emit_op(&Op::Auipc { rd: *rd, imm: imm - (block.2 - cur_pc) as i32 });
             } else {
