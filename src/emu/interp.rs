@@ -432,15 +432,13 @@ pub struct DbtBlock {
     /// Decoded instructions. This is pinned, as the translated code will reference its absolute location.
     pub block: &'static [(Op, bool)],
     pub code: &'static [u8],
-    pub pc_map: &'static [u8],
     pub pc_start: u64,
     pub pc_end: u64,
 }
 
 #[no_mangle]
-extern "C" fn handle_trap(ctx: &mut Context, pc: usize) {
+extern "C" fn handle_trap(ctx: &mut Context, i: usize) {
     let blk = ctx.cur_block.unwrap();
-    let i = super::dbt::get_index_by_pc(&blk.pc_map, pc - blk.code.as_ptr() as usize);
     for j in i..blk.block.len() {
         ctx.pc -= if blk.block[j].1 { 2 } else { 4 };
     }
@@ -1690,14 +1688,10 @@ fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> &'sta
     let code = unsafe { icache.alloc_slice(compiler.buffer.len()) };
     code.copy_from_slice(&compiler.buffer);
 
-    let map = unsafe { icache.alloc_slice(compiler.pc_map.len()) };
-    map.copy_from_slice(&compiler.pc_map);
-
     let block = unsafe { icache.alloc() };
     *block = DbtBlock {
         block: op_slice,
         code: code,
-        pc_map: map,
         pc_start: start,
         pc_end: end,
     };

@@ -18,8 +18,8 @@ helper_misalign:
 helper_trap:
     # RDI -> context
     mov rdi, rbp
-    # RDI -> trapping PC. Do not pop here as it will cause misalignment
-    mov rsi, [rsp]
+    # We use EBX to store the instruction offset within the current basic block
+    mov esi, ebx
     call handle_trap
     # Pop out trapping PC
     add rsp, 8

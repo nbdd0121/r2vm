@@ -12,26 +12,10 @@ use crate::riscv::Op;
 use super::interp::{Context, SharedContext};
 use std::convert::TryFrom;
 
-/// Reverse translate AMD64 program counter into RISC-V program counter.
-/// `host_pc_offset` should be the PC offset in relation to `self.code`.
-/// The returned tuple is (`guest_pc_offset`, `guest_pc_index`).
-pub fn get_index_by_pc(pc_map: &[u8], mut host_pc_offset: usize) -> usize {
-    for (i, &size) in pc_map.iter().enumerate() {
-        if host_pc_offset <= size as usize {
-            return i
-        }
-        host_pc_offset -= size as usize;
-    }
-
-    unreachable!()
-}
-
 pub struct DbtCompiler {
     pub buffer: Vec<u8>,
-    // This stores the PC where an instruction end, used to track the guest PC <-> DBT PC
-    // relation.
-    pub pc_map: Vec<u8>,
     minstret: u32,
+    i: usize,
 }
 
 #[inline]
@@ -79,8 +63,8 @@ impl DbtCompiler {
     pub fn new() -> DbtCompiler {
         DbtCompiler {
             buffer: Vec::new(),
-            pc_map: Vec::new(),
             minstret: 0,
+            i: 0,
         }
     }
 
@@ -175,6 +159,7 @@ impl DbtCompiler {
     fn emit_step_call(&mut self, op: &Op) {
         // Functional-unit type instruction. Simply step through them.
         self.emit(Mov(Reg(Register::RSI), Imm(op as *const Op as usize as i64)));
+        self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
         let step_fn: usize = helper_step as *const () as usize;
         self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
         self.emit(Call(OpReg(Register::RAX)));
@@ -383,6 +368,7 @@ impl DbtCompiler {
             self.patch(jcc_misalign.unwrap(), label_misalign);
 
             self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
+            self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
             let ffn = helper_misalign as *const () as usize;
             self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
             self.emit(Call(OpReg(Register::RAX)));
@@ -392,6 +378,7 @@ impl DbtCompiler {
         self.patch(jcc_miss, label_miss);
 
         self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
+        self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
         let ffn = helper_translate_cache_miss as *const () as usize;
         self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
         self.emit(Call(OpReg(Register::RAX)));
@@ -437,6 +424,7 @@ impl DbtCompiler {
             self.patch(jcc_misalign.unwrap(), label_misalign);
 
             self.emit(Mov(Reg(Register::EDX), Imm(1)));
+            self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
             let ffn = helper_misalign as *const () as usize;
             self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
             self.emit(Call(OpReg(Register::RAX)));
@@ -446,6 +434,7 @@ impl DbtCompiler {
         self.patch(jcc_miss, label_miss);
 
         self.emit(Mov(Reg(Register::EDX), Imm(1)));
+        self.emit(Mov(Reg(Register::EBX), Imm(self.i as i64)));
         let ffn = helper_translate_cache_miss as *const () as usize;
         self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
         self.emit(Call(OpReg(Register::RAX)));
@@ -1358,7 +1347,6 @@ impl DbtCompiler {
         self.emit(Add(Mem(mem_of_minstret), Imm(0x77777777)));
         let fixup = self.buffer.len();
 
-        let mut pc_start = 0;
         let mut cur_pc = block.1;
 
         for i in 0..opblock.len() {
@@ -1371,14 +1359,12 @@ impl DbtCompiler {
             cur_pc += if opblock[i].1 { 2 } else { 4 };
 
             let op = &opblock[i].0;
+            self.i = i;
             if let Op::Auipc { rd, imm } = op {
                 self.emit_op(&Op::Auipc { rd: *rd, imm: imm - (block.2 - cur_pc) as i32 });
             } else {
                 self.emit_op(op);
             }
-            let pc_end = self.buffer.len();
-            self.pc_map.push((pc_end - pc_start) as u8);
-            pc_start = pc_end;
 
             if cfg!(not(feature = "fast")) || (cfg!(not(feature = "thread")) && i == opblock.len() - 1) {
                 let step_fn: usize = fiber_yield_raw as *const () as usize;
