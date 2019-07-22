@@ -153,6 +153,15 @@ impl Context {
         }
     }
 
+    pub fn protect_code(&mut self, page: u64) {
+        for line in self.line.iter_mut() {
+            let paddr = (line.tag >> 1 << CACHE_LINE_LOG2_SIZE) ^ line.paddr;
+            if paddr &! 4095 == page {
+                line.tag |= 1;
+            }
+        }
+    }
+
     pub fn test_and_set_fs(&mut self) -> Result<(), ()> {
         if self.sstatus & 0x6000 == 0 {
             self.scause = 2;
@@ -340,12 +349,6 @@ fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
         }
         Ok(out) => out,
     };
-    // If the cache line exists on data cache, mark it as non-writable
-    // This is important as we want to capture all write to DBTed block
-    let line: &mut CacheLine = &mut ctx.line[(idx & 1023) as usize];
-    if (line.tag >> 1) == idx {
-        line.tag |= 1;
-    }
     let line: &mut CacheLine = &mut ctx.i_line[(idx & 1023) as usize];
     line.tag = idx;
     line.paddr = out ^ addr;
@@ -383,8 +386,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
         let page = out >> 12 << 12;
         let start = page.saturating_sub(4096);
         let end = page + 4096;
-        {
-            let mut icache = icache(ctx.hartid);
+        for mut icache in icaches() {
             let keys: Vec<u64> = icache.map.range(start .. end).map(|(k,_)|*k).collect();
             for key in keys {
                 icache.map.remove(&key);
@@ -532,6 +534,10 @@ lazy_static! {
 
 fn icache(_hartid: u64) -> spin::MutexGuard<'static, ICache> {
     ICACHE.lock()
+}
+
+fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
+    std::iter::once(&ICACHE).map(|x| x.lock())
 }
 
 extern {
@@ -1690,6 +1696,14 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
                 pc_end: end,
             };
             icache.map.insert(phys_pc, block);
+
+            unsafe {
+                for i in 0..crate::CONTEXTS.len() {
+                    let ctx = &mut *crate::CONTEXTS[i];
+                    ctx.protect_code(pc &! 4095);
+                }
+            }
+
             block
         }
     };
