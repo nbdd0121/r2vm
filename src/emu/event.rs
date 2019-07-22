@@ -1,13 +1,13 @@
 //! This module handles event-driven simulation
 
 use std::collections::BinaryHeap;
-use spin::Mutex;
+use std::sync::Mutex;
 
 #[cfg(not(feature = "thread"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "thread")]
-use std::thread::Thread;
+use std::sync::Condvar;
 #[cfg(feature = "thread")]
 use std::time::{Duration, Instant};
 
@@ -49,12 +49,10 @@ pub struct EventLoop {
     cycle: AtomicU64,
     #[cfg(not(feature = "thread"))]
     next_event: AtomicU64,
-    /// The thread of this event loop. It should be noted that when trying to notify the EventLoop
-    /// via unparking, it must hold the lock of `events`, so we wouldn't lose any update to evnets.
-    #[cfg(feature = "thread")]
-    thread: Thread,
     #[cfg(feature = "thread")]
     epoch: Instant,
+    #[cfg(feature = "thread")]
+    condvar: Condvar,
     // This has to be a Box to allow repr(C)
     events: Box<Mutex<BinaryHeap<Entry>>>,
 }
@@ -90,8 +88,8 @@ impl EventLoop {
     #[cfg(feature = "thread")]
     pub fn new() -> EventLoop {
         EventLoop {
-            thread: std::thread::current(),
             epoch: Instant::now(),
+            condvar: Condvar::new(),
             events: Box::new(Mutex::new(BinaryHeap::new())),
         }
     }
@@ -123,7 +121,7 @@ impl EventLoop {
     /// dequeued and triggered as soon as `cycle` increments for the next time.
     #[cfg(not(feature = "thread"))]
     pub fn queue(&self, cycle: u64, handler: Box<Fn()->()>) {
-        let mut guard = self.events.lock();
+        let mut guard = self.events.lock().unwrap();
         guard.push(Entry {
             time: cycle,
             handler,
@@ -139,7 +137,7 @@ impl EventLoop {
     /// dequeued and triggered as soon as `cycle` increments for the next time.
     #[cfg(feature = "thread")]
     pub fn queue(&self, cycle: u64, handler: Box<Fn()->()>) {
-        let mut guard = self.events.lock();
+        let mut guard = self.events.lock().unwrap();
         guard.push(Entry {
             time: cycle,
             handler,
@@ -147,7 +145,7 @@ impl EventLoop {
 
         // If the event just queued is the next event, we need to wake the event loop up.
         if guard.peek().unwrap().time == cycle {
-            self.thread.unpark();
+            self.condvar.notify_one()
         }
     }
 
@@ -162,8 +160,7 @@ impl EventLoop {
     }
 
     /// Handle all events at or before `cycle`, and return the cycle of next event if any.
-    fn handle_events(&self, cycle: u64) -> Option<u64> {
-        let mut guard = self.events.lock();
+    fn handle_events(&self, guard: &mut std::sync::MutexGuard<BinaryHeap<Entry>>, cycle: u64) -> Option<u64> {
         loop {
             let time = match guard.peek() {
                 None => return None,
@@ -183,18 +180,20 @@ impl EventLoop {
 #[no_mangle]
 extern "C" fn event_loop_handle(this: &EventLoop) {
     let cycle = this.cycle();
-    let next_event = this.handle_events(cycle).unwrap_or(u64::max_value());
+    let next_event = this.handle_events(&mut this.events.lock().unwrap(), cycle).unwrap_or(u64::max_value());
     this.next_event.store(next_event, Ordering::Relaxed);
 }
 
 #[cfg(feature = "thread")]
 #[no_mangle]
 extern "C" fn event_loop_handle(this: &EventLoop) {
+    let mut guard = this.events.lock().unwrap();
     loop {
         let cycle = this.cycle();
-        match this.handle_events(cycle) {
-            None => std::thread::park(),
-            Some(v) => std::thread::park_timeout(Duration::from_micros(v - cycle)),
+        let result = this.handle_events(&mut guard, cycle);
+        guard = match result {
+            None => this.condvar.wait(guard).unwrap(),
+            Some(v) => this.condvar.wait_timeout(guard, Duration::from_micros(v - cycle)).unwrap().0,
         }
     }
 }
