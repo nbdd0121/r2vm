@@ -384,10 +384,10 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
         let start = page.saturating_sub(4096);
         let end = page + 4096;
         {
-            let mut icache = ICACHE.lock();
-            let keys: Vec<u64> = icache.range(start .. end).map(|(k,_)|*k).collect();
+            let mut icache = icache(ctx.hartid);
+            let keys: Vec<u64> = icache.map.range(start .. end).map(|(k,_)|*k).collect();
             for key in keys {
-                icache.remove(&key);
+                icache.map.remove(&key);
             }
         }
         let line = &mut ctx.i_line[(idx & 1023) as usize];
@@ -474,45 +474,42 @@ extern "C" fn handle_trap(ctx: &mut Context, pc: usize) {
 /// flushed or overwritten basic blocks.
 const HEAP_SIZE: usize = 1024 * 1024 * 128;
 
-lazy_static! {
-    static ref ICACHE: spin::Mutex<BTreeMap<u64, &'static DbtBlock>> = {
-        spin::Mutex::new(BTreeMap::default())
-    };
-
-    static ref CODE_CACHE: spin::Mutex<Heap> = {
-        spin::Mutex::new(Heap::new())
-    };
+struct ICache {
+    pub map: BTreeMap<u64, &'static DbtBlock>,
+    heap_start: usize,
+    heap_offset: usize,
 }
 
-struct Heap(usize, usize);
-
-impl Heap {
-    fn new() -> Heap {
+impl ICache {
+    fn new() -> ICache {
         let ptr = unsafe { libc::mmap(std::ptr::null_mut(), HEAP_SIZE as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
         assert_ne!(ptr, libc::MAP_FAILED);
         let ptr = ptr as usize;
-        Heap(ptr, 0)
+        ICache {
+            map: BTreeMap::default(),
+            heap_start: ptr,
+            heap_offset: 0,
+        }
     }
 
     fn alloc_size(&mut self, size: usize) -> usize {
         // Crossing half-boundary
-        let rollover = if self.1 <= HEAP_SIZE / 2 && self.1 + size > HEAP_SIZE / 2 {
+        let rollover = if self.heap_offset <= HEAP_SIZE / 2 && self.heap_offset + size > HEAP_SIZE / 2 {
             true
-        } else if self.1 + size > HEAP_SIZE {
+        } else if self.heap_offset + size > HEAP_SIZE {
             // Rollover, start from zero
-            self.1 = 0;
+            self.heap_offset = 0;
             true
         } else {
             false
         };
 
         if rollover {
-            let mut icache = ICACHE.lock();
-            icache.clear()
+            self.map.clear();
         }
 
-        let ret = self.1 + self.0;
-        self.1 += size;
+        let ret = self.heap_offset + self.heap_start;
+        self.heap_offset += size;
         ret
     }
 
@@ -525,6 +522,16 @@ impl Heap {
         let size = std::mem::size_of::<T>();
         std::slice::from_raw_parts_mut(self.alloc_size(size * len) as *mut T, len)
     }
+}
+
+lazy_static! {
+    static ref ICACHE: spin::Mutex<ICache> = {
+        spin::Mutex::new(ICache::new())
+    };
+}
+
+fn icache(_hartid: u64) -> spin::MutexGuard<'static, ICache> {
+    ICACHE.lock()
 }
 
 extern {
@@ -1651,7 +1658,8 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             return no_op
         }
     };
-    let dbtblk: &DbtBlock = match { let icache = ICACHE.lock(); icache.get(&phys_pc).map(|x|*x) } {
+    let mut icache = icache(ctx.hartid);
+    let dbtblk: &DbtBlock = match icache.map.get(&phys_pc).map(|x|*x) {
         Some(v) => v,
         None => {
             // Ignore error in this case
@@ -1661,20 +1669,19 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             };
 
             let (vec, start, end) = decode_block(phys_pc, phys_pc_next);
-            let mut code_cache = CODE_CACHE.lock();
-            let op_slice = unsafe { code_cache.alloc_slice(vec.len()) };
+            let op_slice = unsafe { icache.alloc_slice(vec.len()) };
             op_slice.copy_from_slice(&vec);
 
             let mut compiler = super::dbt::DbtCompiler::new();
             compiler.compile((&op_slice, start, end));
             
-            let code = unsafe { code_cache.alloc_slice(compiler.buffer.len()) };
+            let code = unsafe { icache.alloc_slice(compiler.buffer.len()) };
             code.copy_from_slice(&compiler.buffer);
 
-            let map = unsafe { code_cache.alloc_slice(compiler.pc_map.len()) };
+            let map = unsafe { icache.alloc_slice(compiler.pc_map.len()) };
             map.copy_from_slice(&compiler.pc_map);
 
-            let block = unsafe { code_cache.alloc() };
+            let block = unsafe { icache.alloc() };
             *block = DbtBlock {
                 block: op_slice,
                 code: code,
@@ -1682,8 +1689,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
                 pc_start: start,
                 pc_end: end,
             };
-            let mut icache = ICACHE.lock();
-            icache.insert(phys_pc, block);
+            icache.map.insert(phys_pc, block);
             block
         }
     };
