@@ -54,6 +54,8 @@ extern "C" {
     #[allow(improper_ctypes)]
     fn helper_icache_miss(ctx: &mut Context, addr: u64);
 
+    fn helper_icache_wrong();
+
     fn helper_check_interrupt();
 
     fn helper_misalign();
@@ -208,9 +210,18 @@ impl DbtCompiler {
             self.emit(Cmp(Reg(Register::RDX), OpMem(memory_of_register(rs2))));
         }
 
-        let jcc_not = self.emit_jcc_short(!cc);
+        let jcc_not = self.emit_jcc_long(!cc);
 
         self.emit(Add(Mem(memory_of_pc()), Imm(imm.wrapping_sub(4) as i64)));
+
+        if cfg!(not(feature = "thread")) {
+            let step_fn: usize = fiber_yield_raw as *const () as usize;
+            self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
+            self.emit(Call(OpReg(Register::RAX)));
+        }
+
+        self.emit_interrupt_check();
+        self.emit_chain_tail();
 
         let label_not = self.label();
         self.patch(jcc_not, label_not);
@@ -267,6 +278,56 @@ impl DbtCompiler {
         self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
         // 2 bytes
         self.emit(Call(OpReg(Register::RAX)));
+    }
+
+    fn emit_chain_tail(&mut self) {
+        let offset = offset_of!(Context, i_line);
+
+        // RSI = addr
+        self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
+
+        // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
+        self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
+        self.emit(Shr(Reg(Register::RCX), Imm(super::interp::CACHE_LINE_LOG2_SIZE as i64)));
+
+        // EAX = (idx & 1023) * 16
+        self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
+        self.emit(And(Reg(Register::EAX), Imm(1023)));
+        self.emit(Shl(Reg(Register::EAX), Imm(4)));
+
+        // RDX = ctx.line[(idx & 1023)].tag
+        self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
+        self.emit(Jcc(10, ConditionCode::NotEqual));
+
+        // Check if the current block is the intended block to execute
+        self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
+        self.emit(Jmp(Imm(12)));
+
+        let ffn = helper_icache_miss as *const () as usize;
+        // 10 bytes
+        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
+        // 2 bytes
+        self.emit(Call(OpReg(Register::RAX)));
+
+        // Check if the current block is the intended block to execute
+        self.emit(Mov(Reg(Register::RAX), Imm(0x100000000)));
+        // 3 bytes
+        self.emit(Cmp(Reg(Register::RAX), OpReg(Register::RSI)));
+        // 2 bytes
+        self.emit(Jcc(12, ConditionCode::Equal));
+
+        let ffn = helper_icache_wrong as *const () as usize;
+        // 10 bytes
+        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
+        // 2 bytes
+        self.emit(Call(OpReg(Register::RAX)));
+
+        // Set cur_block
+        // 10 bytes
+        self.emit(Mov(Reg(Register::RAX), Imm(0x100000000)));
+        // 7 bytes
+        self.emit(Mov(Mem(Register::RBP + offset_of!(Context, cur_block) as i32), OpReg(Register::RAX)));
+        self.emit(Jmp(Imm(0x7fffffff)));
     }
 
     fn emit_interrupt_check(&mut self) {
@@ -1328,7 +1389,7 @@ impl DbtCompiler {
 
         // Epilogue
         self.emit_interrupt_check();
-        self.emit(Ret(0));
+        self.emit_chain_tail();
 
         // Patch up minstret
         self.buffer[fixup-4..fixup].copy_from_slice(&self.minstret.to_le_bytes());

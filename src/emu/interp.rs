@@ -103,6 +103,7 @@ pub struct Context {
     // in assembly.
     pub scause: u64,
     pub stval: u64,
+    pub cur_block: Option<&'static DbtBlock>,
 
     // Floating point states
     pub fp_registers: [u64; 32],
@@ -131,13 +132,11 @@ pub struct Context {
     /// This is the L0 cache used to accelerate simulation. If a memory request hits the cache line
     /// here, then it will not go through virtual address translation nor cache simulation.
     /// Therefore this should only contain entries that are neither in the TLB nor in the cache.
-    /// 
+    ///
     /// The cache line should only contain valid entries for the current privilege level and ASID.
     /// Upon privilege-level switch or address space switch all entries here should be cleared.
     pub line: [CacheLine; 1024],
     pub i_line: [CacheLine; 1024],
-
-    pub cur_block: Option<&'static DbtBlock>,
 }
 
 impl Context {
@@ -456,12 +455,12 @@ extern "C" fn handle_trap(ctx: &mut Context, pc: usize) {
 /// can make use of the fence.i/sfence.vma instruction, but we would not like to flush the entire
 /// cache when we see them because flushing the cache is very expensive, and modifying code in
 /// icache is relatively rare.
-/// 
+///
 /// It is very difficult to remove entries from the code cache, as there might be another hart
 /// actively executing the code. To avoid messing around this scenario, we does not allow individual
 /// cached blocks to be removed. Instead, we simply discard the pointer into the code cache so the
 /// invalidated block will no longer be used in the future.
-/// 
+///
 /// To avoid infinite growth of the cache, we will flush the cache if the amount of DBT-ed code
 /// get large. This is achieved by partitioning the whole memory into two halves. Whenever we
 /// cross the boundary and start allocating on the other half, we flush all pointers into the
@@ -470,7 +469,7 @@ extern "C" fn handle_trap(ctx: &mut Context, pc: usize) {
 /// we cannot fill the entire half in a basic block's time). The allocating block will span two
 /// partitions, but we don't have to worry about this, as it uses the very end of one half, so
 /// next flush when crossing boundary again will invalidate it while not overwriting it.
-/// 
+///
 /// Things may be a lot more complicated if we start to implement basic block chaining for extra
 /// speedup. In that case we probably need some pseudo-IPI stuff to make sure nobody is executing
 /// flushed or overwritten basic blocks.
@@ -1680,6 +1679,39 @@ fn decode_block(mut pc: u64, pc_next: u64) -> (Vec<(Op, bool)>, u64, u64) {
     (vec, start_pc, pc)
 }
 
+fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> &'static DbtBlock {
+    let (vec, start, end) = decode_block(phys_pc, phys_pc_next);
+    let op_slice = unsafe { icache.alloc_slice(vec.len()) };
+    op_slice.copy_from_slice(&vec);
+
+    let mut compiler = super::dbt::DbtCompiler::new();
+    compiler.compile((&op_slice, start, end));
+
+    let code = unsafe { icache.alloc_slice(compiler.buffer.len()) };
+    code.copy_from_slice(&compiler.buffer);
+
+    let map = unsafe { icache.alloc_slice(compiler.pc_map.len()) };
+    map.copy_from_slice(&compiler.pc_map);
+
+    let block = unsafe { icache.alloc() };
+    *block = DbtBlock {
+        block: op_slice,
+        code: code,
+        pc_map: map,
+        pc_start: start,
+        pc_end: end,
+    };
+    icache.map.insert(phys_pc, block);
+
+    unsafe {
+        for i in 0..crate::CONTEXTS.len() {
+            let ctx = &mut *crate::CONTEXTS[i];
+            ctx.protect_code(phys_pc &! 4095);
+        }
+    }
+
+    block
+}
 
 #[no_mangle]
 fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
@@ -1700,43 +1732,45 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
                 Ok(pc) => pc,
                 Err(_) => 0,
             };
-
-            let (vec, start, end) = decode_block(phys_pc, phys_pc_next);
-            let op_slice = unsafe { icache.alloc_slice(vec.len()) };
-            op_slice.copy_from_slice(&vec);
-
-            let mut compiler = super::dbt::DbtCompiler::new();
-            compiler.compile((&op_slice, start, end));
-            
-            let code = unsafe { icache.alloc_slice(compiler.buffer.len()) };
-            code.copy_from_slice(&compiler.buffer);
-
-            let map = unsafe { icache.alloc_slice(compiler.pc_map.len()) };
-            map.copy_from_slice(&compiler.pc_map);
-
-            let block = unsafe { icache.alloc() };
-            *block = DbtBlock {
-                block: op_slice,
-                code: code,
-                pc_map: map,
-                pc_start: start,
-                pc_end: end,
-            };
-            icache.map.insert(phys_pc, block);
-
-            unsafe {
-                for i in 0..crate::CONTEXTS.len() {
-                    let ctx = &mut *crate::CONTEXTS[i];
-                    ctx.protect_code(pc &! 4095);
-                }
-            }
-
-            block
+            translate_code(&mut icache, phys_pc, phys_pc_next)
         }
     };
 
     ctx.cur_block = Some(dbtblk);
     unsafe { std::mem::transmute(dbtblk.code.as_ptr() as usize) }
+}
+
+#[no_mangle]
+fn find_block_and_patch(ctx: &mut Context, ret: usize) {
+
+    let pc = ctx.pc;
+    let phys_pc = match insn_translate(ctx, pc) {
+        Ok(pc) => pc,
+        Err(_) => {
+            trap(ctx);
+            unreachable!();
+            // return no_op
+        }
+    };
+
+    // Access the cache for blocks
+    let mut icache = icache(ctx.hartid);
+    let dbtblk: &DbtBlock = match icache.map.get(&phys_pc).map(|x|*x) {
+        Some(v) => v,
+        None => {
+            // Ignore error in this case
+            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
+                Ok(pc) => pc,
+                Err(_) => 0,
+            };
+            translate_code(&mut icache, phys_pc, phys_pc_next)
+        }
+    };
+
+    unsafe { std::ptr::write_unaligned((ret - 25) as *mut u64, phys_pc) };
+    let jump_offset = (dbtblk.code.as_ptr() as isize - ret as isize - 22) as u32;
+    unsafe { std::ptr::write_unaligned((ret + 18) as *mut u32, jump_offset) };
+    unsafe { std::ptr::write_unaligned((ret + 2) as *mut u64, dbtblk as *const DbtBlock as usize as u64) };
 }
 
 #[no_mangle]

@@ -52,10 +52,26 @@ helper_icache_miss:
     call insn_translate_cache_miss
     test al, al
     jnz 1f
+    mov rsi, rdx
     ret
 1:
     # we're not yet prepared for this
-    ud2
+    # ud2
+
+    # this makes sense in the begin block only!!!!
+    mov rdi, rbp
+    call trap
+    add rsp, 8
+    ret
+
+.global helper_icache_wrong
+.extern find_block_and_patch
+helper_icache_wrong:
+    mov rdi, rbp
+    # Load return address into RSI
+    mov rsi, [rsp]
+    call find_block_and_patch
+    ret
 
 .global helper_check_interrupt
 .extern check_interrupt
