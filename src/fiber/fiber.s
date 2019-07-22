@@ -66,9 +66,3 @@ fiber_interp_run:
     call find_block
     call rax
     jmp fiber_interp_run
-
-.extern interp_block
-.global fiber_interp_block
-fiber_interp_block:
-    mov rdi, rbp
-    jmp interp_block

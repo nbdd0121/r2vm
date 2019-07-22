@@ -14,6 +14,7 @@ use std::convert::TryFrom;
 
 pub struct DbtCompiler {
     pub buffer: Vec<u8>,
+    pub interp: bool,
     minstret: u32,
     i_rel: usize,
     pc_rel: u64,
@@ -64,6 +65,7 @@ impl DbtCompiler {
     pub fn new() -> DbtCompiler {
         DbtCompiler {
             buffer: Vec::new(),
+            interp: false,
             minstret: 0,
             i_rel: 0,
             pc_rel: 0,
@@ -1375,7 +1377,11 @@ impl DbtCompiler {
             if let Op::Auipc { rd, imm } = op {
                 self.emit_op(&Op::Auipc { rd: *rd, imm: imm - (block.2 - cur_pc) as i32 });
             } else {
-                self.emit_op(op);
+                if self.interp {
+                    self.emit_step_call(op)
+                } else {
+                    self.emit_op(op);
+                }
             }
 
             if cfg!(not(feature = "fast")) || (cfg!(not(feature = "thread")) && i == opblock.len() - 1) {

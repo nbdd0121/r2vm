@@ -554,11 +554,6 @@ fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
     ICACHE.iter().map(|x| x.lock())
 }
 
-extern {
-    #[allow(dead_code)]
-    fn fiber_interp_block();
-}
-
 /// Broadcast sfence
 fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
     unsafe {
@@ -1592,36 +1587,6 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
 }
 
 extern "C" fn no_op() {}
-
-#[no_mangle]
-extern "C" fn interp_block(ctx: &mut Context) {
-    let dbtblk = ctx.cur_block.unwrap();
-    ctx.instret += dbtblk.block.len() as u64;
-
-    for i in 0..dbtblk.block.len() {
-        // The instruction is on a new cache line, force an access to I$
-        let cache_line_size = 1 << CACHE_LINE_LOG2_SIZE;
-        if ctx.pc & (cache_line_size - 1) == 0 || ctx.pc & (cache_line_size - 1) == cache_line_size - 2 {
-            insn_translate(ctx, ctx.pc).unwrap();
-        }
-
-        let (ref inst, compressed) = dbtblk.block[i];
-        ctx.pc += if compressed { 2 } else { 4 };
-        match step(ctx, inst) {
-            Ok(()) => (),
-            Err(()) => {
-                ctx.pc = ctx.pc - if compressed { 2 } else { 4 };
-                ctx.instret -= (dbtblk.block.len() - i) as u64;
-                trap(ctx);
-                return;
-            }
-        }
-
-        crate::fiber::Fiber::sleep(1)
-    }
-
-    if ctx.shared.new_interrupts.load(MemOrder::Relaxed) != 0 { check_interrupt(ctx) }
-}
 
 fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
     let bits = crate::emu::read_memory::<u16>(*pc);
