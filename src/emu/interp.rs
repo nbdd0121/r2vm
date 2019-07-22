@@ -495,6 +495,8 @@ impl ICache {
     }
 
     fn alloc_size(&mut self, size: usize) -> usize {
+        // Enforce alignment
+        let size = (size + 7) &! 7;
         // Crossing half-boundary
         let rollover = if self.heap_offset <= HEAP_SIZE / 2 && self.heap_offset + size > HEAP_SIZE / 2 {
             true
@@ -526,18 +528,43 @@ impl ICache {
     }
 }
 
+#[cfg(not(feature = "thread"))]
 lazy_static! {
     static ref ICACHE: spin::Mutex<ICache> = {
         spin::Mutex::new(ICache::new())
     };
 }
 
+#[cfg(not(feature = "thread"))]
 fn icache(_hartid: u64) -> spin::MutexGuard<'static, ICache> {
     ICACHE.lock()
 }
 
+#[cfg(not(feature = "thread"))]
 fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
     std::iter::once(&ICACHE).map(|x| x.lock())
+}
+
+#[cfg(feature = "thread")]
+lazy_static! {
+    static ref ICACHE: Vec<spin::Mutex<ICache>> = {
+        let core_count = unsafe{crate::CONTEXTS.len()};
+        let mut vec = Vec::with_capacity(core_count);
+        for _ in 0..core_count {
+            vec.push(spin::Mutex::new(ICache::new()));
+        }
+        vec
+    };
+}
+
+#[cfg(feature = "thread")]
+fn icache(hartid: u64) -> spin::MutexGuard<'static, ICache> {
+    ICACHE[hartid as usize].lock()
+}
+
+#[cfg(feature = "thread")]
+fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
+    ICACHE.iter().map(|x| x.lock())
 }
 
 extern {
