@@ -103,7 +103,6 @@ pub struct Context {
     // in assembly.
     pub scause: u64,
     pub stval: u64,
-    pub cur_block: Option<&'static DbtBlock>,
 
     // Floating point states
     pub fp_registers: [u64; 32],
@@ -427,15 +426,6 @@ fn ptr_vaddr_x<T>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
 
 use std::collections::BTreeMap;
 
-#[derive(Clone, Copy)]
-pub struct DbtBlock {
-    /// Decoded instructions. This is pinned, as the translated code will reference its absolute location.
-    pub block: &'static [(Op, bool)],
-    pub code: &'static [u8],
-    pub pc_start: u64,
-    pub pc_end: u64,
-}
-
 /// DBT-ed instruction cache
 /// ========================
 ///
@@ -464,7 +454,7 @@ pub struct DbtBlock {
 const HEAP_SIZE: usize = 1024 * 1024 * 128;
 
 struct ICache {
-    pub map: BTreeMap<u64, &'static DbtBlock>,
+    pub map: BTreeMap<u64, unsafe extern "C" fn()>,
     heap_start: usize,
     heap_offset: usize,
 }
@@ -504,6 +494,7 @@ impl ICache {
         ret
     }
 
+    #[allow(dead_code)]
     unsafe fn alloc<T: Copy>(&mut self) -> &'static mut T {
         let size = std::mem::size_of::<T>();
         &mut *(self.alloc_size(size) as *mut T)
@@ -1632,7 +1623,7 @@ fn decode_block(mut pc: u64, pc_next: u64) -> (Vec<(Op, bool)>, u64, u64) {
     (vec, start_pc, pc)
 }
 
-fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> &'static DbtBlock {
+fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsafe extern "C" fn() {
     let (vec, start, end) = decode_block(phys_pc, phys_pc_next);
     let op_slice = unsafe { icache.alloc_slice(vec.len()) };
     op_slice.copy_from_slice(&vec);
@@ -1643,14 +1634,8 @@ fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> &'sta
     let code = unsafe { icache.alloc_slice(compiler.buffer.len()) };
     code.copy_from_slice(&compiler.buffer);
 
-    let block = unsafe { icache.alloc() };
-    *block = DbtBlock {
-        block: op_slice,
-        code: code,
-        pc_start: start,
-        pc_end: end,
-    };
-    icache.map.insert(phys_pc, block);
+    let code_fn = unsafe { std::mem::transmute(code.as_ptr() as usize) };
+    icache.map.insert(phys_pc, code_fn);
 
     unsafe {
         for i in 0..crate::CONTEXTS.len() {
@@ -1659,7 +1644,7 @@ fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> &'sta
         }
     }
 
-    block
+    code_fn
 }
 
 #[no_mangle]
@@ -1673,7 +1658,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
         }
     };
     let mut icache = icache(ctx.hartid);
-    let dbtblk: &DbtBlock = match icache.map.get(&phys_pc).map(|x|*x) {
+    match icache.map.get(&phys_pc).map(|x|*x) {
         Some(v) => v,
         None => {
             // Ignore error in this case
@@ -1683,10 +1668,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
             };
             translate_code(&mut icache, phys_pc, phys_pc_next)
         }
-    };
-
-    ctx.cur_block = Some(dbtblk);
-    unsafe { std::mem::transmute(dbtblk.code.as_ptr() as usize) }
+    }
 }
 
 #[no_mangle]
@@ -1704,7 +1686,7 @@ fn find_block_and_patch(ctx: &mut Context, ret: usize) {
 
     // Access the cache for blocks
     let mut icache = icache(ctx.hartid);
-    let dbtblk: &DbtBlock = match icache.map.get(&phys_pc).map(|x|*x) {
+    let dbt_code = match icache.map.get(&phys_pc).map(|x|*x) {
         Some(v) => v,
         None => {
             // Ignore error in this case
@@ -1717,9 +1699,8 @@ fn find_block_and_patch(ctx: &mut Context, ret: usize) {
     };
 
     unsafe { std::ptr::write_unaligned((ret - 25) as *mut u64, phys_pc) };
-    let jump_offset = (dbtblk.code.as_ptr() as isize - ret as isize - 22) as u32;
-    unsafe { std::ptr::write_unaligned((ret + 18) as *mut u32, jump_offset) };
-    unsafe { std::ptr::write_unaligned((ret + 2) as *mut u64, dbtblk as *const DbtBlock as usize as u64) };
+    let jump_offset = (dbt_code as usize as isize - ret as isize - 5) as u32;
+    unsafe { std::ptr::write_unaligned((ret + 1) as *mut u32, jump_offset) };
 }
 
 #[no_mangle]
@@ -1738,7 +1719,6 @@ pub fn check_interrupt(ctx: &mut Context) {
     // Find the highest priority interrupt
     let pending = 63 - interrupt_mask.leading_zeros() as u64;
     // Interrupts have the highest bit set
-    // TODO: Reconsider atomicity
     ctx.scause = (1 << 63) | pending;
     ctx.stval = 0;
     trap(ctx);

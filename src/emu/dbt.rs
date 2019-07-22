@@ -319,12 +319,6 @@ impl DbtCompiler {
         self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
         // 2 bytes
         self.emit(Call(OpReg(Register::RAX)));
-
-        // Set cur_block
-        // 10 bytes
-        self.emit(Mov(Reg(Register::RAX), Imm(0x100000000)));
-        // 7 bytes
-        self.emit(Mov(Mem(Register::RBP + offset_of!(Context, cur_block) as i32), OpReg(Register::RAX)));
         self.emit(Jmp(Imm(0x7fffffff)));
     }
 
