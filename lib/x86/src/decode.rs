@@ -317,6 +317,7 @@ impl<'a> Decoder<'a> {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Self::decode_shift(operand, OpReg(Register::CL), reg)
             }
+            0xE8 => Op::Call(Imm(self.dword() as i32 as i64)),
             0xE9 => Op::Jmp(Imm(self.dword() as i32 as i64)),
             0xEB => Op::Jmp(Imm(self.byte() as i8 as i64)),
             0xF7 => {

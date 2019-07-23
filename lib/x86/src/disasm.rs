@@ -1,4 +1,5 @@
 use super::{Op};
+use super::Operand;
 
 pub fn mnemonic(op: &Op) -> &'static str {
     match *op {
@@ -91,6 +92,16 @@ pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
         Op::Sub(dst, src) |
         Op::Test(dst, src) |
         Op::Xor(dst, src) => eprint!("{}, {}", dst, src),
+        &Op::Call(Operand::Imm(imm)) |
+        &Op::Jmp(Operand::Imm(imm)) => {
+            let target_pc = pc.wrapping_add(code.len() as u64).wrapping_add(imm as u64);
+            let (sign, imm) = if imm < 0 {
+                ('-', -imm)
+            } else {
+                ('+', imm)
+            };
+            eprint!("pc {} {} <{:x}>", sign, imm, target_pc)
+        }
         Op::Call(src) |
         Op::Jmp(src) |
         Op::Push(src) => eprint!("{}", src),
