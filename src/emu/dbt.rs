@@ -38,21 +38,12 @@ fn memory_of_pc() -> Memory {
 extern "C" {
     fn helper_region_start();
     fn helper_yield();
-
-    #[allow(improper_ctypes)]
-    fn helper_step(ctx: &mut Context, op: &Op);
-
-    #[allow(improper_ctypes)]
-    fn helper_translate_cache_miss(ctx: &mut Context, addr: u64, write: bool);
-
-    #[allow(improper_ctypes)]
-    fn helper_icache_miss(ctx: &mut Context, addr: u64);
-
-    fn helper_icache_wrong();
-
-    fn helper_check_interrupt();
-
+    fn helper_step();
     fn helper_misalign();
+    fn helper_translate_cache_miss();
+    fn helper_icache_miss();
+    fn helper_icache_wrong();
+    fn helper_check_interrupt();
 }
 
 struct Label(usize);
@@ -196,13 +187,18 @@ impl<'a> DbtCompiler<'a> {
         self.patch_absolute(placeholder, helper_reloc);
     }
 
+    fn emit_helper_jmp(&mut self, helper: unsafe extern "C" fn()) {
+        self.emit(Jmp(Imm(0x77777777)));
+        let placeholder = PlaceHolder::Dword(self.len);
+        let helper_reloc = helper as usize - helper_region_start as usize + self.helper;
+        self.patch_absolute(placeholder, helper_reloc);
+    }
+
     fn emit_step_call(&mut self, op: &Op) {
         // Functional-unit type instruction. Simply step through them.
         self.emit(Mov(Reg(Register::RSI), Imm(op as *const Op as usize as i64)));
         self.emit_set_ebx();
-        let step_fn: usize = helper_step as *const () as usize;
-        self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
-        self.emit(Call(OpReg(Register::RAX)));
+        self.emit_helper_call(helper_step);
     }
 
     //
@@ -294,13 +290,9 @@ impl<'a> DbtCompiler<'a> {
         // RDX = ctx.line[(idx & 1023)].tag
         self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
 
-        self.emit(Jcc(12, ConditionCode::Equal));
+        self.emit(Jcc(5, ConditionCode::Equal));
 
-        let ffn = helper_icache_miss as *const () as usize;
-        // 10 bytes
-        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-        // 2 bytes
-        self.emit(Call(OpReg(Register::RAX)));
+        self.emit_helper_call(helper_icache_miss);
     }
 
     fn emit_chain_tail(&mut self) {
@@ -324,26 +316,18 @@ impl<'a> DbtCompiler<'a> {
 
         // Check if the current block is the intended block to execute
         self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
-        self.emit(Jmp(Imm(12)));
+        self.emit(Jmp(Imm(5)));
 
-        let ffn = helper_icache_miss as *const () as usize;
-        // 10 bytes
-        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-        // 2 bytes
-        self.emit(Call(OpReg(Register::RAX)));
+        self.emit_helper_call(helper_icache_miss);
 
         // Check if the current block is the intended block to execute
         self.emit(Mov(Reg(Register::RAX), Imm(0x100000000)));
         // 3 bytes
         self.emit(Cmp(Reg(Register::RAX), OpReg(Register::RSI)));
         // 2 bytes
-        self.emit(Jcc(12, ConditionCode::Equal));
+        self.emit(Jcc(5, ConditionCode::Equal));
 
-        let ffn = helper_icache_wrong as *const () as usize;
-        // 10 bytes
-        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-        // 2 bytes
-        self.emit(Call(OpReg(Register::RAX)));
+        self.emit_helper_call(helper_icache_wrong);
         self.emit(Jmp(Imm(0x7fffffff)));
     }
 
@@ -352,9 +336,7 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Cmp(Mem(Register::RBP + offset as i32), Imm(0)));
         let jcc_fin = self.emit_jcc_short(ConditionCode::Equal);
 
-        let ffn = helper_check_interrupt as *const () as usize;
-        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-        self.emit(Jmp(OpReg(Register::RAX)));
+        self.emit_helper_jmp(helper_check_interrupt);
 
         let label_fin = self.label();
         self.patch(jcc_fin, label_fin);
@@ -401,9 +383,7 @@ impl<'a> DbtCompiler<'a> {
 
             self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
             self.emit_set_ebx();
-            let ffn = helper_misalign as *const () as usize;
-            self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-            self.emit(Call(OpReg(Register::RAX)));
+            self.emit_helper_call(helper_misalign);
         }
 
         let label_miss = self.label();
@@ -411,9 +391,7 @@ impl<'a> DbtCompiler<'a> {
 
         self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
         self.emit_set_ebx();
-        let ffn = helper_translate_cache_miss as *const () as usize;
-        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-        self.emit(Call(OpReg(Register::RAX)));
+        self.emit_helper_call(helper_translate_cache_miss);
 
         let label_fin = self.label();
         self.patch(jmp_fin, label_fin);
@@ -457,9 +435,7 @@ impl<'a> DbtCompiler<'a> {
 
             self.emit(Mov(Reg(Register::EDX), Imm(1)));
             self.emit_set_ebx();
-            let ffn = helper_misalign as *const () as usize;
-            self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-            self.emit(Call(OpReg(Register::RAX)));
+            self.emit_helper_call(helper_misalign);
         }
 
         let label_miss = self.label();
@@ -467,9 +443,7 @@ impl<'a> DbtCompiler<'a> {
 
         self.emit(Mov(Reg(Register::EDX), Imm(1)));
         self.emit_set_ebx();
-        let ffn = helper_translate_cache_miss as *const () as usize;
-        self.emit(Mov(Reg(Register::RAX), Imm(ffn as i64)));
-        self.emit(Call(OpReg(Register::RAX)));
+        self.emit_helper_call(helper_translate_cache_miss);
 
         let label_store = self.label();
         self.patch(jmp_store, label_store);

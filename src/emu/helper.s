@@ -1,5 +1,7 @@
 .intel_syntax noprefix
 
+# All helper functions are called with RSP misaligned to 16-byte boundary
+# So when return address is pushed, they are properly aligned
 .global helper_region_start
 helper_region_start:
 
@@ -12,15 +14,6 @@ helper_yield:
     mov rsp, [rbp - 32]
     ret
 
-.global helper_region_end
-helper_region_end:
-
-.global helper_trap
-.extern trap
-
-# All helper functions are called with RSP misaligned to 16-byte boundary
-# So when return address is pushed, they are properly aligned
-
 # RSI -> vaddr
 .global helper_misalign
 helper_misalign:
@@ -30,6 +23,8 @@ helper_misalign:
     mov [rbp + 32 * 8 + 40], rsi
     # Fall-through to helper_trap
 
+.global helper_trap
+.extern trap
 helper_trap:
     # RDI -> context
     mov rdi, rbp
@@ -39,17 +34,18 @@ helper_trap:
     sub [rbp + 0x100], rax
     shr ebx, 16
     sub [rbp + 0x108], rbx
-    call trap
+    movabs rax, offset trap
+    call rax
     # Pop out trapping PC
     add rsp, 8
     ret
 
-.global helper_step
 .extern riscv_step
-
+.global helper_step
 helper_step:
     mov rdi, rbp
-    call riscv_step
+    movabs rax, offset riscv_step
+    call rax
     test al, al
     jnz helper_trap
     ret
@@ -58,7 +54,8 @@ helper_step:
 .extern translate_cache_miss
 helper_translate_cache_miss:
     mov rdi, rbp
-    call translate_cache_miss
+    movabs rax, offset translate_cache_miss
+    call rax
     test al, al
     jnz helper_trap
     mov rsi, rdx
@@ -68,7 +65,8 @@ helper_translate_cache_miss:
 .extern insn_translate_cache_miss
 helper_icache_miss:
     mov rdi, rbp
-    call insn_translate_cache_miss
+    movabs rax, offset insn_translate_cache_miss
+    call rax
     test al, al
     jnz 1f
     mov rsi, rdx
@@ -79,7 +77,8 @@ helper_icache_miss:
 
     # this makes sense in the begin block only!!!!
     mov rdi, rbp
-    call trap
+    movabs rax, offset trap
+    call rax
     add rsp, 8
     ret
 
@@ -89,11 +88,17 @@ helper_icache_wrong:
     mov rdi, rbp
     # Load return address into RSI
     mov rsi, [rsp]
-    call find_block_and_patch
+    movabs rax, offset find_block_and_patch
+    call rax
     ret
 
 .global helper_check_interrupt
 .extern check_interrupt
 helper_check_interrupt:
     mov rdi, rbp
-    jmp check_interrupt
+    movabs rax, offset check_interrupt
+    jmp rax
+
+.global helper_region_end
+helper_region_end:
+    nop
