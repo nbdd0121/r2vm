@@ -471,11 +471,14 @@ impl ICache {
         }
     }
 
-    fn alloc_size(&mut self, size: usize) -> usize {
+    // Make sure that there are enough space for next allocation.
+    // Returns the reserved space.
+    unsafe fn ensure_size(&mut self, size: usize) -> &'static mut [u8] {
         // Enforce alignment
         let size = (size + 7) &! 7;
         // Crossing half-boundary
-        let rollover = if self.heap_offset <= HEAP_SIZE / 2 && self.heap_offset + size > HEAP_SIZE / 2 {
+        let rollover = if self.heap_offset < HEAP_SIZE / 2 && self.heap_offset + size >= HEAP_SIZE / 2 {
+            self.heap_offset = HEAP_SIZE / 2;
             true
         } else if self.heap_offset + size > HEAP_SIZE {
             // Rollover, start from zero
@@ -489,6 +492,13 @@ impl ICache {
             self.map.clear();
         }
 
+        std::slice::from_raw_parts_mut((self.heap_offset + self.heap_start) as *mut u8, size)
+    }
+
+    fn alloc_size(&mut self, size: usize) -> usize {
+        // Enforce alignment
+        let size = (size + 7) &! 7;
+        unsafe { self.ensure_size(size) };
         let ret = self.heap_offset + self.heap_start;
         self.heap_offset += size;
         ret
@@ -1625,14 +1635,19 @@ fn decode_block(mut pc: u64, pc_next: u64) -> (Vec<(Op, bool)>, u64, u64) {
 
 fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsafe extern "C" fn() {
     let (vec, start, end) = decode_block(phys_pc, phys_pc_next);
+
     let op_slice = unsafe { icache.alloc_slice(vec.len()) };
     op_slice.copy_from_slice(&vec);
 
-    let mut compiler = super::dbt::DbtCompiler::new();
-    compiler.compile((&op_slice, start, end));
-
-    let code = unsafe { icache.alloc_slice(compiler.buffer.len()) };
-    code.copy_from_slice(&compiler.buffer);
+    // Reserve some space for the DBT compiler.
+    // This uses a very relax upper bound guess about size of DBT-ed block.
+    let code = unsafe { icache.ensure_size(vec.len() * 128 + 512) };
+    {
+        let mut compiler = super::dbt::DbtCompiler::new(code);
+        compiler.compile((&op_slice, start, end));
+        // Actually commit the space we allocated
+        icache.alloc_size(compiler.len);
+    }
 
     let code_fn = unsafe { std::mem::transmute(code.as_ptr() as usize) };
     icache.map.insert(phys_pc, code_fn);

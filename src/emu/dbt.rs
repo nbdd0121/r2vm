@@ -12,8 +12,9 @@ use crate::riscv::Op;
 use super::interp::{Context, SharedContext};
 use std::convert::TryFrom;
 
-pub struct DbtCompiler {
-    pub buffer: Vec<u8>,
+pub struct DbtCompiler<'a> {
+    pub buffer: &'a mut [u8],
+    pub len: usize,
     pub interp: bool,
     minstret: u32,
     i_rel: usize,
@@ -61,10 +62,11 @@ impl Drop for PlaceHolder {
     }
 }
 
-impl DbtCompiler {
-    pub fn new() -> DbtCompiler {
+impl<'a> DbtCompiler<'a> {
+    pub fn new(code: &'a mut [u8]) -> DbtCompiler {
         DbtCompiler {
-            buffer: Vec::new(),
+            buffer: code,
+            len: 0,
             interp: false,
             minstret: 0,
             i_rel: 0,
@@ -74,27 +76,28 @@ impl DbtCompiler {
 
     fn emit(&mut self, op: X86Op) {
         crate::x86::encode(op, &mut |x| {
-            self.buffer.push(x)
+            self.buffer[self.len] = x;
+            self.len += 1;
         });
     }
 
     fn emit_jcc_short(&mut self, cc: ConditionCode) -> PlaceHolder {
         self.emit(Jcc(0, cc));
-        PlaceHolder::Byte(self.buffer.len())
+        PlaceHolder::Byte(self.len)
     }
 
     fn emit_jcc_long(&mut self, cc: ConditionCode) -> PlaceHolder {
         self.emit(Jcc(0x80, cc));
-        PlaceHolder::Dword(self.buffer.len())
+        PlaceHolder::Dword(self.len)
     }
 
     fn emit_jmp_short(&mut self) -> PlaceHolder {
         self.emit(Jmp(Imm(0)));
-        PlaceHolder::Byte(self.buffer.len())
+        PlaceHolder::Byte(self.len)
     }
 
     fn label(&mut self) -> Label {
-        Label(self.buffer.len())
+        Label(self.len)
     }
 
     fn patch(&mut self, place: PlaceHolder, label: Label) {
@@ -347,7 +350,7 @@ impl DbtCompiler {
 
         // Check for alignment
         let jcc_misalign = if size != Size::Byte {
-            self.emit(Test(Reg(Register::RSI), Imm(size.bytes() as i64 - 1)));
+            self.emit(Test(Reg(Register::ESI), Imm(size.bytes() as i64 - 1)));
             Some(self.emit_jcc_short(ConditionCode::NotEqual))
         } else { None };
 
@@ -404,7 +407,7 @@ impl DbtCompiler {
 
         // Check for alignment
         let jcc_misalign = if size != Size::Byte {
-            self.emit(Test(Reg(Register::RSI), Imm(size.bytes() as i64 - 1)));
+            self.emit(Test(Reg(Register::ESI), Imm(size.bytes() as i64 - 1)));
             Some(self.emit_jcc_short(ConditionCode::NotEqual))
         } else { None };
 
@@ -1352,7 +1355,7 @@ impl DbtCompiler {
         // Note minstret is not precisely tracked in case of exception
         let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
         self.emit(Add(Mem(mem_of_minstret), Imm(0x77777777)));
-        let fixup = self.buffer.len();
+        let fixup = self.len;
 
         let mut cur_pc = block.1;
 
@@ -1393,15 +1396,16 @@ impl DbtCompiler {
         self.buffer[fixup-4..fixup].copy_from_slice(&self.minstret.to_le_bytes());
 
         if crate::get_flags().disassemble {
+            let pc_offset = self.buffer.as_ptr() as usize;
             let mut pc = 0;
-            while pc < self.buffer.len() {
+            while pc < self.len {
                 let mut pc_next = pc;
                 let op = crate::x86::decode(&mut || {
                     let ret = self.buffer[pc_next];
                     pc_next += 1;
                     ret
                 });
-                crate::x86::disasm::print_instr(pc as u64, &self.buffer[pc..pc_next], &op);
+                crate::x86::disasm::print_instr((pc_offset + pc) as u64, &self.buffer[pc..pc_next], &op);
                 pc = pc_next;
             }
         }
