@@ -16,10 +16,6 @@ pub struct DbtCompiler<'a> {
     pub buffer: &'a mut [u8],
     pub len: usize,
     pub interp: bool,
-
-    /// The base location of relocated helper.
-    helper: usize,
-
     minstret: u32,
     i_rel: usize,
     pc_rel: u64,
@@ -36,7 +32,6 @@ fn memory_of_pc() -> Memory {
 }
 
 extern "C" {
-    fn helper_region_start();
     fn helper_yield();
     fn helper_step();
     fn helper_misalign();
@@ -59,12 +54,11 @@ impl Drop for PlaceHolder {
 }
 
 impl<'a> DbtCompiler<'a> {
-    pub fn new(code: &'a mut [u8], helper: usize) -> DbtCompiler {
+    pub fn new(code: &'a mut [u8]) -> DbtCompiler {
         DbtCompiler {
             buffer: code,
             len: 0,
             interp: false,
-            helper,
             minstret: 0,
             i_rel: 0,
             pc_rel: 0,
@@ -183,15 +177,13 @@ impl<'a> DbtCompiler<'a> {
     fn emit_helper_call(&mut self, helper: unsafe extern "C" fn()) {
         self.emit(Call(Imm(0x77777777)));
         let placeholder = PlaceHolder::Dword(self.len);
-        let helper_reloc = helper as usize - helper_region_start as usize + self.helper;
-        self.patch_absolute(placeholder, helper_reloc);
+        self.patch_absolute(placeholder, helper as usize);
     }
 
     fn emit_helper_jmp(&mut self, helper: unsafe extern "C" fn()) {
         self.emit(Jmp(Imm(0x77777777)));
         let placeholder = PlaceHolder::Dword(self.len);
-        let helper_reloc = helper as usize - helper_region_start as usize + self.helper;
-        self.patch_absolute(placeholder, helper_reloc);
+        self.patch_absolute(placeholder, helper as usize);
     }
 
     fn emit_step_call(&mut self, op: &Op) {

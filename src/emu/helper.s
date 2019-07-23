@@ -34,8 +34,7 @@ helper_trap:
     sub [rbp + 0x100], rax
     shr ebx, 16
     sub [rbp + 0x108], rbx
-    movabs rax, offset trap
-    call rax
+    call trap
     # Pop out trapping PC
     add rsp, 8
     ret
@@ -44,8 +43,7 @@ helper_trap:
 .global helper_step
 helper_step:
     mov rdi, rbp
-    movabs rax, offset riscv_step
-    call rax
+    call riscv_step
     test al, al
     jnz helper_trap
     ret
@@ -54,8 +52,7 @@ helper_step:
 .extern translate_cache_miss
 helper_translate_cache_miss:
     mov rdi, rbp
-    movabs rax, offset translate_cache_miss
-    call rax
+    call translate_cache_miss
     test al, al
     jnz helper_trap
     mov rsi, rdx
@@ -65,8 +62,7 @@ helper_translate_cache_miss:
 .extern insn_translate_cache_miss
 helper_icache_miss:
     mov rdi, rbp
-    movabs rax, offset insn_translate_cache_miss
-    call rax
+    call insn_translate_cache_miss
     test al, al
     jnz 1f
     mov rsi, rdx
@@ -77,8 +73,7 @@ helper_icache_miss:
 
     # this makes sense in the begin block only!!!!
     mov rdi, rbp
-    movabs rax, offset trap
-    call rax
+    call trap
     add rsp, 8
     ret
 
@@ -88,16 +83,14 @@ helper_icache_wrong:
     mov rdi, rbp
     # Load return address into RSI
     mov rsi, [rsp]
-    movabs rax, offset find_block_and_patch
-    call rax
+    call find_block_and_patch
     ret
 
 .global helper_check_interrupt
 .extern check_interrupt
 helper_check_interrupt:
     mov rdi, rbp
-    movabs rax, offset check_interrupt
-    jmp rax
+    jmp check_interrupt
 
 .global helper_region_end
 helper_region_end:
