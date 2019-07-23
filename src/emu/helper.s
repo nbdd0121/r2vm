@@ -1,5 +1,20 @@
 .intel_syntax noprefix
 
+.global helper_region_start
+helper_region_start:
+
+# This is a duplicate of fiber_yield_raw. It exists here so it can be copied
+# to be within +-4G of the DBT-ed code.
+.global helper_yield
+helper_yield:
+    mov [rbp - 32], rsp
+    mov rbp, [rbp - 16]
+    mov rsp, [rbp - 32]
+    ret
+
+.global helper_region_end
+helper_region_end:
+
 .global helper_trap
 .extern trap
 

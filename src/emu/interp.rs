@@ -455,17 +455,16 @@ const HEAP_SIZE: usize = 1024 * 1024 * 128;
 
 struct ICache {
     pub map: BTreeMap<u64, unsafe extern "C" fn()>,
+    helper: usize,
     heap_start: usize,
     heap_offset: usize,
 }
 
 impl ICache {
-    fn new() -> ICache {
-        let ptr = unsafe { libc::mmap(std::ptr::null_mut(), HEAP_SIZE as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
-        assert_ne!(ptr, libc::MAP_FAILED);
-        let ptr = ptr as usize;
+    fn new(ptr: usize, helper: usize) -> ICache {
         ICache {
             map: BTreeMap::default(),
+            helper,
             heap_start: ptr,
             heap_offset: 0,
         }
@@ -516,10 +515,28 @@ impl ICache {
     }
 }
 
+extern {
+    fn helper_region_start();
+    fn helper_region_end();
+}
+
+fn relocate_helper(target: &'static mut [u8]) {
+    // Helper location
+    let helper = unsafe { std::slice::from_raw_parts(
+        helper_region_start as usize as *const u8,
+        helper_region_end as usize - helper_region_start as usize) };
+    // Target location
+    target[..helper.len()].copy_from_slice(helper);
+}
+
 #[cfg(not(feature = "thread"))]
 lazy_static! {
     static ref ICACHE: spin::Mutex<ICache> = {
-        spin::Mutex::new(ICache::new())
+        let ptr = unsafe { libc::mmap(std::ptr::null_mut(), (HEAP_SIZE + 4096) as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
+        assert_ne!(ptr, libc::MAP_FAILED);
+        let ptr = ptr as usize;
+        relocate_helper(unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, 4096) });
+        spin::Mutex::new(ICache::new(ptr + 4096, ptr))
     };
 }
 
@@ -537,9 +554,14 @@ fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
 lazy_static! {
     static ref ICACHE: Vec<spin::Mutex<ICache>> = {
         let core_count = unsafe{crate::CONTEXTS.len()};
+
+        let ptr = unsafe { libc::mmap(std::ptr::null_mut(), (HEAP_SIZE * core_count + 4096) as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
+        assert_ne!(ptr, libc::MAP_FAILED);
+        let ptr = ptr as usize;
+        relocate_helper(unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, 4096) });
         let mut vec = Vec::with_capacity(core_count);
-        for _ in 0..core_count {
-            vec.push(spin::Mutex::new(ICache::new()));
+        for i in 0..core_count {
+            vec.push(spin::Mutex::new(ICache::new(ptr + HEAP_SIZE * i + 4096, ptr)));
         }
         vec
     };
@@ -1643,7 +1665,7 @@ fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsaf
     // This uses a very relax upper bound guess about size of DBT-ed block.
     let code = unsafe { icache.ensure_size(vec.len() * 128 + 512) };
     {
-        let mut compiler = super::dbt::DbtCompiler::new(code);
+        let mut compiler = super::dbt::DbtCompiler::new(code, icache.helper);
         compiler.compile((&op_slice, start, end));
         // Actually commit the space we allocated
         icache.alloc_size(compiler.len);

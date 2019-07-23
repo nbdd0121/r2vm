@@ -16,6 +16,10 @@ pub struct DbtCompiler<'a> {
     pub buffer: &'a mut [u8],
     pub len: usize,
     pub interp: bool,
+
+    /// The base location of relocated helper.
+    helper: usize,
+
     minstret: u32,
     i_rel: usize,
     pc_rel: u64,
@@ -32,6 +36,9 @@ fn memory_of_pc() -> Memory {
 }
 
 extern "C" {
+    fn helper_region_start();
+    fn helper_yield();
+
     #[allow(improper_ctypes)]
     fn helper_step(ctx: &mut Context, op: &Op);
 
@@ -46,8 +53,6 @@ extern "C" {
     fn helper_check_interrupt();
 
     fn helper_misalign();
-
-    fn fiber_yield_raw();
 }
 
 struct Label(usize);
@@ -63,11 +68,12 @@ impl Drop for PlaceHolder {
 }
 
 impl<'a> DbtCompiler<'a> {
-    pub fn new(code: &'a mut [u8]) -> DbtCompiler {
+    pub fn new(code: &'a mut [u8], helper: usize) -> DbtCompiler {
         DbtCompiler {
             buffer: code,
             len: 0,
             interp: false,
+            helper,
             minstret: 0,
             i_rel: 0,
             pc_rel: 0,
@@ -108,6 +114,17 @@ impl<'a> DbtCompiler<'a> {
             }
             PlaceHolder::Dword(ptr) => {
                 let offset = i32::try_from(label.0 as isize - ptr as isize).unwrap();
+                self.buffer[ptr-4..ptr].copy_from_slice(&offset.to_le_bytes());
+            }
+        }
+        std::mem::forget(place)
+    }
+
+    fn patch_absolute(&mut self, place: PlaceHolder, target: usize) {
+        match place {
+            PlaceHolder::Byte(_) => unimplemented!(),
+            PlaceHolder::Dword(ptr) => {
+                let offset = i32::try_from(target as isize - (self.buffer.as_ptr() as usize + ptr) as isize).unwrap();
                 self.buffer[ptr-4..ptr].copy_from_slice(&offset.to_le_bytes());
             }
         }
@@ -172,6 +189,13 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
     }
 
+    fn emit_helper_call(&mut self, helper: unsafe extern "C" fn()) {
+        self.emit(Call(Imm(0x77777777)));
+        let placeholder = PlaceHolder::Dword(self.len);
+        let helper_reloc = helper as usize - helper_region_start as usize + self.helper;
+        self.patch_absolute(placeholder, helper_reloc);
+    }
+
     fn emit_step_call(&mut self, op: &Op) {
         // Functional-unit type instruction. Simply step through them.
         self.emit(Mov(Reg(Register::RSI), Imm(op as *const Op as usize as i64)));
@@ -216,9 +240,7 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Add(Mem(memory_of_pc()), Imm(imm.wrapping_sub(4) as i64)));
 
         if cfg!(not(feature = "thread")) {
-            let step_fn: usize = fiber_yield_raw as *const () as usize;
-            self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
-            self.emit(Call(OpReg(Register::RAX)));
+            self.emit_helper_call(helper_yield);
         }
 
         self.emit_interrupt_check();
@@ -1382,9 +1404,7 @@ impl<'a> DbtCompiler<'a> {
             }
 
             if cfg!(not(feature = "fast")) || (cfg!(not(feature = "thread")) && i == opblock.len() - 1) {
-                let step_fn: usize = fiber_yield_raw as *const () as usize;
-                self.emit(Mov(Reg(Register::RAX), Imm(step_fn as i64)));
-                self.emit(Call(OpReg(Register::RAX)));
+                self.emit_helper_call(helper_yield);
             }
         }
 
