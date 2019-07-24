@@ -201,8 +201,9 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_step_call(&mut self, op: &Op) {
-        // Functional-unit type instruction. Simply step through them.
-        self.emit(Mov(Reg(Register::RSI), Imm(op as *const Op as usize as i64)));
+        // We currently assume that the instruction that we step through are exactly 8 bytes.
+        let op: u64 = unsafe { std::mem::transmute(*op) };
+        self.emit(Mov(Reg(Register::RSI), Imm(op as i64)));
         self.emit_set_ebx();
         self.emit_helper_call(helper_step);
     }

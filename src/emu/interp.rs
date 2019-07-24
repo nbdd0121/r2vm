@@ -507,6 +507,7 @@ impl ICache {
         &mut *(self.alloc_size(size) as *mut T)
     }
 
+    #[allow(dead_code)]
     unsafe fn alloc_slice<T: Copy>(&mut self, len: usize) -> &'static mut [T] {
         let size = std::mem::size_of::<T>();
         std::slice::from_raw_parts_mut(self.alloc_size(size * len) as *mut T, len)
@@ -640,8 +641,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
     }
 }
 
-#[export_name = "riscv_step"]
-pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
+fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     macro_rules! read_reg {
         ($rs: expr) => {{
             let rs = $rs as usize;
@@ -1591,6 +1591,12 @@ pub fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     Ok(())
 }
 
+#[no_mangle]
+pub fn riscv_step(ctx: &mut Context, op: u64) -> Result<(), ()> {
+    let op: Op = unsafe { std::mem::transmute(op) };
+    step(ctx, &op)
+}
+
 extern "C" fn no_op() {}
 
 fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
@@ -1640,15 +1646,12 @@ fn decode_block(mut pc: u64, pc_next: u64) -> (Vec<(Op, bool)>, u64, u64) {
 fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsafe extern "C" fn() {
     let (vec, start, end) = decode_block(phys_pc, phys_pc_next);
 
-    let op_slice = unsafe { icache.alloc_slice(vec.len()) };
-    op_slice.copy_from_slice(&vec);
-
     // Reserve some space for the DBT compiler.
     // This uses a very relax upper bound guess about size of DBT-ed block.
     let code = unsafe { icache.ensure_size(vec.len() * 128 + 512) };
     {
         let mut compiler = super::dbt::DbtCompiler::new(code);
-        compiler.compile((&op_slice, start, end));
+        compiler.compile((&vec, start, end));
         // Actually commit the space we allocated
         icache.alloc_size(compiler.len);
     }
