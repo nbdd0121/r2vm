@@ -32,9 +32,10 @@ fn memory_of_pc() -> Memory {
 }
 
 extern "C" {
-    fn helper_yield();
+    fn fiber_yield_raw();
     fn helper_step();
-    fn helper_misalign();
+    fn helper_read_misalign();
+    fn helper_write_misalign();
     fn helper_translate_cache_miss();
     fn helper_icache_miss();
     fn helper_icache_wrong();
@@ -111,6 +112,19 @@ impl<'a> DbtCompiler<'a> {
             PlaceHolder::Dword(ptr) => {
                 let offset = i32::try_from(target as isize - (self.buffer.as_ptr() as usize + ptr) as isize).unwrap();
                 self.buffer[ptr-4..ptr].copy_from_slice(&offset.to_le_bytes());
+            }
+        }
+        std::mem::forget(place)
+    }
+
+    fn patch_number(&mut self, place: PlaceHolder, target: usize) {
+        match place {
+            PlaceHolder::Byte(ptr) => {
+                self.buffer[ptr - 1] = target as u8;
+
+            }
+            PlaceHolder::Dword(ptr) => {
+                self.buffer[ptr-4..ptr].copy_from_slice(&(target as u32).to_le_bytes());
             }
         }
         std::mem::forget(place)
@@ -228,7 +242,7 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Add(Mem(memory_of_pc()), Imm(imm.wrapping_sub(4) as i64)));
 
         if cfg!(not(feature = "thread")) {
-            self.emit_helper_call(helper_yield);
+            self.emit_helper_call(fiber_yield_raw);
         }
 
         self.emit_interrupt_check();
@@ -326,12 +340,8 @@ impl<'a> DbtCompiler<'a> {
     fn emit_interrupt_check(&mut self) {
         let offset = offset_of!(Context, shared) + offset_of!(SharedContext, new_interrupts);
         self.emit(Cmp(Mem(Register::RBP + offset as i32), Imm(0)));
-        let jcc_fin = self.emit_jcc_short(ConditionCode::Equal);
-
-        self.emit_helper_jmp(helper_check_interrupt);
-
-        let label_fin = self.label();
-        self.patch(jcc_fin, label_fin);
+        let jcc_helper = self.emit_jcc_long(ConditionCode::NotEqual);
+        self.patch_absolute(jcc_helper, helper_check_interrupt as usize);
     }
 
     /// Shared routine for generating load code. Note that this routine does not perform the
@@ -373,9 +383,8 @@ impl<'a> DbtCompiler<'a> {
             let label_misalign = self.label();
             self.patch(jcc_misalign.unwrap(), label_misalign);
 
-            self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
             self.emit_set_ebx();
-            self.emit_helper_call(helper_misalign);
+            self.emit_helper_jmp(helper_read_misalign);
         }
 
         let label_miss = self.label();
@@ -425,9 +434,8 @@ impl<'a> DbtCompiler<'a> {
             let label_misalign = self.label();
             self.patch(jcc_misalign.unwrap(), label_misalign);
 
-            self.emit(Mov(Reg(Register::EDX), Imm(1)));
             self.emit_set_ebx();
-            self.emit_helper_call(helper_misalign);
+            self.emit_helper_jmp(helper_write_misalign);
         }
 
         let label_miss = self.label();
@@ -1342,8 +1350,13 @@ impl<'a> DbtCompiler<'a> {
         // Increase minstret, the immediate is a placeholder and will be patched later
         // Note minstret is not precisely tracked in case of exception
         let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
-        self.emit(Add(Mem(mem_of_minstret), Imm(0x77777777)));
-        let fixup = self.len;
+        let fixup = if opblock.len() > 0x7F {
+            self.emit(Add(Mem(mem_of_minstret), Imm(0x77777777)));
+            PlaceHolder::Dword(self.len)
+        } else {
+            self.emit(Add(Mem(mem_of_minstret), Imm(0x77)));
+            PlaceHolder::Byte(self.len)
+        };
 
         let mut cur_pc = block.1;
 
@@ -1370,7 +1383,7 @@ impl<'a> DbtCompiler<'a> {
             }
 
             if cfg!(not(feature = "fast")) || (cfg!(not(feature = "thread")) && i == opblock.len() - 1) {
-                self.emit_helper_call(helper_yield);
+                self.emit_helper_call(fiber_yield_raw);
             }
         }
 
@@ -1379,7 +1392,7 @@ impl<'a> DbtCompiler<'a> {
         self.emit_chain_tail();
 
         // Patch up minstret
-        self.buffer[fixup-4..fixup].copy_from_slice(&self.minstret.to_le_bytes());
+        self.patch_number(fixup, self.minstret as usize);
 
         if crate::get_flags().disassemble {
             let pc_offset = self.buffer.as_ptr() as usize;

@@ -100,7 +100,7 @@ pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
             } else {
                 ('+', imm)
             };
-            eprint!("pc {} {} <{:x}>", sign, imm, target_pc)
+            eprint!("pc {} {:#x} <{:x}>", sign, imm, target_pc)
         }
         Op::Call(src) |
         Op::Jmp(src) |
@@ -115,7 +115,15 @@ pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
         Op::Not(dst) |
         Op::Pop(dst) |
         Op::Setcc(dst, _) => eprint!("{}", dst),
-        Op::Jcc(target, _) => eprint!("{:#x}", target),
+        &Op::Jcc(imm, _) => {
+            let target_pc = pc.wrapping_add(code.len() as u64).wrapping_add(imm as u64);
+            let (sign, imm) = if imm < 0 {
+                ('-', -imm)
+            } else {
+                ('+', imm)
+            };
+            eprint!("pc {} {:#x} <{:x}>", sign, imm, target_pc)
+        }
         Op::Lea(dst, src) => eprint!("{}, {}", dst, src),
         Op::Movabs(dst, src) => eprint!("{}, {}", dst, src),
         Op::Movsx(dst, src) |

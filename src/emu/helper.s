@@ -2,26 +2,6 @@
 
 # All helper functions are called with RSP misaligned to 16-byte boundary
 # So when return address is pushed, they are properly aligned
-.global helper_region_start
-helper_region_start:
-
-# This is a duplicate of fiber_yield_raw. It exists here so it can be copied
-# to be within +-4G of the DBT-ed code.
-.global helper_yield
-helper_yield:
-    mov [rbp - 32], rsp
-    mov rbp, [rbp - 16]
-    mov rsp, [rbp - 32]
-    ret
-
-# RSI -> vaddr
-.global helper_misalign
-helper_misalign:
-    add edx, 4
-    # Set scause and stval
-    mov [rbp + 32 * 8 + 32], rdx
-    mov [rbp + 32 * 8 + 40], rsi
-    # Fall-through to helper_trap
 
 .global helper_trap
 .extern trap
@@ -38,6 +18,22 @@ helper_trap:
     # Pop out trapping PC
     add rsp, 8
     ret
+
+# RSI -> vaddr
+.global helper_read_misalign
+helper_read_misalign:
+    # Set scause and stval
+    mov qword ptr [rbp + 32 * 8 + 32], 4
+    mov [rbp + 32 * 8 + 40], rsi
+    call helper_trap
+
+# RSI -> vaddr
+.global helper_write_misalign
+helper_write_misalign:
+    # Set scause and stval
+    mov qword ptr [rbp + 32 * 8 + 32], 5
+    mov [rbp + 32 * 8 + 40], rsi
+    call helper_trap
 
 .extern riscv_step
 .global helper_step
@@ -91,7 +87,3 @@ helper_icache_wrong:
 helper_check_interrupt:
     mov rdi, rbp
     jmp check_interrupt
-
-.global helper_region_end
-helper_region_end:
-    nop
