@@ -20,9 +20,9 @@ const OFFSET_INTERRUPT_CLAIM     : usize = 0x004;
 pub struct Plic {
     priority: [u8; 32],
     pending: u32,
+    claimed: u32,
     enable: Box<[u32]>,
     threshold: Box<[u8]>,
-    claimed: Box<[u32]>,
 }
 
 impl Plic {
@@ -33,7 +33,7 @@ impl Plic {
             pending: 0,
             enable: vec![0; ctx].into_boxed_slice(),
             threshold: vec![0; ctx].into_boxed_slice(),
-            claimed: vec![0; ctx].into_boxed_slice(),
+            claimed: 0,
         }
     }
 
@@ -45,7 +45,7 @@ impl Plic {
 
     /// Check if there are IRQs pending for a context
     fn pending(&self, ctx: usize) -> bool {
-        let claimable = (self.pending &! self.claimed[ctx]) & self.enable[ctx];
+        let claimable = (self.pending &! self.claimed) & self.enable[ctx];
         for irq in 1..32 {
             let prio = self.priority[irq];
             let enabled = (claimable & (1 << irq)) != 0;
@@ -67,7 +67,7 @@ impl Plic {
     }
 
     fn claim(&mut self, ctx: usize) -> u32 {
-        let claimable = (self.pending &! self.claimed[ctx]) & self.enable[ctx];
+        let claimable = (self.pending &! self.claimed) & self.enable[ctx];
         let mut cur_irq = 0;
         // According to document, the claim operation is not affected by the setting of priority
         // threshold register, and can claim even if EIP is low.
@@ -82,7 +82,7 @@ impl Plic {
         }
         if cur_irq != 0 {
             self.pending &= !(1 << cur_irq);
-            self.claimed[ctx] |= 1 << cur_irq;
+            self.claimed |= 1 << cur_irq;
             // If something is claimed, then the pending state will change, so recompute
             self.recompute_pending();
         }
@@ -221,7 +221,7 @@ impl IoMemory for Plic {
                         trace!(target: "PLIC", "{} set priority threshold to {}", ctx, self.threshold[ctx]);
                     }
                     OFFSET_INTERRUPT_CLAIM => {
-                        self.claimed[ctx] &=! (1 << value);
+                        self.claimed &=! (1 << value);
                         trace!(target: "PLIC", "{} completed interrupt {}", ctx, value);
                     }
                     // Out of bound write
