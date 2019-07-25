@@ -1726,6 +1726,37 @@ fn find_block_and_patch(ctx: &mut Context, ret: usize) {
 }
 
 #[no_mangle]
+fn find_block_and_patch2(ctx: &mut Context, ret: usize) {
+    let pc = ctx.pc;
+    let phys_pc = match insn_translate(ctx, pc) {
+        Ok(pc) => pc,
+        Err(_) => {
+            trap(ctx);
+            unreachable!();
+            // return no_op
+        }
+    };
+
+    // Access the cache for blocks
+    let mut icache = icache(ctx.hartid);
+    let dbt_code = match icache.map.get(&phys_pc).map(|x|*x) {
+        Some(v) => v,
+        None => {
+            // Ignore error in this case
+            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
+                Ok(pc) => pc,
+                Err(_) => 0,
+            };
+            translate_code(&mut icache, phys_pc, phys_pc_next)
+        }
+    };
+
+    unsafe { std::ptr::write_unaligned((ret - 5) as *mut u8, 0xE9) };
+    let jump_offset = (dbt_code as usize as isize - ret as isize) as u32;
+    unsafe { std::ptr::write_unaligned((ret - 4) as *mut u32, jump_offset) };
+}
+
+#[no_mangle]
 /// Check if an enabled interrupt is pending, and take it if so.
 pub fn check_interrupt(ctx: &mut Context) {
     let _ = ctx.shared.new_interrupts.swap(0, MemOrder::Acquire);

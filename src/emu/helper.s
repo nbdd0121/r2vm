@@ -82,6 +82,17 @@ helper_icache_wrong:
     call find_block_and_patch
     ret
 
+
+.global helper_icache_patch2
+.extern find_block_and_patch2
+helper_icache_patch2:
+    mov rdi, rbp
+    # Load return address into RSI
+    mov rsi, [rsp]
+    call find_block_and_patch2
+    sub qword ptr [rsp], 5
+    ret
+
 .global helper_check_interrupt
 .extern check_interrupt
 helper_check_interrupt:
