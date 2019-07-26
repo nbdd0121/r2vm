@@ -231,45 +231,6 @@ pub fn main() {
         emu::init();
     }
 
-    let mut ctx = emu::interp::Context {
-        shared: emu::interp::SharedContext::new(),
-        registers: [0xCCCCCCCCCCCCCCCC; 32],
-        fp_registers: [0xFFFFFFFFFFFFFFFF; 32],
-        fcsr: 0,
-        instret: 0,
-        lr_addr: 0,
-        lr_value: 0,
-        // FPU turned on by default
-        sstatus: 0x6000,
-        scause: 0,
-        sepc: 0,
-        stval: 0,
-        satp: 0,
-        sie: 0,
-        sscratch: 0,
-        stvec: 0,
-        timecmp: u64::max_value(),
-        // These are set by setup_mem, so we don't really care now.
-        pc: 0,
-        prv: 0,
-        hartid: 0,
-        minstret: 0,
-        line: [emu::interp::CacheLine {
-            tag: i64::max_value() as u64,
-            paddr: 0
-        }; 1024],
-        i_line: [emu::interp::CacheLine {
-            tag: i64::max_value() as u64,
-            paddr: 0
-        }; 1024],
-    };
-    // x0 must always be 0
-    ctx.registers[0] = 0;
-
-    // Load the program
-    unsafe { emu::loader::load(&loader, &mut ctx, &mut std::iter::once(program_name).chain(args)) };
-    std::mem::drop(loader);
-
     // Create fibers for all threads
     let mut fibers = Vec::new();
     let mut contexts = Vec::new();
@@ -283,8 +244,40 @@ pub fn main() {
     fibers.push(event_fiber);
 
     for i in 0..num_cores {
-        let mut newctx = ctx.clone();
-        newctx.registers[10] = i as u64;
+        let mut newctx = emu::interp::Context {
+            shared: emu::interp::SharedContext::new(),
+            registers: [0xCCCCCCCCCCCCCCCC; 32],
+            fp_registers: [0xFFFFFFFFFFFFFFFF; 32],
+            fcsr: 0,
+            instret: 0,
+            lr_addr: 0,
+            lr_value: 0,
+            // FPU turned on by default
+            sstatus: 0x6000,
+            scause: 0,
+            sepc: 0,
+            stval: 0,
+            satp: 0,
+            sie: 0,
+            sscratch: 0,
+            stvec: 0,
+            timecmp: u64::max_value(),
+            // These are set by setup_mem, so we don't really care now.
+            pc: 0,
+            prv: 0,
+            hartid: 0,
+            minstret: 0,
+            line: [emu::interp::CacheLine {
+                tag: i64::max_value() as u64,
+                paddr: 0
+            }; 1024],
+            i_line: [emu::interp::CacheLine {
+                tag: i64::max_value() as u64,
+                paddr: 0
+            }; 1024],
+        };
+        // x0 must always be 0
+        newctx.registers[0] = 0;
         newctx.hartid = i as u64;
 
         let fiber = fiber::Fiber::new();
@@ -296,6 +289,10 @@ pub fn main() {
     }
 
     unsafe { CONTEXTS = Box::leak(contexts.into_boxed_slice()) }
+
+    // Load the program
+    unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args)) };
+    std::mem::drop(loader);
 
     if cfg!(not(feature = "thread")) {
         // Chain fibers together

@@ -74,13 +74,6 @@ impl SharedContext {
     }
 }
 
-/// Make #[derive(Clone)] happy for Context
-impl Clone for SharedContext {
-    fn clone(&self) -> Self {
-        Self::new()
-    }
-}
-
 /// Context representing the CPU state of a RISC-V hart.
 ///
 /// # Memory Layout
@@ -91,7 +84,6 @@ impl Clone for SharedContext {
 /// * After that, we place a shared contexts.
 /// * All other items are placed at the back.
 #[repr(C)]
-#[derive(Clone)]
 pub struct Context {
     pub registers: [u64; 32],
     pub pc: u64,
