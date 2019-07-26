@@ -329,6 +329,8 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_icache_access(&mut self, pc: u64) {
+        if cfg!(feature = "direct") && crate::get_flags().user_only { return }
+
         let offset = offset_of!(Context, i_line);
 
         // RSI = addr
@@ -372,23 +374,28 @@ impl<'a> DbtCompiler<'a> {
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
 
-        // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
-        self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
+        let direct = cfg!(feature = "direct") && crate::get_flags().user_only;
+        let pack = if !direct {
+            // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
+            self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
+            self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
 
-        // EAX = (idx & 1023) * 16
-        self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
-        self.emit(And(Reg(Register::EAX), Imm(1023)));
-        self.emit(Shl(Reg(Register::EAX), Imm(4)));
+            // EAX = (idx & 1023) * 16
+            self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
+            self.emit(And(Reg(Register::EAX), Imm(1023)));
+            self.emit(Shl(Reg(Register::EAX), Imm(4)));
 
-        // RDX = ctx.line[(idx & 1023)].tag
-        self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
-        let jcc_miss = self.emit_jcc_short(ConditionCode::NotEqual);
+            // RDX = ctx.line[(idx & 1023)].tag
+            self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
+            let jcc_miss = self.emit_jcc_short(ConditionCode::NotEqual);
 
-        // Check if the current block is the intended block to execute
-        self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
+            // Check if the current block is the intended block to execute
+            self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
 
-        let label_miss_ret = self.label();
+            let label_miss_ret = self.label();
+
+            Some((jcc_miss, label_miss_ret))
+        } else { None };
 
         // Check if the current block is the intended block to execute
         self.emit(Mov(Reg(Register::RAX), Imm(0x100000000)));
@@ -410,11 +417,14 @@ impl<'a> DbtCompiler<'a> {
         let jmp_wrong_ret = self.emit_jmp_short();
         self.patch(jmp_wrong_ret, label_wrong_ret);
 
-        let label_miss = self.label();
-        self.patch(jcc_miss, label_miss);
-        self.emit_helper_call(helper_icache_miss);
-        let jmp_miss_ret = self.emit_jmp_short();
-        self.patch(jmp_miss_ret, label_miss_ret);
+        if !direct {
+            let (jcc_miss, label_miss_ret) = pack.unwrap();
+            let label_miss = self.label();
+            self.patch(jcc_miss, label_miss);
+            self.emit_helper_call(helper_icache_miss);
+            let jmp_miss_ret = self.emit_jmp_short();
+            self.patch(jmp_miss_ret, label_miss_ret);
+        }
     }
 
     fn emit_interrupt_check(&mut self) {
@@ -435,6 +445,8 @@ impl<'a> DbtCompiler<'a> {
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
         if imm != 0 { self.emit(Add(Reg(Register::RSI), Imm(imm as i64))); }
+
+        if cfg!(feature = "direct") && crate::get_flags().user_only { return }
 
         // Check for alignment
         let jcc_misalign = if size != Size::Byte {
@@ -498,31 +510,34 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
         if imm != 0 { self.emit(Add(Reg(Register::RSI), Imm(imm as i64))); }
 
-        // Check for alignment
-        let jcc_misalign = if size != Size::Byte {
-            self.emit(Test(Reg(Register::ESI), Imm(size.bytes() as i64 - 1)));
-            Some(self.emit_jcc_long(ConditionCode::NotEqual))
-        } else { None };
+        // XXX: In direct mode, self-modifying code be wrong!!!
+        if cfg!(not(feature = "direct")) || !crate::get_flags().user_only {
+            // Check for alignment
+            let jcc_misalign = if size != Size::Byte {
+                self.emit(Test(Reg(Register::ESI), Imm(size.bytes() as i64 - 1)));
+                Some(self.emit_jcc_long(ConditionCode::NotEqual))
+            } else { None };
 
-        // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
-        self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
+            // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
+            self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
+            self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
 
-        // EAX = (idx & 1023) * 16
-        self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
-        self.emit(And(Reg(Register::EAX), Imm(1023)));
-        self.emit(Shl(Reg(Register::EAX), Imm(4)));
+            // EAX = (idx & 1023) * 16
+            self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
+            self.emit(And(Reg(Register::EAX), Imm(1023)));
+            self.emit(Shl(Reg(Register::EAX), Imm(4)));
 
-        // RCX = idx << 1
-        self.emit(Add(Reg(Register::RCX), OpReg(Register::RCX)));
-        self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
-        let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
+            // RCX = idx << 1
+            self.emit(Add(Reg(Register::RCX), OpReg(Register::RCX)));
+            self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
+            let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
 
-        // RSI = ctx.line[(idx & 1023)].paddr ^ addr
-        self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
-        let label_fin = self.label();
+            // RSI = ctx.line[(idx & 1023)].paddr ^ addr
+            self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
+            let label_fin = self.label();
 
-        self.slow_path.push(SlowPath::Store(self.pc_cur, self.instret, jcc_misalign, jcc_miss, label_fin));
+            self.slow_path.push(SlowPath::Store(self.pc_cur, self.instret, jcc_misalign, jcc_miss, label_fin));
+        }
 
         let reg = match size {
             Size::Byte => Register::DL,
