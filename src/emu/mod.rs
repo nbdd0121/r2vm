@@ -23,7 +23,7 @@ lazy_static! {
     /// The global PLIC
     pub static ref PLIC: Mutex<Plic> = {
         assert!(!crate::get_flags().user_only);
-        Mutex::new(Plic::new(4))
+        Mutex::new(Plic::new(crate::core_count()))
     };
 }
 
@@ -87,7 +87,9 @@ pub fn device_tree() -> fdt::Node {
     cpus.add_prop("#address-cells", 1u32);
     cpus.add_prop("#size-cells", 0u32);
 
-    for i in 0..4u32 {
+    let core_count = crate::core_count() as u32;
+
+    for i in 0..core_count {
         let cpu = cpus.add_node(format!("cpu@{:x}", i));
         cpu.add_prop("clock-frequency", 0u32);
         cpu.add_prop("mmu-type", "riscv,sv39");
@@ -117,19 +119,19 @@ pub fn device_tree() -> fdt::Node {
     plic.add_prop("riscv,ndev", 31u32);
     plic.add_prop("reg", &[0x80100000u64, 0x400000][..]);
     let mut vec: Vec<u32> = Vec::with_capacity(8);
-    for i in 0..4 {
+    for i in 0..core_count {
         vec.push(i + 1);
         vec.push(9);
     }
     plic.add_prop("interrupts-extended", vec.as_slice());
-    plic.add_prop("phandle", 5u32);
+    plic.add_prop("phandle", core_count + 1);
 
     for i in 0..3 {
         let addr: u64 = 0x80000000 + (i as u64) * 0x1000;
         let virtio = soc.add_node(format!("virtio@{:x}", addr));
         virtio.add_prop("reg", &[addr, 0x1000][..]);
         virtio.add_prop("compatible", "virtio,mmio");
-        virtio.add_prop("interrupts-extended", &[5u32, i+1][..]);
+        virtio.add_prop("interrupts-extended", &[core_count + 1, i+1][..]);
     }
 
     let memory = root.add_node("memory@200000");

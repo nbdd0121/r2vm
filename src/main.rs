@@ -113,6 +113,12 @@ pub fn shared_context(id: usize) -> &'static emu::interp::SharedContext {
     unsafe { &(*CONTEXTS[id]).shared }
 }
 
+pub fn core_count() -> usize {
+    let cnt = unsafe { CONTEXTS.len() };
+    assert_ne!(cnt, 0);
+    cnt
+}
+
 static mut EVENT_LOOP: *const emu::EventLoop = std::ptr::null_mut();
 
 pub fn event_loop() -> &'static emu::EventLoop {
@@ -225,12 +231,6 @@ pub fn main() {
         Err(_) => false,
     }; }
 
-    // These should only be initialised for full-system emulation
-    if !get_flags().user_only {
-        io::console::console_init();
-        emu::init();
-    }
-
     // Create fibers for all threads
     let mut fibers = Vec::new();
     let mut contexts = Vec::new();
@@ -289,6 +289,12 @@ pub fn main() {
     }
 
     unsafe { CONTEXTS = Box::leak(contexts.into_boxed_slice()) }
+
+    // These should only be initialised for full-system emulation
+    if !get_flags().user_only {
+        io::console::console_init();
+        emu::init();
+    }
 
     // Load the program
     unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args)) };
