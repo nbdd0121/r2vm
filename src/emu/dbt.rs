@@ -1415,7 +1415,7 @@ impl<'a> DbtCompiler<'a> {
 
         for i in 0..opblock.len() {
             let next_pc = cur_pc + if opblock[i].1 { 2 } else { 4 };
-            if (cur_pc - 1) >> CACHE_LINE_LOG2_SIZE != next_pc >> CACHE_LINE_LOG2_SIZE {
+            if (cur_pc - 1) >> CACHE_LINE_LOG2_SIZE != (next_pc - 1) >> CACHE_LINE_LOG2_SIZE {
                 self.emit_icache_access(block.2 - cur_pc);
             }
             self.pc_rel = block.2 - cur_pc;
