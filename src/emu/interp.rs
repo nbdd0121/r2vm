@@ -1721,9 +1721,9 @@ fn find_block_and_patch(ctx: &mut Context, ret: usize) {
         }
     };
 
-    unsafe { std::ptr::write_unaligned((ret - 18) as *mut u64, phys_pc) };
-    let jump_offset = (dbt_code as usize as isize - ret as isize - 5) as u32;
-    unsafe { std::ptr::write_unaligned((ret + 1) as *mut u32, jump_offset) };
+    unsafe { std::ptr::write_unaligned((ret - 23) as *mut u64, phys_pc) };
+    let jump_offset = (dbt_code as usize as isize - ret as isize + 5) as u32;
+    unsafe { std::ptr::write_unaligned((ret - 9) as *mut u32, jump_offset) };
 }
 
 #[no_mangle]

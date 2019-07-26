@@ -361,23 +361,38 @@ impl<'a> DbtCompiler<'a> {
 
         // RDX = ctx.line[(idx & 1023)].tag
         self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
-        self.emit(Jcc(10, ConditionCode::NotEqual));
+        let jcc_miss = self.emit_jcc_short(ConditionCode::NotEqual);
 
         // Check if the current block is the intended block to execute
         self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
-        self.emit(Jmp(Imm(5)));
 
-        self.emit_helper_call(helper_icache_miss);
+        let label_miss_ret = self.label();
 
         // Check if the current block is the intended block to execute
         self.emit(Mov(Reg(Register::RAX), Imm(0x100000000)));
         // 3 bytes
         self.emit(Cmp(Reg(Register::RAX), OpReg(Register::RSI)));
         // 2 bytes
-        self.emit(Jcc(5, ConditionCode::Equal));
-
-        self.emit_helper_call(helper_icache_wrong);
+        let jcc_wrong = self.emit_jcc_short(ConditionCode::NotEqual);
+        let label_wrong_ret = self.label();
+        // 5 bytes
         self.emit(Jmp(Imm(0x7fffffff)));
+
+        // As this is the end of the function, we can emit slow path directly here without
+        // disturbing the control flow. This additionally make encoding shorter.
+
+        let label_wrong = self.label();
+        self.patch(jcc_wrong, label_wrong);
+        // 5 bytes
+        self.emit_helper_call(helper_icache_wrong);
+        let jmp_wrong_ret = self.emit_jmp_short();
+        self.patch(jmp_wrong_ret, label_wrong_ret);
+
+        let label_miss = self.label();
+        self.patch(jcc_miss, label_miss);
+        self.emit_helper_call(helper_icache_miss);
+        let jmp_miss_ret = self.emit_jmp_short();
+        self.patch(jmp_miss_ret, label_miss_ret);
     }
 
     fn emit_interrupt_check(&mut self) {
