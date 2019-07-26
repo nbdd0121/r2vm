@@ -387,7 +387,8 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
         for mut icache in icaches() {
             let keys: Vec<u64> = icache.map.range(start .. end).map(|(k,_)|*k).collect();
             for key in keys {
-                icache.map.remove(&key);
+                let blk = icache.map.remove(&key).unwrap();
+                unsafe { *(blk as *mut u8) = 0xC3 }
             }
         }
         let line = &mut ctx.i_line[(idx & 1023) as usize];
