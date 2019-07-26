@@ -63,6 +63,8 @@ impl Drop for PlaceHolder {
 enum SlowPath {
     Load(u64, usize, Option<PlaceHolder>, PlaceHolder, Label),
     Store(u64, usize, Option<PlaceHolder>, PlaceHolder, Label),
+    /// Slow path for a icache access miss
+    ICache(PlaceHolder, Label),
 }
 
 impl<'a> DbtCompiler<'a> {
@@ -326,9 +328,20 @@ impl<'a> DbtCompiler<'a> {
         // RDX = ctx.line[(idx & 1023)].tag
         self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
 
-        self.emit(Jcc(5, ConditionCode::Equal));
+        let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
+        let label_fin = self.label();
+
+        self.slow_path.push(SlowPath::ICache(jcc_miss, label_fin));
+    }
+
+    fn emit_icache_slow(&mut self, jcc_miss: PlaceHolder, label_fin: Label) {
+        let label_miss = self.label();
+        self.patch(jcc_miss, label_miss);
 
         self.emit_helper_call(helper_icache_miss);
+
+        let jmp_fin = self.emit_jmp_long();
+        self.patch(jmp_fin, label_fin);
     }
 
     fn emit_chain_tail(&mut self) {
@@ -1471,6 +1484,9 @@ impl<'a> DbtCompiler<'a> {
                     self.pc_rel = pc_rel;
                     self.i_rel = i_rel;
                     self.emit_store_slow(jcc_misalign, jcc_miss, label_fin);
+                }
+                SlowPath::ICache(jcc_miss, label_fin) => {
+                    self.emit_icache_slow(jcc_miss, label_fin);
                 }
             }
         }
