@@ -283,6 +283,7 @@ impl<'a> Decoder<'a> {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Op::Mov(reg.into(), operand.into())
             }
+            0x90 => Op::Nop,
             0x98 => match opsize {
                 Size::Qword => Op::Cdqe,
                 _ => unimplemented!(),

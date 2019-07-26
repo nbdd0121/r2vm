@@ -38,6 +38,7 @@ pub struct DbtCompiler<'a> {
     pub buffer: &'a mut [u8],
     pub len: usize,
     pub interp: bool,
+    slow_path: Vec<SlowPath>,
     minstret: u32,
     i_rel: usize,
     pc_rel: u64,
@@ -59,12 +60,18 @@ impl Drop for PlaceHolder {
     }
 }
 
+enum SlowPath {
+    Load(u64, usize, Option<PlaceHolder>, PlaceHolder, Label),
+    Store(u64, usize, Option<PlaceHolder>, PlaceHolder, Label),
+}
+
 impl<'a> DbtCompiler<'a> {
     pub fn new(code: &'a mut [u8]) -> DbtCompiler {
         DbtCompiler {
             buffer: code,
             len: 0,
             interp: false,
+            slow_path: Vec::new(),
             minstret: 0,
             i_rel: 0,
             pc_rel: 0,
@@ -93,6 +100,11 @@ impl<'a> DbtCompiler<'a> {
     fn emit_jmp_short(&mut self) -> PlaceHolder {
         self.emit(Jmp(Imm(0)));
         PlaceHolder::Byte(self.len)
+    }
+
+    fn emit_jmp_long(&mut self) -> PlaceHolder {
+        self.emit(Jmp(Imm(0x77777777)));
+        PlaceHolder::Dword(self.len)
     }
 
     fn label(&mut self) -> Label {
@@ -304,7 +316,7 @@ impl<'a> DbtCompiler<'a> {
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(super::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
@@ -327,7 +339,7 @@ impl<'a> DbtCompiler<'a> {
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(super::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
@@ -375,12 +387,12 @@ impl<'a> DbtCompiler<'a> {
         // Check for alignment
         let jcc_misalign = if size != Size::Byte {
             self.emit(Test(Reg(Register::ESI), Imm(size.bytes() as i64 - 1)));
-            Some(self.emit_jcc_short(ConditionCode::NotEqual))
+            Some(self.emit_jcc_long(ConditionCode::NotEqual))
         } else { None };
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(super::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
@@ -391,15 +403,19 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Mov(Reg(Register::RDX), OpMem(Register::RBP + Register::RAX + offset as i32)));
         self.emit(Shr(Reg(Register::RDX), Imm(1)));
         self.emit(Cmp(Reg(Register::RDX), OpReg(Register::RCX)));
-        let jcc_miss = self.emit_jcc_short(ConditionCode::NotEqual);
+        let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
 
         // RSI = ctx.line[(idx & 1023)].paddr ^ addr
         self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
-        let jmp_fin = self.emit_jmp_short();
+        let label_fin = self.label();
 
-        if size != Size::Byte {
+        self.slow_path.push(SlowPath::Load(self.pc_rel, self.i_rel, jcc_misalign, jcc_miss, label_fin));
+    }
+
+    fn emit_load_slow(&mut self, jcc_misalign: Option<PlaceHolder>, jcc_miss: PlaceHolder, label_fin: Label) {
+        if let Some(jcc_misalign) = jcc_misalign {
             let label_misalign = self.label();
-            self.patch(jcc_misalign.unwrap(), label_misalign);
+            self.patch(jcc_misalign, label_misalign);
 
             self.emit_set_ebx();
             self.emit_helper_jmp(helper_read_misalign);
@@ -412,7 +428,7 @@ impl<'a> DbtCompiler<'a> {
         self.emit_set_ebx();
         self.emit_helper_call(helper_translate_cache_miss);
 
-        let label_fin = self.label();
+        let jmp_fin = self.emit_jmp_long();
         self.patch(jmp_fin, label_fin);
     }
 
@@ -427,12 +443,12 @@ impl<'a> DbtCompiler<'a> {
         // Check for alignment
         let jcc_misalign = if size != Size::Byte {
             self.emit(Test(Reg(Register::ESI), Imm(size.bytes() as i64 - 1)));
-            Some(self.emit_jcc_short(ConditionCode::NotEqual))
+            Some(self.emit_jcc_long(ConditionCode::NotEqual))
         } else { None };
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(super::interp::CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
@@ -442,29 +458,13 @@ impl<'a> DbtCompiler<'a> {
         // RCX = idx << 1
         self.emit(Add(Reg(Register::RCX), OpReg(Register::RCX)));
         self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
-        let jcc_miss = self.emit_jcc_short(ConditionCode::NotEqual);
+        let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
 
         // RSI = ctx.line[(idx & 1023)].paddr ^ addr
         self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
-        let jmp_store = self.emit_jmp_short();
+        let label_fin = self.label();
 
-        if size != Size::Byte {
-            let label_misalign = self.label();
-            self.patch(jcc_misalign.unwrap(), label_misalign);
-
-            self.emit_set_ebx();
-            self.emit_helper_jmp(helper_write_misalign);
-        }
-
-        let label_miss = self.label();
-        self.patch(jcc_miss, label_miss);
-
-        self.emit(Mov(Reg(Register::EDX), Imm(1)));
-        self.emit_set_ebx();
-        self.emit_helper_call(helper_translate_cache_miss);
-
-        let label_store = self.label();
-        self.patch(jmp_store, label_store);
+        self.slow_path.push(SlowPath::Store(self.pc_rel, self.i_rel, jcc_misalign, jcc_miss, label_fin));
 
         let reg = match size {
             Size::Byte => Register::DL,
@@ -479,6 +479,26 @@ impl<'a> DbtCompiler<'a> {
 
         self.emit(Mov(Reg(reg), OpMem(smem)));
         self.emit(Mov(Mem(mem), OpReg(reg)));
+    }
+
+    fn emit_store_slow(&mut self, jcc_misalign: Option<PlaceHolder>, jcc_miss: PlaceHolder, label_fin: Label) {
+        if let Some(jcc_misalign) = jcc_misalign {
+            let label_misalign = self.label();
+            self.patch(jcc_misalign, label_misalign);
+
+            self.emit_set_ebx();
+            self.emit_helper_jmp(helper_write_misalign);
+        }
+
+        let label_miss = self.label();
+        self.patch(jcc_miss, label_miss);
+
+        self.emit(Mov(Reg(Register::EDX), Imm(1)));
+        self.emit_set_ebx();
+        self.emit_helper_call(helper_translate_cache_miss);
+
+        let jmp_fin = self.emit_jmp_long();
+        self.patch(jmp_fin, label_fin);
     }
 
     // #region Base Opcode = OP-IMM
@@ -1435,6 +1455,25 @@ impl<'a> DbtCompiler<'a> {
 
         // Patch up minstret
         self.patch_number(fixup, self.minstret as usize);
+
+        // Generate a gap to allow easy view of disassembly
+        self.emit(Nop);
+
+        // Generate slow path
+        for slow in std::mem::replace(&mut self.slow_path, Vec::new()) {
+            match slow {
+                SlowPath::Load(pc_rel, i_rel, jcc_misalign, jcc_miss, label_fin) => {
+                    self.pc_rel = pc_rel;
+                    self.i_rel = i_rel;
+                    self.emit_load_slow(jcc_misalign, jcc_miss, label_fin);
+                }
+                SlowPath::Store(pc_rel, i_rel, jcc_misalign, jcc_miss, label_fin) => {
+                    self.pc_rel = pc_rel;
+                    self.i_rel = i_rel;
+                    self.emit_store_slow(jcc_misalign, jcc_miss, label_fin);
+                }
+            }
+        }
 
         if crate::get_flags().disassemble {
             let pc_offset = self.buffer.as_ptr() as usize;
