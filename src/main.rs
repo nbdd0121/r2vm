@@ -12,6 +12,7 @@ extern crate softfp;
 extern crate p9;
 extern crate x86;
 extern crate riscv;
+extern crate fdt;
 
 pub mod io;
 #[macro_use]

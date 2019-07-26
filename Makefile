@@ -8,19 +8,16 @@ all: codegen
 
 clean:
 
-dt: devtree.dts
-	dtc $< > $@
-
 codegen: target/debug/dbt
 	cp $< $@
 
 release: target/release/dbt
 	cp $< $@
 
-target/debug/dbt: $(RUST_FILES) dt
+target/debug/dbt: $(RUST_FILES)
 	cargo build
 
-target/release/dbt: $(RUST_FILES) dt
+target/release/dbt: $(RUST_FILES)
 	cargo build --release --features fast,thread
 
 register: codegen
