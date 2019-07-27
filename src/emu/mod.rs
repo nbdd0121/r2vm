@@ -80,7 +80,10 @@ pub fn device_tree() -> fdt::Node {
     root.add_prop("#size-cells", 2u32);
 
     let chosen = root.add_node("chosen");
-    chosen.add_prop("bootargs", "console=hvc0 root=/dev/vda rw");
+    chosen.add_prop("bootargs", match crate::get_flags().init {
+        None => std::borrow::Cow::Borrowed("console=hvc0 root=/dev/vda rw"),
+        Some(ref v) => std::borrow::Cow::Owned(format!("console=hvc0 root=/dev/vda rw init={}", v)),
+    }.as_ref());
 
     let cpus = root.add_node("cpus");
     cpus.add_prop("timebase-frequency", 1000000u32);

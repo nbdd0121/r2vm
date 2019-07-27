@@ -34,15 +34,9 @@ Options:
                         optimising binary translator.
   --with-instret        Enable precise instret updating in binary translated
                         code.
-  --strict-exception    Enable strict enforcement of excecution correctness in
-                        case of segmentation fault.
-  --enable-phi          Allow load elimination to emit PHI nodes.
-  --region-limit=<n>    Number of basic blocks that can be included in a single
-                        compilation region by the IR-based binary translator.
-  --compile-threshold=<n> Number of execution required for a block to be
-                        considered by the IR-based binary translator.
   --monitor-performance Display metrics about performance in compilation phase.
   --sysroot             Change the sysroot to a non-default value.
+  --init                Specify the init program for full system emulation.
   --help                Display this help message.
 ")}
 
@@ -60,12 +54,6 @@ pub struct Flags {
     // A flag to determine whether instret should be updated precisely in binary translated code.
     no_instret: bool,
 
-    // A flag to determine whether correctness in case of segmentation fault should be dealt strictly.
-    strict_exception: bool,
-
-    // A flag to determine whether PHI nodes should be introduced to the graph by load elimination.
-    enable_phi: bool,
-
     // Whether compilation performance counters should be enabled.
     monitor_performance: bool,
 
@@ -76,14 +64,11 @@ pub struct Flags {
     // it will be redirected.
     sysroot: Option<String>,
 
-    // Upper limit of number of blocks that can be placed in a region.
-    region_limit: u32,
-
-    // Threshold beyond which the IR DBT will start working
-    compile_threshold: u32,
-
     // If we are only emulating userspace code
     user_only: bool,
+
+    // Path of init to execute. If supplied, it will be included in Linux bootcmd
+    init: Option<String>,
 }
 
 static mut FLAGS: Flags = Flags {
@@ -91,14 +76,11 @@ static mut FLAGS: Flags = Flags {
     strace: false,
     disassemble: false,
     no_instret: true,
-    strict_exception: false,
-    enable_phi: false,
     monitor_performance: false,
     exec_path: ptr::null(),
     sysroot: None,
-    region_limit: 16,
-    compile_threshold: 0,
     user_only: true,
+    init: None,
 };
 
 pub fn get_flags() -> &'static Flags {
@@ -164,12 +146,6 @@ pub fn main() {
         	"--with-instret" => unsafe {
                 FLAGS.no_instret = false;
             }
-            "--strict-exception" => unsafe {
-                FLAGS.strict_exception = true;
-            }
-            "--enable-phi" => unsafe {
-                FLAGS.enable_phi = true;
-            }
             "--monitor-performance" => unsafe {
                 FLAGS.monitor_performance = true;
             }
@@ -177,30 +153,12 @@ pub fn main() {
                 eprintln!(usage_string!(), interp_name);
                 std::process::exit(0);
             }
-            _ => if arg.starts_with("--region-limit=") {
-                let num_slice = &arg["--region-limit=".len()..];
-                let num = num_slice.parse::<u32>().unwrap_or(0);
-                if num > 0 {
-                    unsafe {
-                        FLAGS.region_limit = num;
-                    }
-                } else {
-                    eprintln!("{}: '{}' is not a valid positive integer", interp_name, num_slice);
-                    std::process::exit(1);
-                }
-            } else if arg.starts_with("--compile-threshold=") {
-                let num_slice = &arg["--compile-threshold=".len()..];
-                if let Ok(num) = num_slice.parse::<u32>() {
-                    unsafe {
-                        FLAGS.compile_threshold = num;
-                    }
-                } else {
-                    eprintln!("{}: '{}' is not a valid non-negative integer", interp_name, num_slice);
-                    std::process::exit(1);
-                }
-            } else if arg.starts_with("--sysroot=") {
+            _ => if arg.starts_with("--sysroot=") {
                 let path_slice = &arg["--sysroot=".len()..];
                 sysroot = path_slice.to_owned();
+            } else if arg.starts_with("--init=") {
+                let path_slice = &arg["--init=".len()..];
+                unsafe { FLAGS.init = Some(path_slice.to_owned()) }
             } else {
                 eprintln!("{}: unrecognized option '{}'", interp_name, arg);
                 std::process::exit(1);
@@ -265,7 +223,7 @@ pub fn main() {
             // These are set by setup_mem, so we don't really care now.
             pc: 0,
             prv: 0,
-            hartid: 0,
+            hartid: i as u64,
             minstret: 0,
             line: [emu::interp::CacheLine {
                 tag: i64::max_value() as u64,
@@ -278,7 +236,6 @@ pub fn main() {
         };
         // x0 must always be 0
         newctx.registers[0] = 0;
-        newctx.hartid = i as u64;
 
         let fiber = fiber::Fiber::new();
         let ptr = fiber.data_pointer();
