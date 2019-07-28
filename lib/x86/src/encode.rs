@@ -256,7 +256,7 @@ impl<'a> Encoder<'a> {
         self.emit_rex(mem, reg_num, if op_size == Size::Qword { 0x08 } else { 0 });
 
         // Emit opcode.
-        if opcode & 0xFF0000 != 0 { self.emit_u8((opcode >> 16) as u8) }
+        if opcode & 0xFF_0000 != 0 { self.emit_u8((opcode >> 16) as u8) }
         if opcode & 0xFF00 != 0 { self.emit_u8((opcode >> 8) as u8) }
         self.emit_u8(opcode as u8);
 
@@ -285,7 +285,7 @@ impl<'a> Encoder<'a> {
         }
 
         // Emit opcode.
-        if opcode & 0xFF0000 != 0 { self.emit_u8((opcode >> 16) as u8) }
+        if opcode & 0xFF_0000 != 0 { self.emit_u8((opcode >> 16) as u8) }
         if opcode & 0xFF00 != 0 { self.emit_u8((opcode >> 8) as u8) }
         self.emit_u8(opcode as u8 | (reg_num & 7));
     }

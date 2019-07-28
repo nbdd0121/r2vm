@@ -45,6 +45,7 @@ impl Prop {
     }
 }
 
+const FDT_MAGIC     : u32 = 0xd00dfeed;
 const FDT_BEGIN_NODE: u32 = 1;
 const FDT_END_NODE  : u32 = 2;
 const FDT_PROP      : u32 = 3;
@@ -106,7 +107,7 @@ pub fn encode(node: &Node) -> Vec<u8> {
     enc.encode_node(node);
     enc.push(9);
     let mut vec = Vec::new();
-    vec.extend_from_slice(&0xd00dfeedu32.to_be_bytes());
+    vec.extend_from_slice(&FDT_MAGIC.to_be_bytes());
     let total_size = enc.dt_struct.len() + enc.dt_strings.len() + 16 + 40;
     vec.extend_from_slice(&(total_size as u32).to_be_bytes());
     vec.extend_from_slice(&56u32.to_be_bytes());

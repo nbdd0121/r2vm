@@ -511,7 +511,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         let significand_difference = significand_a - significand_b;
 
         // Need to reduce exponent_a by 1 to account for the shift.
-        return Self::normalize_and_round(a.sign(), exponent_a - 1, significand_difference);
+        Self::normalize_and_round(a.sign(), exponent_a - 1, significand_difference)
     }
 
     fn multiply(a: Self, b: Self) -> Self {
@@ -732,7 +732,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         }
 
         // Since the result is in range [1, 2), it will always stay normalized.
-        return Self::round(false, exponent / 2, result);
+        Self::round(false, exponent / 2, result)
     }
 
     pub fn fused_multiply_add(a: Self, b: Self, c: Self) -> Self {
@@ -826,7 +826,7 @@ impl<Desc: FpDesc> Fp<Desc> {
             }
         }
 
-        return Self::normalize_and_round(sign_product, product_exponent, product);
+        Self::normalize_and_round(sign_product, product_exponent, product)
     }
 
     //
@@ -942,7 +942,7 @@ impl<Desc: FpDesc> Fp<Desc> {
             return (sign, max);
         }
 
-        return (sign, result)
+        (sign, result)
     }
 
     pub fn convert_to_uint<T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>>(&self) -> T {
@@ -1120,9 +1120,9 @@ impl<Desc: FpDesc> Fp<Desc> {
         }
 
         if Self::total_order(a, b) == Ordering::Less {
-            return (a, b);
+            (a, b)
         } else {
-            return (b, a);
+            (b, a)
         }
     }
 

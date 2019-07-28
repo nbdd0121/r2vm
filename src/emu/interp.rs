@@ -322,7 +322,7 @@ fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
         break (ppn << 12) | (addr & 4095);
     };
     if (pte & 0x40) == 0 || (write && ((pte & 0x4) == 0 || (pte & 0x80) == 0)) { return Err(fault_type); }
-    return Ok(ret);
+    Ok(ret)
 }
 
 pub const CACHE_LINE_LOG2_SIZE: usize = 12;
@@ -1673,7 +1673,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
         }
     };
     let mut icache = icache(ctx.hartid);
-    match icache.map.get(&phys_pc).map(|x|*x) {
+    match icache.map.get(&phys_pc).copied() {
         Some(v) => v,
         None => {
             // Ignore error in this case
@@ -1701,7 +1701,7 @@ fn find_block_and_patch(ctx: &mut Context, ret: usize) {
 
     // Access the cache for blocks
     let mut icache = icache(ctx.hartid);
-    let dbt_code = match icache.map.get(&phys_pc).map(|x|*x) {
+    let dbt_code = match icache.map.get(&phys_pc).copied() {
         Some(v) => v,
         None => {
             // Ignore error in this case
@@ -1732,7 +1732,7 @@ fn find_block_and_patch2(ctx: &mut Context, ret: usize) {
 
     // Access the cache for blocks
     let mut icache = icache(ctx.hartid);
-    let dbt_code = match icache.map.get(&phys_pc).map(|x|*x) {
+    let dbt_code = match icache.map.get(&phys_pc).copied() {
         Some(v) => v,
         None => {
             // Ignore error in this case

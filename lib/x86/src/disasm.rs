@@ -49,7 +49,7 @@ pub fn mnemonic(op: &Op) -> &'static str {
 pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
     let mnemonic = mnemonic(inst);
 
-    if (pc & 0xFFFFFFFF) == pc {
+    if (pc & 0xFFFF_FFFF) == pc {
         eprint!("{:8x}:       ", pc);
     } else {
         eprint!("{:16x}:       ", pc);
@@ -135,7 +135,7 @@ pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
 
     if code.len() > 8 {
         let pc = pc + 8;
-        if (pc & 0xFFFFFFFF) == pc {
+        if (pc & 0xFFFF_FFFF) == pc {
             eprint!("{:8x}:       ", pc);
         } else {
             eprint!("{:16x}:       ", pc);

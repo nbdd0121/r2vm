@@ -86,7 +86,7 @@ impl Plic {
             // If something is claimed, then the pending state will change, so recompute
             self.recompute_pending();
         }
-        return cur_irq as u32;
+        cur_irq as u32
     }
 }
 

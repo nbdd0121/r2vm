@@ -131,7 +131,7 @@ unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &m
     ctx.uc_mcontext.gregs[REG_RIP] = reader.0 as i64;
 }
 
-pub unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &mut libc::ucontext_t) -> () {
+pub unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &mut libc::ucontext_t) {
     let current_ip = ctx.uc_mcontext.gregs[REG_RIP];
 
     // Decode the faulting instruction

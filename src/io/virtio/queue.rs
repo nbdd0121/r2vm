@@ -64,7 +64,7 @@ impl Queue {
         self.last_avail_idx += 1;
 
         let mut avail = Buffer {
-            idx: idx,
+            idx,
             bytes_written: 0,
             read: Vec::new(),
             write: Vec::new(),
@@ -282,7 +282,7 @@ impl<'a> Write for BufferWriter<'a> {
             self.slice_offset = 0;
             slice.len()
         } else {
-            &slice[..buf.len()].copy_from_slice(buf);
+            slice[..buf.len()].copy_from_slice(buf);
             self.slice_offset += buf.len();
             buf.len()
         };

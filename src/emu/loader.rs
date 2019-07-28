@@ -65,7 +65,7 @@ impl Loader {
         }
         Ok(Loader {
             fd: file.into_raw_fd(),
-            file_size: file_size,
+            file_size,
             memory
         })
     }
@@ -217,7 +217,7 @@ impl Loader {
         // Return information needed by the caller.
         *load_addr = bias + loaddr;
         *brk = bias + ((*brk + 4095) &! 4095);
-        return bias + ehdr.e_entry;
+        bias + ehdr.e_entry
     }
 
     unsafe fn load_kernel(&self, load_addr: ureg) -> ureg {
@@ -340,7 +340,7 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>) {
         for (var_k, var_v) in std::env::vars() {
             sp_alloc(&mut sp, 1)[0] = 0;
             sp_alloc(&mut sp, var_v.len()).copy_from_slice(var_v.as_bytes());
-            sp_alloc(&mut sp, 1)[0] = '=' as u8;
+            sp_alloc(&mut sp, 1)[0] = b'=';
             sp_alloc(&mut sp, var_k.len()).copy_from_slice(var_k.as_bytes());
             env_pointers.push(sp);
         }

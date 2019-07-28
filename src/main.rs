@@ -84,9 +84,7 @@ static mut FLAGS: Flags = Flags {
 };
 
 pub fn get_flags() -> &'static Flags {
-    unsafe {
-        return &FLAGS;
-    }
+    unsafe { &FLAGS }
 }
 
 pub static mut CONTEXTS: &'static mut [*mut emu::interp::Context] = &mut [];

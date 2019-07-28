@@ -144,7 +144,7 @@ impl Register {
     }
 }
 
-const REG_NAMES : [&'static str; 0x48] = [
+const REG_NAMES : [&str; 0x48] = [
     "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh",
     "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
     "ax", "cx", "dx", "bx", "sp", "bp", "si", "di",
@@ -158,7 +158,7 @@ const REG_NAMES : [&'static str; 0x48] = [
 
 fn register_name(reg_num: u8) -> &'static str {
     if reg_num < 0x10 || reg_num >= 0x58 { return "(unknown)" }
-    return REG_NAMES[(reg_num - 0x10) as usize];
+    REG_NAMES[(reg_num - 0x10) as usize]
 }
 
 impl fmt::Display for Register {

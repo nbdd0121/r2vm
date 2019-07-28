@@ -283,7 +283,7 @@ fn convert_mmap_flags_to_host(flags: abi::c_int) -> libc::c_int {
 /// information to a linux syscall style which returns a negative value representing the errno.
 fn return_errno(val: i64) -> i64 {
     if val != -1 { return val }
-    return -convert_errno_from_host(unsafe { *libc::__errno_location() }) as _;
+    -convert_errno_from_host(unsafe { *libc::__errno_location() }) as _
 }
 
 /// Detect whether the path is referencing /proc/self/ or friends.
@@ -297,9 +297,8 @@ fn is_proc_self(path: &CStr) -> Option<&Path> {
         Err(_) => return None,
         Ok(v) => v,
     };
-    match path.strip_prefix("self") {
-        Ok(v) => return Some(v),
-        Err(_) => (),
+    if let Ok(v) = path.strip_prefix("self") {
+        return Some(v)
     }
     // We still need to check /proc/pid
     let pid = format!("{}", std::process::id());
@@ -340,7 +339,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         abi::SYS_getcwd => {
             let buffer = arg0 as *mut i8;
             let size = arg1 as usize;
-            let ret = if libc::getcwd(buffer, size) != std::ptr::null_mut() { 0 } else { -abi::EINVAL };
+            let ret = if libc::getcwd(buffer, size).is_null() { -abi::EINVAL } else { 0 };
             if crate::get_flags().strace {
                 if ret == 0 {
                     eprintln!(
@@ -471,13 +470,13 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let ret = match proc_self {
                 Some(v) if v == std::ffi::OsStr::new("exe") => {
                     let path = libc::realpath(crate::get_flags().exec_path, std::ptr::null_mut());
-                    if path != std::ptr::null_mut() {
+                    if path.is_null() {
+                        return_errno(-1)
+                    } else {
                         libc::strncpy(buffer, path, arg3 as _);
                         let ret = libc::strlen(path);
                         libc::free(path as *mut _);
                         ret as i64
-                    } else {
-                        return_errno(-1)
                     }
                 }
                 _ => return_errno(libc::readlinkat(dirfd, translate_path_cstr(pathname).as_ptr(), buffer, arg3 as _) as _)

@@ -34,14 +34,13 @@ pub fn console_init() {
         let mut buffer = 0;
         loop {
             // Just read a single character
-            std::io::stdin().read(std::slice::from_mut(&mut buffer)).unwrap();
+            std::io::stdin().read_exact(std::slice::from_mut(&mut buffer)).unwrap();
 
             // Ctrl + A hit, read another and do corresponding action
             if buffer == 1 {
-                std::io::stdin().read(std::slice::from_mut(&mut buffer)).unwrap();
+                std::io::stdin().read_exact(std::slice::from_mut(&mut buffer)).unwrap();
                 match buffer {
-                    // 'x'
-                    0x78 => {
+                    b'x' => {
                         println!("Terminated");
                         unsafe {
                             println!("TIME = {:?}", crate::util::cpu_time());
@@ -53,8 +52,7 @@ pub fn console_init() {
                         }
                         std::process::exit(0);
                     }
-                    // 'c'
-                    0x63 => {
+                    b'c' => {
                         unsafe { libc::raise(libc::SIGTRAP); }
                     }
                     // Hit Ctrl + A twice, send Ctrl + A to guest
@@ -72,7 +70,7 @@ pub fn console_init() {
 
 pub fn console_putchar(char: u8) {
     let mut out = std::io::stdout();
-    out.write(std::slice::from_ref(&char)).unwrap();
+    out.write_all(std::slice::from_ref(&char)).unwrap();
     out.flush().unwrap();
 }
 

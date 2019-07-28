@@ -84,8 +84,8 @@ impl TryFrom<&[u32]> for PropValue {
     type Error = PropConversionError;
     fn try_from(value: &[u32]) -> Result<Self, Self::Error> {
         let mut vec = Vec::with_capacity(value.len() * 4);
-        for i in 0..value.len() {
-            vec.extend_from_slice(&value[i].to_be_bytes());
+        for v in value {
+            vec.extend_from_slice(&v.to_be_bytes());
         }
         Ok(PropValue(vec.into_boxed_slice()))
     }
@@ -108,8 +108,8 @@ impl TryFrom<&[u64]> for PropValue {
     type Error = PropConversionError;
     fn try_from(value: &[u64]) -> Result<Self, Self::Error> {
         let mut vec = Vec::with_capacity(value.len() * 8);
-        for i in 0..value.len() {
-            vec.extend_from_slice(&value[i].to_be_bytes());
+        for v in value {
+            vec.extend_from_slice(&v.to_be_bytes());
         }
         Ok(PropValue(vec.into_boxed_slice()))
     }

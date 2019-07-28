@@ -36,6 +36,7 @@ pub struct P9Handler<T: FileSystem> {
     fids: FnvHashMap<u32, <T as FileSystem>::File>,
 }
 
+const O_LARGEFILE: u32 = 0o100000;
 
 impl<T: FileSystem> P9Handler<T> {
     pub fn new(fs: T) -> P9Handler<T> {
@@ -52,7 +53,7 @@ impl<T: FileSystem> P9Handler<T> {
             Fcall::Tlopen { fid, flags } => {
                 let file = self.fids.get_mut(&fid).unwrap();
                 // Set O_LARGEFILE to zero
-                self.fs.open(file, flags &! 0o100000)?;
+                self.fs.open(file, flags &! O_LARGEFILE)?;
                 let qid = file.qid();
                 Fcall::Rlopen { qid, iounit: self.iounit }
             }
@@ -83,7 +84,7 @@ impl<T: FileSystem> P9Handler<T> {
                         qid: child.qid(),
                         offset: offset as u64,
                         r#type: (child.mode() >> 12) as u8,
-                        name: name,
+                        name,
                     });
                     offset += 1;
                 }

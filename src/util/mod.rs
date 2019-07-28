@@ -6,7 +6,7 @@ pub use atomic_min_max::AtomicMinMax;
 
 macro_rules! offset_of {
     ($ty:ty, $field:ident) => {
-        unsafe { &(*(0 as *const $ty)).$field as *const _ as usize }
+        unsafe { &(*(std::ptr::null() as *const $ty)).$field as *const _ as usize }
     }
 }
 

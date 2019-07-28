@@ -583,11 +583,12 @@ impl<'a> DbtCompiler<'a> {
         } else {
             // For positive numbers we decrease the value by one and the compare less equal. This can allow 1 more possible
             // immediate value to use shorter encoding.
-            let mut cc = ConditionCode::Less;
-            if imm > 0 {
+            let cc = if imm > 0 {
                 imm -= 1;
-                cc = ConditionCode::LessEqual;
-            }
+                ConditionCode::LessEqual
+            } else {
+                ConditionCode::Less
+            };
 
             self.emit(Xor(Reg(Register::EAX), OpReg(Register::EAX)));
             self.emit(Cmp(Mem(memory_of_register(rs1)), Imm(imm as i64)));
@@ -1440,12 +1441,10 @@ impl<'a> DbtCompiler<'a> {
             self.i_rel = opblock.len() - i;
             if let Op::Auipc { rd, imm } = op {
                 self.emit_op(&Op::Auipc { rd: *rd, imm: imm - (block.2 - cur_pc) as i32 });
+            } else if self.interp {
+                self.emit_step_call(op)
             } else {
-                if self.interp {
-                    self.emit_step_call(op)
-                } else {
-                    self.emit_op(op);
-                }
+                self.emit_op(op);
             }
 
             if cfg!(not(feature = "fast")) || (cfg!(not(feature = "thread")) && i == opblock.len() - 1) {
