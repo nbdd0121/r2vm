@@ -1,9 +1,9 @@
-use super::{Device, DeviceId, Queue, BufferReader, BufferWriter};
+use super::{Device, DeviceId, Queue};
 use byteorder::{LE, WriteBytesExt};
 use p9::serialize::{Fcall, Serializable};
 use p9::{P9Handler, Passthrough};
 
-use std::io::Seek;
+use std::io::{Seek, SeekFrom};
 
 /// Feature bit indicating presence of mount tag
 const VIRTIO_9P_MOUNT_TAG: u32 = 1;
@@ -53,21 +53,19 @@ impl Device for P9 {
     }
     fn notify(&mut self, _idx: usize) {
         while let Some(mut buffer) = self.queue.take() {
-            let (tag, fcall) = {
-                let mut reader = BufferReader::new(&mut buffer);
-                reader.seek(std::io::SeekFrom::Start(4)).unwrap();
-                <(u16, Fcall)>::decode(&mut reader).unwrap()
-            };
+            let (mut reader, mut writer) = buffer.reader_writer();
+
+            reader.seek(SeekFrom::Start(4)).unwrap();
+            let (tag, fcall) = <(u16, Fcall)>::decode(&mut reader).unwrap();
 
             trace!(target: "9p", "received {}, {:?}", tag, fcall);
             let resp = self.handler.handle_fcall(fcall);
             trace!(target: "9p", "send {}, {:?}", tag, resp);
 
-            let mut writer = BufferWriter::new(&mut buffer);
-            writer.seek(std::io::SeekFrom::Start(4)).unwrap();
+            writer.seek(SeekFrom::Start(4)).unwrap();
             (tag, resp).encode(&mut writer).unwrap();
-            let size = writer.pos;
-            writer.seek(std::io::SeekFrom::Start(0)).unwrap();
+            let size = writer.seek(SeekFrom::Current(0)).unwrap();
+            writer.seek(SeekFrom::Start(0)).unwrap();
             writer.write_u32::<LE>(size as u32).unwrap();
 
             unsafe { self.queue.put(buffer); }

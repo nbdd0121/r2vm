@@ -1,5 +1,6 @@
 use super::{Device, DeviceId, Queue};
 use super::super::block::Block as BlockDevice;
+use std::io::{Read, Write};
 
 #[allow(dead_code)]
 const VIRTIO_BLK_F_RO: usize = 5;
@@ -55,33 +56,35 @@ impl Device for Block {
     }
     fn notify(&mut self, _idx: usize) {
         while let Some(mut buffer) = self.queue.take() {
+            let (mut reader, mut writer) = buffer.reader_writer();
+
             let header: VirtioBlkReqHeader = unsafe {
                 let mut header: [u8; 16] = std::mem::uninitialized();
-                buffer.read(0, &mut header);
+                reader.read_exact(&mut header).unwrap();
                 std::mem::transmute(header)
             };
 
             match header.r#type {
                 VIRTIO_BLK_T_IN => {
-                    let mut io_buffer = Vec::with_capacity(buffer.write_len());
+                    let mut io_buffer = Vec::with_capacity(writer.len());
                     unsafe { io_buffer.set_len(io_buffer.capacity() - 1) };
                     self.file.read_exact_at(&mut io_buffer, header.sector * 512).unwrap();
                     trace!(target: "VirtioBlk", "read {} bytes from sector {:x}", io_buffer.len(), header.sector);
 
                     io_buffer.push(0);
-                    buffer.write(0, &io_buffer);
+                    writer.write_all(&io_buffer).unwrap();
                 }
                 VIRTIO_BLK_T_OUT => {
-                    let mut io_buffer = Vec::with_capacity(buffer.read_len() - 16);
+                    let mut io_buffer = Vec::with_capacity(reader.len() - 16);
                     unsafe { io_buffer.set_len(io_buffer.capacity()) };
-                    buffer.read(16, &mut io_buffer);
+                    reader.read_exact(&mut io_buffer).unwrap();
 
                     self.file.write_all_at(&io_buffer, header.sector * 512).unwrap();
                     // We must make sure the data has been flushed into the disk before returning
                     self.file.flush().unwrap();
                     trace!(target: "VirtioBlk", "write {} bytes from sector {:x}", io_buffer.len(), header.sector);
 
-                    buffer.write(0, &[0]);
+                    writer.write_all(&[0]).unwrap();
                 }
                 _ => {
                     error!(target: "VirtioBlk", "unsupported block operation type {}", header.r#type);
