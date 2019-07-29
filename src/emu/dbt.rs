@@ -41,13 +41,23 @@ pub struct DbtCompiler<'a> {
     slow_path: Vec<SlowPath>,
     minstret: u32,
 
-    /// The start PC of this basic block.
+    /// The physical start PC of this basic block.
     pc_start: u64,
+
+    /// The physical end PC of this basic block.
     pc_end: u64,
+
+    /// The physical current PC
     pc_cur: u64,
 
+    /// The physical address of `ctx.pc`
+    pc_rel: u64,
+
+    /// The current instret, relative to `instret` before entering the basic block.
     instret: u32,
-    total_inst: u32,
+
+    /// `ctx.instret`, relative to `instret` before entering the basic block.
+    instret_rel: u32,
 }
 
 struct Label(usize);
@@ -80,8 +90,9 @@ impl<'a> DbtCompiler<'a> {
             pc_start: 0,
             pc_end: 0,
             pc_cur: 0,
+            pc_rel: 0,
             instret: 0,
-            total_inst: 0,
+            instret_rel: 0,
         }
     }
 
@@ -209,8 +220,11 @@ impl<'a> DbtCompiler<'a> {
     /// EBX encodes both the pc offset and the insret offset of the instruction relative to
     /// the end of the basic block.
     fn emit_set_ebx(&mut self) {
-        let pc_rel = self.pc_end - self.pc_cur;
-        let ebx = self.instret << 16 | pc_rel as u32;
+        // Calculate the differences that need to apply
+        let pc_rel = (self.pc_cur as i64 - self.pc_rel as i64) as i16;
+        let instret_rel = (self.instret as i32 - self.instret_rel as i32) as i16;
+        // Pack them into a single register
+        let ebx = (instret_rel as u16 as u32) << 16 | pc_rel as u16 as u32;
         self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
     }
 
@@ -278,7 +292,7 @@ impl<'a> DbtCompiler<'a> {
 
         if self.pc_start &! 4095 == target &! 4095 {
             if (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE != target >> CACHE_LINE_LOG2_SIZE {
-                self.emit_icache_access(0);
+                self.emit_icache_access(self.pc_rel);
             }
             self.emit_helper_call(helper_icache_patch2);
         } else {
@@ -314,12 +328,15 @@ impl<'a> DbtCompiler<'a> {
         }
     }
 
-    fn emit_icache_access(&mut self, off: u64) {
+    fn emit_icache_access(&mut self, pc: u64) {
         let offset = offset_of!(Context, i_line);
 
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
-        self.emit(Sub(Reg(Register::RSI), Imm(off as i64)));
+        let off = pc as i64 - self.pc_rel as i64;
+        if off != 0 {
+            self.emit(Add(Reg(Register::RSI), Imm(off)));
+        }
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
@@ -1283,8 +1300,8 @@ impl<'a> DbtCompiler<'a> {
             Op::Sraw { rd, rs1, rs2 } => self.emit_sraw(rd, rs1, rs2),
             /* AUIPC */
             Op::Auipc { rd, imm } => {
-                let pc_rel = self.pc_end - self.pc_cur;
-                let imm = imm as i64 - pc_rel as i64;
+                let pc_rel = self.pc_cur as i64 - self.pc_rel as i64;
+                let imm = imm as i64 + pc_rel;
                 self.emit(Mov(Reg(Register::RAX), OpMem(memory_of_pc())));
                 self.emit(Add(Reg(Register::RAX), Imm(imm)));
                 self.store_from_rax(rd);
@@ -1423,12 +1440,12 @@ impl<'a> DbtCompiler<'a> {
 
     /// Compile an op. The op should follow the previous one, and it should not be an op that
     /// might possibly change control flow.
-    pub fn compile_op(&mut self, op: &Op, compressed: bool) {
+    pub fn compile_op(&mut self, op: &Op, compressed: bool, last: bool) {
 
         // First check if the op cross cache block boundary and we need to access the icache.
         let next_pc = self.pc_cur + if compressed { 2 } else { 4 };
         if (self.pc_cur - 1) >> CACHE_LINE_LOG2_SIZE != (next_pc - 1) >> CACHE_LINE_LOG2_SIZE {
-            self.emit_icache_access(self.pc_end - self.pc_cur);
+            self.emit_icache_access(next_pc - 1);
         }
 
         // Actually emit the op
@@ -1442,8 +1459,8 @@ impl<'a> DbtCompiler<'a> {
             self.emit_op(op)
         }
 
-        // In fast mode, generate a yield call.
-        if cfg!(not(feature = "fast")) || (cfg!(not(feature = "thread")) && self.instret == self.total_inst - 1) {
+        // In non-fast mode, generate a yield call.
+        if cfg!(not(feature = "fast")) || (cfg!(not(feature = "thread")) && last) {
             self.emit_helper_call(fiber_yield_raw);
         }
 
@@ -1458,11 +1475,8 @@ impl<'a> DbtCompiler<'a> {
         self.pc_start = block.1;
         self.pc_end = block.2;
 
-        // Pre-adjust PC
-        self.emit(Add(Mem(memory_of_pc()), Imm((block.2 - block.1) as i64)));
-
         self.pc_cur = block.1;
-        self.total_inst = opblock.len() as u32;
+        self.pc_rel = block.1;
 
         let is_branch = match opblock.last().unwrap().0 {
             Op::Beq {..} |
@@ -1476,21 +1490,29 @@ impl<'a> DbtCompiler<'a> {
         let can_change_pc = opblock.last().unwrap().0.can_change_control_flow();
 
         for i in 0..opblock.len() - if can_change_pc { 1 } else { 0 } {
-            self.compile_op(&opblock[i].0, opblock[i].1);
+            self.compile_op(&opblock[i].0, opblock[i].1, false);
         }
+
+        // Pre-adjust PC
+        self.emit(Add(Mem(memory_of_pc()), Imm((block.2 - block.1) as i64)));
+        self.pc_rel = self.pc_end;
 
         // Increase instret
         let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
-        self.emit(Add(Mem(mem_of_instret), Imm(self.instret as i64)));
+        self.emit(Add(Mem(mem_of_instret), Imm(opblock.len() as i64)));
+        self.instret_rel = opblock.len() as u32;
 
         // Increase minstret, the immediate is a placeholder and will be patched later
         // Note minstret is not precisely tracked in case of exception
-        let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
-        self.emit(Add(Mem(mem_of_minstret), Imm(self.minstret as i64)));
+        if self.minstret != 0 {
+            let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
+            // The PC-changing instruction is never a memory access, so use minstret.
+            self.emit(Add(Mem(mem_of_minstret), Imm(self.minstret as i64)));
+        }
 
         if can_change_pc {
             let (op, c) = opblock.last().unwrap();
-            self.compile_op(op, *c);
+            self.compile_op(op, *c, true);
         }
 
         // Epilogue
@@ -1500,7 +1522,7 @@ impl<'a> DbtCompiler<'a> {
         // then we does not need to generate the guarding code for the jump.
         if (!can_change_pc || (is_branch && !self.interp)) && block.1 &! 4095 == block.2 &! 4095 {
             if (block.2 - 1) >> CACHE_LINE_LOG2_SIZE != block.2 >> CACHE_LINE_LOG2_SIZE {
-                self.emit_icache_access(0);
+                self.emit_icache_access(self.pc_rel);
             }
 
             // We want to have a direct jump to the target block.
@@ -1510,6 +1532,13 @@ impl<'a> DbtCompiler<'a> {
         } else {
             self.emit_chain_tail();
         }
+
+        self.end();
+    }
+
+    /// Finish compilation. This routine will generate slow paths, etc.
+    pub fn end(&mut self) {
+        self.pc_rel = self.pc_start;
 
         // Generate a gap to allow easy view of disassembly
         self.emit(Nop);

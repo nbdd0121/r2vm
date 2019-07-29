@@ -10,10 +10,11 @@ helper_trap:
     mov rdi, rbp
     # We use EBX to store the instruction offset within the current basic block
     # Lower 16 bits are PC offset and upper 16 bits are INSTRET offset.
-    movzx eax, bx
-    sub [rbp + 0x100], rax
+    movsx rax, bx
+    add [rbp + 0x100], rax
     shr ebx, 16
-    add [rbp + 0x108], rbx
+    movsx rax, bx
+    add [rbp + 0x108], rax
     call trap
     # Pop out trapping PC
     add rsp, 8
