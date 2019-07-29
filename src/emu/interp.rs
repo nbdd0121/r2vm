@@ -1617,34 +1617,29 @@ fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
     }
 }
 
-fn decode_block(mut pc: u64, pc_next: u64) -> (Vec<(Op, bool)>, u64, u64) {
-    let start_pc = pc;
+fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsafe extern "C" fn() {
+    let mut phys_pc_end = phys_pc;
     let mut vec = Vec::new();
 
     if crate::get_flags().disassemble {
-        eprintln!("Decoding {:x}", pc);
+        eprintln!("Decoding {:x}", phys_pc);
     }
 
     loop {
-        let (op, c) = decode_instr(&mut pc, pc_next);
-        if op.can_change_control_flow() || (pc &! 4095) != (start_pc &! 4095) {
+        let (op, c) = decode_instr(&mut phys_pc_end, phys_pc_next);
+        if op.can_change_control_flow() || (phys_pc_end &! 4095) != (phys_pc &! 4095) {
             vec.push((op, c));
             break
         }
         vec.push((op, c));
     }
-    (vec, start_pc, pc)
-}
-
-fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsafe extern "C" fn() {
-    let (vec, start, end) = decode_block(phys_pc, phys_pc_next);
 
     // Reserve some space for the DBT compiler.
     // This uses a very relax upper bound guess about size of DBT-ed block.
     let code = unsafe { icache.ensure_size(vec.len() * 128 + 512) };
     {
         let mut compiler = super::dbt::DbtCompiler::new(code);
-        compiler.compile((&vec, start, end));
+        compiler.compile((&vec, phys_pc, phys_pc_end));
         // Actually commit the space we allocated
         icache.alloc_size(compiler.len);
     }
