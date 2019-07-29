@@ -44,11 +44,11 @@ pub struct DbtCompiler<'a> {
     /// The physical start PC of this basic block.
     pc_start: u64,
 
-    /// The physical end PC of this basic block.
-    pc_end: u64,
-
     /// The physical current PC
     pc_cur: u64,
+
+    /// The physical PC after current op
+    pc_end: u64,
 
     /// The physical address of `ctx.pc`
     pc_rel: u64,
@@ -1443,9 +1443,9 @@ impl<'a> DbtCompiler<'a> {
     pub fn compile_op(&mut self, op: &Op, compressed: bool, last: bool) {
 
         // First check if the op cross cache block boundary and we need to access the icache.
-        let next_pc = self.pc_cur + if compressed { 2 } else { 4 };
-        if (self.pc_cur - 1) >> CACHE_LINE_LOG2_SIZE != (next_pc - 1) >> CACHE_LINE_LOG2_SIZE {
-            self.emit_icache_access(next_pc - 1);
+        self.pc_end = self.pc_cur + if compressed { 2 } else { 4 };
+        if (self.pc_cur - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE {
+            self.emit_icache_access(self.pc_end - 1);
         }
 
         // Actually emit the op
@@ -1465,20 +1465,20 @@ impl<'a> DbtCompiler<'a> {
         }
 
         // Advance counters
-        self.pc_cur = next_pc;
+        self.pc_cur = self.pc_end;
         self.instret += 1;
     }
 
-    pub fn compile(&mut self, block: (&[(Op, bool)], u64, u64)) {
-        // Compilation requires Op to be 'static
-        let opblock = block.0;
-        self.pc_start = block.1;
-        self.pc_end = block.2;
+    pub fn begin(&mut self, pc: u64) {
+        self.pc_start = pc;
+        self.pc_cur = pc;
+        self.pc_rel = pc;
+    }
 
-        self.pc_cur = block.1;
-        self.pc_rel = block.1;
-
-        let is_branch = match opblock.last().unwrap().0 {
+    /// Finish compilation. This routine will generate slow paths, etc.
+    /// If the last op is a jump/branch, supply it here.
+    pub fn end(&mut self, last: Option<(Op, bool)>) {
+        let is_branch = last.map(|x| match x.0 {
             Op::Beq {..} |
             Op::Bne {..} |
             Op::Blt {..} |
@@ -1486,21 +1486,23 @@ impl<'a> DbtCompiler<'a> {
             Op::Bltu {..} |
             Op::Bgeu {..} => true,
             _ => false,
-        };
-        let can_change_pc = opblock.last().unwrap().0.can_change_control_flow();
+        }).unwrap_or(false);
+        let can_change_pc = last.is_some();
 
-        for i in 0..opblock.len() - if can_change_pc { 1 } else { 0 } {
-            self.compile_op(&opblock[i].0, opblock[i].1, false);
+        if let Some((_, c)) = last {
+            self.pc_rel = self.pc_cur + if c { 2 } else { 4 };
+            self.instret_rel = self.instret + 1;
+        } else {
+            self.pc_rel = self.pc_cur;
+            self.instret_rel = self.instret;
         }
 
         // Pre-adjust PC
-        self.emit(Add(Mem(memory_of_pc()), Imm((block.2 - block.1) as i64)));
-        self.pc_rel = self.pc_end;
+        self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
 
         // Increase instret
         let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
-        self.emit(Add(Mem(mem_of_instret), Imm(opblock.len() as i64)));
-        self.instret_rel = opblock.len() as u32;
+        self.emit(Add(Mem(mem_of_instret), Imm(self.instret_rel as i64)));
 
         // Increase minstret, the immediate is a placeholder and will be patched later
         // Note minstret is not precisely tracked in case of exception
@@ -1510,9 +1512,8 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Add(Mem(mem_of_minstret), Imm(self.minstret as i64)));
         }
 
-        if can_change_pc {
-            let (op, c) = opblock.last().unwrap();
-            self.compile_op(op, *c, true);
+        if let Some((op, c)) = last {
+            self.compile_op(&op, c, true);
         }
 
         // Epilogue
@@ -1520,8 +1521,8 @@ impl<'a> DbtCompiler<'a> {
 
         // If the next basic block lives within the same page,
         // then we does not need to generate the guarding code for the jump.
-        if (!can_change_pc || (is_branch && !self.interp)) && block.1 &! 4095 == block.2 &! 4095 {
-            if (block.2 - 1) >> CACHE_LINE_LOG2_SIZE != block.2 >> CACHE_LINE_LOG2_SIZE {
+        if (!can_change_pc || (is_branch && !self.interp)) && self.pc_start &! 4095 == self.pc_rel &! 4095 {
+            if (self.pc_rel - 1) >> CACHE_LINE_LOG2_SIZE != self.pc_rel >> CACHE_LINE_LOG2_SIZE {
                 self.emit_icache_access(self.pc_rel);
             }
 
@@ -1533,17 +1534,11 @@ impl<'a> DbtCompiler<'a> {
             self.emit_chain_tail();
         }
 
-        self.end();
-    }
-
-    /// Finish compilation. This routine will generate slow paths, etc.
-    pub fn end(&mut self) {
-        self.pc_rel = self.pc_start;
-
         // Generate a gap to allow easy view of disassembly
         self.emit(Nop);
 
         // Generate slow path
+        self.pc_rel = self.pc_start;
         for slow in std::mem::replace(&mut self.slow_path, Vec::new()) {
             match slow {
                 SlowPath::Load(pc_cur, instret, jcc_misalign, jcc_miss, label_fin) => {

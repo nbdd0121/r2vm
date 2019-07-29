@@ -1619,30 +1619,35 @@ fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
 
 fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsafe extern "C" fn() {
     let mut phys_pc_end = phys_pc;
-    let mut vec = Vec::new();
 
     if crate::get_flags().disassemble {
         eprintln!("Decoding {:x}", phys_pc);
     }
 
+    // Reserve some space for the DBT compiler.
+    // This uses a very relax upper bound, enough for an entire page.
+    let code = unsafe { icache.ensure_size(256 * 1024) };
+    let mut compiler = super::dbt::DbtCompiler::new(code);
+    compiler.begin(phys_pc);
+
     loop {
         let (op, c) = decode_instr(&mut phys_pc_end, phys_pc_next);
-        if op.can_change_control_flow() || (phys_pc_end &! 4095) != (phys_pc &! 4095) {
-            vec.push((op, c));
+        if op.can_change_control_flow() {
+            compiler.end(Some((op, c)));
             break
         }
-        vec.push((op, c));
+
+        compiler.compile_op(&op, c, false);
+
+        // Need to stop when crossing page boundary
+        if (phys_pc_end &! 4095) != (phys_pc &! 4095) {
+            compiler.end(None);
+            break
+        }
     }
 
-    // Reserve some space for the DBT compiler.
-    // This uses a very relax upper bound guess about size of DBT-ed block.
-    let code = unsafe { icache.ensure_size(vec.len() * 128 + 512) };
-    {
-        let mut compiler = super::dbt::DbtCompiler::new(code);
-        compiler.compile((&vec, phys_pc, phys_pc_end));
-        // Actually commit the space we allocated
-        icache.alloc_size(compiler.len);
-    }
+    // Actually commit the space we allocated
+    icache.alloc_size(compiler.len);
 
     let code_fn = unsafe { std::mem::transmute(code.as_ptr() as usize) };
     icache.map.insert(phys_pc, code_fn);
