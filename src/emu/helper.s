@@ -13,7 +13,7 @@ helper_trap:
     movzx eax, bx
     sub [rbp + 0x100], rax
     shr ebx, 16
-    sub [rbp + 0x108], rbx
+    add [rbp + 0x108], rbx
     call trap
     # Pop out trapping PC
     add rsp, 8

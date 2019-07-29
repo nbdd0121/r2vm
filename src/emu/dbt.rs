@@ -210,8 +210,7 @@ impl<'a> DbtCompiler<'a> {
     /// the end of the basic block.
     fn emit_set_ebx(&mut self) {
         let pc_rel = self.pc_end - self.pc_cur;
-        let i_rel = self.total_inst - self.instret;
-        let ebx = i_rel << 16 | pc_rel as u32;
+        let ebx = self.instret << 16 | pc_rel as u32;
         self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
     }
 
@@ -1462,10 +1461,6 @@ impl<'a> DbtCompiler<'a> {
         // Pre-adjust PC
         self.emit(Add(Mem(memory_of_pc()), Imm((block.2 - block.1) as i64)));
 
-        // Increase instret
-        let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
-        self.emit(Add(Mem(mem_of_instret), Imm(opblock.len() as i64)));
-
         self.pc_cur = block.1;
         self.total_inst = opblock.len() as u32;
 
@@ -1484,6 +1479,10 @@ impl<'a> DbtCompiler<'a> {
             self.compile_op(&opblock[i].0, opblock[i].1);
         }
 
+        // Increase instret
+        let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
+        self.emit(Add(Mem(mem_of_instret), Imm(self.instret as i64)));
+
         // Increase minstret, the immediate is a placeholder and will be patched later
         // Note minstret is not precisely tracked in case of exception
         let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
@@ -1499,7 +1498,7 @@ impl<'a> DbtCompiler<'a> {
 
         // If the next basic block lives within the same page,
         // then we does not need to generate the guarding code for the jump.
-        if (!can_change_pc || is_branch) && block.1 &! 4095 == block.2 &! 4095 {
+        if (!can_change_pc || (is_branch && !self.interp)) && block.1 &! 4095 == block.2 &! 4095 {
             if (block.2 - 1) >> CACHE_LINE_LOG2_SIZE != block.2 >> CACHE_LINE_LOG2_SIZE {
                 self.emit_icache_access(0);
             }
