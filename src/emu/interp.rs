@@ -335,33 +335,105 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
 
 type Trap = u64;
 
-fn translate(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, Trap> {
-    let fault_type = if write { 15 } else { 13 };
-    if (ctx.satp >> 60) == 0 {
-        return Ok(addr);
-    }
-    let mut ppn = ctx.satp & ((1u64 << 44) - 1);
-    let mut pte: u64 = crate::emu::read_memory(ppn * 4096 + ((addr >> 30) & 511) * 8);
-    if (pte & 1) == 0 { return Err(fault_type); }
-    let ret = loop {
-        ppn = pte >> 10;
-        if (pte & 0xf) != 1 {
-            break (ppn << 12) | (addr & ((1<<30)-1));
-        }
-        pte = crate::emu::read_memory(ppn * 4096 + ((addr >> 21) & 511) * 8);
-        if (pte & 1) == 0 { return Err(fault_type); }
-        ppn = pte >> 10;
-        if (pte & 0xf) != 1 {
-            break (ppn << 12) | (addr & ((1<<21)-1));
-        }
-        pte = crate::emu::read_memory(ppn * 4096 + ((addr >> 12) & 511) * 8);
-        if (pte & 1) == 0 { return Err(fault_type); }
+/// Type of access. Some other states that affect permission check, such as privilege level and
+/// MXR/SUM bits, are conveyed implictly through Contexts. ASID is also conveyed implicitly.
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum AccessType {
+    Read,
+    Write,
+    Execute,
+}
 
+const PTE_V: u64 = 0x01;
+const PTE_R: u64 = 0x02;
+const PTE_W: u64 = 0x04;
+const PTE_X: u64 = 0x08;
+const PTE_U: u64 = 0x10;
+const PTE_G: u64 = 0x20;
+const PTE_A: u64 = 0x40;
+const PTE_D: u64 = 0x80;
+
+/// Walk the page table under SV39. We don't support SV48 at the moment.
+pub fn walk_page(ctx: &Context, vpn: u64) -> u64 {
+    // Check if the address is canonical.
+    if (((vpn << (64 - 27)) as i64) >> (64 - 27 - 12)) as u64 >> 12 != vpn {
+        unimplemented!("non-canonical page number {:x}", vpn);
+    }
+
+    let mut ppn = ctx.satp & ((1u64 << 44) - 1);
+    let mut global = false;
+
+    for i in 0..3 {
+        let bits_left = 18 - i * 9;
+        let index = (vpn >> bits_left) & 511;
+        let pte_addr = (ppn << 12) + index * 8;
+        let pte: u64 = crate::emu::read_memory(pte_addr);
         ppn = pte >> 10;
-        break (ppn << 12) | (addr & 4095);
-    };
-    if (pte & 0x40) == 0 || (write && ((pte & 0x4) == 0 || (pte & 0x80) == 0)) { return Err(fault_type); }
-    Ok(ret)
+
+        // Check for invalid PTE
+        if pte & PTE_V == 0 { return 0 }
+
+        // Check for malformed PTEs
+        if pte & (PTE_R | PTE_W | PTE_X) == PTE_W { return 0 }
+        if pte & (PTE_R | PTE_W | PTE_X) == PTE_W | PTE_X { return 0 }
+
+        // A global bit will cause the page to be global regardless if this is leaf.
+        if pte & PTE_G != 0 { global = true }
+
+        // Not leaf yet
+        if pte & (PTE_R | PTE_W | PTE_X) == 0 { continue }
+
+        // Check for misaligned huge page
+        if ppn & ((1 << bits_left) - 1) != 0 { return 0 }
+
+        // Synthesis a 4K PTE
+        let ppn = ppn | (vpn & ((1 << bits_left) - 1));
+        return ppn << 10 | pte & ((1 << 10) - 1) | (if global { PTE_G } else { 0 })
+    }
+
+    // Invalid if reached here
+    0
+}
+
+pub fn pte_check(ctx: &Context, pte: u64, access: AccessType) -> Result<(), ()> {
+    if pte & PTE_V == 0 { return Err(()) }
+
+    if ctx.prv == 0 {
+        if pte & PTE_U == 0 { return Err(()) }
+    } else {
+        if pte & PTE_U != 0 && ctx.sstatus & (1 << 18) == 0 { return Err(()) }
+    }
+
+    if pte & PTE_A == 0 { return Err(()) }
+
+    match access {
+        AccessType::Read => {
+            if pte & PTE_R == 0 && (pte & PTE_X == 0 || ctx.sstatus & (1 << 19) == 0) { return Err(()) }
+        }
+        AccessType::Write => {
+            if pte & PTE_W == 0 || pte & PTE_D == 0 { return Err(()) }
+        }
+        AccessType::Execute => {
+            if pte & PTE_X == 0 { return Err(()) }
+        }
+    }
+
+    Ok(())
+}
+
+fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, Trap> {
+    // MMU off
+    if (ctx.satp >> 60) == 0 { return Ok(addr) }
+
+    let pte = walk_page(ctx, addr >> 12);
+    match pte_check(ctx, pte, access) {
+        Ok(_) => Ok(pte >> 10 << 12 | addr & 4095),
+        Err(_) => Err(match access {
+            AccessType::Read => 13,
+            AccessType::Write => 15,
+            AccessType::Execute => 12,
+        })
+    }
 }
 
 pub const CACHE_LINE_LOG2_SIZE: usize = 12;
@@ -370,7 +442,7 @@ pub const CACHE_LINE_LOG2_SIZE: usize = 12;
 #[no_mangle]
 fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let out = match translate(ctx, addr, false) {
+    let out = match translate(ctx, addr, AccessType::Execute) {
         Err(trap) => {
             ctx.scause = trap as u64;
             ctx.stval = addr;
@@ -399,7 +471,7 @@ fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
 #[export_name = "translate_cache_miss"]
 fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let out = match translate(ctx, addr, write) {
+    let out = match translate(ctx, addr, if write { AccessType::Write} else { AccessType::Read }) {
         Err(trap) => {
             ctx.scause = trap as u64;
             ctx.stval = addr;
@@ -624,7 +696,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             0
         }
         4 => {
-            let mask: u64 = crate::emu::read_memory(translate(ctx, arg0, false).unwrap());
+            let mask: u64 = crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap());
             for i in 0..crate::core_count() {
                 if mask & (1 << i) == 0 { continue }
                 crate::shared_context(i).assert(2);
@@ -635,7 +707,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
-                crate::emu::read_memory(translate(ctx, arg0, false).unwrap())
+                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap())
             };
             for i in 0..crate::core_count() {
                 if mask & (1 << i) == 0 { continue }
@@ -647,7 +719,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
-                crate::emu::read_memory(translate(ctx, arg0, false).unwrap())
+                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap())
             };
             global_sfence(mask, None, if arg2 == 4096 { Some(arg1 >> 12) } else { None });
             0
@@ -656,7 +728,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
-                crate::emu::read_memory(translate(ctx, arg0, false).unwrap())
+                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap())
             };
             global_sfence(mask, Some(arg3 as u16), if arg2 == 4096 { Some(arg1 >> 12) } else { None });
             0
@@ -1708,7 +1780,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
         Some(v) => v,
         None => {
             // Ignore error in this case
-            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
+            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, AccessType::Execute) {
                 Ok(pc) => pc,
                 Err(_) => 0,
             };
@@ -1736,7 +1808,7 @@ fn find_block_and_patch(ctx: &mut Context, ret: usize) {
         Some(v) => v,
         None => {
             // Ignore error in this case
-            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
+            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, AccessType::Execute) {
                 Ok(pc) => pc,
                 Err(_) => 0,
             };
@@ -1767,7 +1839,7 @@ fn find_block_and_patch2(ctx: &mut Context, ret: usize) {
         Some(v) => v,
         None => {
             // Ignore error in this case
-            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, false) {
+            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, AccessType::Execute) {
                 Ok(pc) => pc,
                 Err(_) => 0,
             };
