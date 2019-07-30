@@ -331,7 +331,7 @@ impl<'a> DbtCompiler<'a> {
     fn emit_icache_access(&mut self, pc: u64) {
         if cfg!(feature = "direct") && crate::get_flags().user_only { return }
 
-        let offset = offset_of!(Context, i_line);
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, i_line);
 
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
@@ -369,7 +369,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_chain_tail(&mut self) {
-        let offset = offset_of!(Context, i_line);
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, i_line);
 
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
@@ -440,7 +440,7 @@ impl<'a> DbtCompiler<'a> {
     /// actual load - it merely computes the address, translate to physical and leave it at RSI
     fn emit_load(&mut self, rs1: u8, imm: i32, size: Size) {
         self.minstret += 1;
-        let offset = offset_of!(Context, line);
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, line);
 
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
@@ -504,7 +504,7 @@ impl<'a> DbtCompiler<'a> {
 
     fn emit_store(&mut self, rs1: u8, rs2: u8, imm: i32, size: Size) {
         self.minstret += 1;
-        let offset = offset_of!(Context, line);
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, line);
 
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));

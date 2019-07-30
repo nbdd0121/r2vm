@@ -1,8 +1,8 @@
 mod split_int;
 pub use split_int::SplitInt;
 
-mod atomic_min_max;
-pub use atomic_min_max::AtomicMinMax;
+mod atomic_ext;
+pub use atomic_ext::AtomicExt;
 
 macro_rules! offset_of {
     ($ty:ty, $field:ident) => {

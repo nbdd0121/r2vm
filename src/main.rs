@@ -223,14 +223,6 @@ pub fn main() {
             prv: 0,
             hartid: i as u64,
             minstret: 0,
-            line: [emu::interp::CacheLine {
-                tag: i64::max_value() as u64,
-                paddr: 0
-            }; 1024],
-            i_line: [emu::interp::CacheLine {
-                tag: i64::max_value() as u64,
-                paddr: 0
-            }; 1024],
         };
         // x0 must always be 0
         newctx.registers[0] = 0;

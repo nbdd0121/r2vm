@@ -3,18 +3,38 @@ use softfp::{self, F32, F64};
 use std::convert::TryInto;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicI64, AtomicU64};
 use std::sync::atomic::Ordering as MemOrder;
-use crate::util::AtomicMinMax;
+use crate::util::AtomicExt;
 
+/// A cache line. `{CacheLine}` is composed of atomic variables because we sometimes need cross-
+/// thread invalidation. Note that usually paddr isn't touched, but by keeping tag and paddr
+/// together we can exploit better cache locality.
 #[repr(C)]
-#[derive(Clone, Copy)]
 pub struct CacheLine {
     /// Lowest bit is used to store whether this cache line is non-writable
     /// It actually stores (tag << 1) | non-writable
-    pub tag: u64,
+    pub tag: AtomicU64,
     /// It actually stores vaddr ^ paddr
-    pub paddr: u64,
+    pub paddr: AtomicU64,
 }
 
+impl Default for CacheLine {
+    fn default() -> Self {
+        Self {
+            tag: AtomicU64::new(i64::max_value() as u64),
+            paddr: AtomicU64::new(0),
+        }
+    }
+}
+
+impl CacheLine {
+    pub fn invalidate(&self) {
+        self.tag.store(i64::max_value() as u64, MemOrder::Relaxed);
+    }
+}
+
+/// Most fields of `{Context}` can only be safely accessed by the execution thread. However we do
+/// ocassionally need to communicate between these threads. This `{SharedContext}` are parts that
+/// can be safely accessed both from the execution thread and other harts.
 #[repr(C)]
 pub struct SharedContext {
     /// This field stored wether there are interrupts not yet seen by the current hart. Interrupts
@@ -42,6 +62,15 @@ pub struct SharedContext {
     /// * When an external interrupt asserts, it should be **OR**ed with corresponding bit.
     /// * When an external interrupt deasserts, it should be **AND**ed with a mask.
     pub sip: AtomicU64,
+
+    /// This is the L0 cache used to accelerate simulation. If a memory request hits the cache line
+    /// here, then it will not go through virtual address translation nor cache simulation.
+    /// Therefore this should only contain entries that are neither in the TLB nor in the cache.
+    ///
+    /// The cache line should only contain valid entries for the current privilege level and ASID.
+    /// Upon privilege-level switch or address space switch all entries here should be cleared.
+    pub line: [CacheLine; 1024],
+    pub i_line: [CacheLine; 1024],
 }
 
 impl SharedContext {
@@ -52,6 +81,20 @@ impl SharedContext {
         SharedContext {
             sip: AtomicU64::new(0),
             new_interrupts: AtomicU64::new(0),
+            line: unsafe {
+                let mut arr: [CacheLine; 1024] = std::mem::uninitialized();
+                for item in arr.iter_mut() {
+                    std::ptr::write(item, Default::default());
+                }
+                arr
+            },
+            i_line: unsafe {
+                let mut arr: [CacheLine; 1024] = std::mem::uninitialized();
+                for item in arr.iter_mut() {
+                    std::ptr::write(item, Default::default());
+                }
+                arr
+            },
         }
     }
 
@@ -71,6 +114,31 @@ impl SharedContext {
     /// `sip`. This should be called, e.g. if SIE or SSTATUS is modified.
     pub fn alert(&self) {
         self.new_interrupts.fetch_or(1, MemOrder::Release);
+    }
+
+    pub fn clear_local_cache(&self) {
+        for line in self.line.iter() {
+            line.invalidate();
+        }
+    }
+
+    pub fn clear_local_icache(&self) {
+        for line in self.i_line.iter() {
+            line.invalidate();
+        }
+    }
+
+    pub fn protect_code(&self, page: u64) {
+        for line in self.line.iter() {
+            let _ = line.tag.fetch_update_stable(|value| {
+                let paddr = (value >> 1 << CACHE_LINE_LOG2_SIZE) ^ line.paddr.load(MemOrder::Relaxed);
+                if paddr &! 4095 == page {
+                    Some(value | 1)
+                } else {
+                    None
+                }
+            }, MemOrder::Relaxed, MemOrder::Relaxed);
+        }
     }
 }
 
@@ -120,38 +188,9 @@ pub struct Context {
     pub hartid: u64,
     pub minstret: u64,
 
-    /// This is the L0 cache used to accelerate simulation. If a memory request hits the cache line
-    /// here, then it will not go through virtual address translation nor cache simulation.
-    /// Therefore this should only contain entries that are neither in the TLB nor in the cache.
-    ///
-    /// The cache line should only contain valid entries for the current privilege level and ASID.
-    /// Upon privilege-level switch or address space switch all entries here should be cleared.
-    pub line: [CacheLine; 1024],
-    pub i_line: [CacheLine; 1024],
 }
 
 impl Context {
-    pub fn clear_local_cache(&mut self) {
-        for line in self.line.iter_mut() {
-            line.tag = i64::max_value() as u64;
-        }
-    }
-
-    pub fn clear_local_icache(&mut self) {
-        for line in self.i_line.iter_mut() {
-            line.tag = i64::max_value() as u64;
-        }
-    }
-
-    pub fn protect_code(&mut self, page: u64) {
-        for line in self.line.iter_mut() {
-            let paddr = (line.tag >> 1 << CACHE_LINE_LOG2_SIZE) ^ line.paddr;
-            if paddr &! 4095 == page {
-                line.tag |= 1;
-            }
-        }
-    }
-
     pub fn test_and_set_fs(&mut self) -> Result<(), ()> {
         if self.sstatus & 0x6000 == 0 {
             self.scause = 2;
@@ -281,8 +320,8 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
                 // We only support SV39 at the moment.
                 _ => (),
             }
-            ctx.clear_local_cache();
-            ctx.clear_local_icache();
+            ctx.shared.clear_local_cache();
+            ctx.shared.clear_local_icache();
         }
         _ => {
             error!("write illegal csr {:x} = {:x}", csr as i32, value);
@@ -339,19 +378,19 @@ fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
         }
         Ok(out) => out,
     };
-    let line: &mut CacheLine = &mut ctx.i_line[(idx & 1023) as usize];
-    line.tag = idx;
-    line.paddr = out ^ addr;
+    let line: &CacheLine = &ctx.shared.i_line[(idx & 1023) as usize];
+    line.tag.store(idx, MemOrder::Relaxed);
+    line.paddr.store(out ^ addr, MemOrder::Relaxed);
     Ok(out)
 }
 
 fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let line = &ctx.i_line[(idx & 1023) as usize];
-    let paddr = if line.tag != idx {
+    let line = &ctx.shared.i_line[(idx & 1023) as usize];
+    let paddr = if line.tag.load(MemOrder::Relaxed) != idx {
         insn_translate_cache_miss(ctx, addr)?
     } else {
-        line.paddr ^ addr
+        line.paddr.load(MemOrder::Relaxed) ^ addr
     };
     Ok(paddr)
 }
@@ -368,9 +407,8 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
         }
         Ok(out) => out,
     };
-    let line: &mut CacheLine = &mut ctx.line[(idx & 1023) as usize];
-    line.tag = idx << 1;
-    line.paddr = out ^ addr;
+    let line: &CacheLine = &ctx.shared.line[(idx & 1023) as usize];
+    let mut tag = idx << 1;
     if write {
         // Invalidate presence in I$, so if the code is executed, we won't silently write into it.
         let page = out >> 12 << 12;
@@ -383,24 +421,26 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
                 unsafe { *(blk as *mut u8) = 0xC3 }
             }
         }
-        let line = &mut ctx.i_line[(idx & 1023) as usize];
-        if line.tag == idx {
-            line.tag = i64::max_value() as u64;
+        let line = &ctx.shared.i_line[(idx & 1023) as usize];
+        if line.tag.load(MemOrder::Relaxed) == idx {
+            line.invalidate();
         }
     } else {
-        line.tag |= 1
+        tag |= 1;
     }
+    line.tag.store(tag, MemOrder::Relaxed);
+    line.paddr.store(out ^ addr, MemOrder::Relaxed);
     Ok(out)
 }
 
 fn read_vaddr<T>(ctx: &mut Context, addr: u64) -> Result<&'static T, ()> {
     ctx.minstret += 1;
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let line = &ctx.line[(idx & 1023) as usize];
-    let paddr = if (line.tag >> 1) != idx {
+    let line = &ctx.shared.line[(idx & 1023) as usize];
+    let paddr = if (line.tag.load(MemOrder::Relaxed) >> 1) != idx {
         translate_cache_miss(ctx, addr, false)?
     } else {
-        line.paddr ^ addr
+        line.paddr.load(MemOrder::Relaxed) ^ addr
     };
     Ok(unsafe { &*(paddr as *const T) })
 }
@@ -408,11 +448,11 @@ fn read_vaddr<T>(ctx: &mut Context, addr: u64) -> Result<&'static T, ()> {
 fn ptr_vaddr_x<T>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
     ctx.minstret += 1;
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let line = &ctx.line[(idx & 1023) as usize];
-    let paddr = if line.tag != (idx << 1) {
+    let line = &ctx.shared.line[(idx & 1023) as usize];
+    let paddr = if line.tag.load(MemOrder::Relaxed) != (idx << 1) {
         translate_cache_miss(ctx, addr, true)?
     } else {
-        line.paddr ^ addr
+        line.paddr.load(MemOrder::Relaxed) ^ addr
     };
     Ok(unsafe { &mut *(paddr as *mut T) })
 }
@@ -530,8 +570,7 @@ fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
 #[cfg(feature = "thread")]
 lazy_static! {
     static ref ICACHE: Vec<spin::Mutex<ICache>> = {
-        let core_count = unsafe{crate::CONTEXTS.len()};
-
+        let core_count = crate::core_count();
         let ptr = unsafe { libc::mmap(0x7ffec0000000 as *mut _, (HEAP_SIZE * core_count) as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
         assert_eq!(ptr, 0x7ffec0000000 as *mut _);
         let ptr = ptr as usize;
@@ -555,14 +594,12 @@ fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
 
 /// Broadcast sfence
 fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
-    unsafe {
-        for i in 0..crate::CONTEXTS.len() {
-            if mask & (1 << i) == 0 { continue }
-            let ctx = &mut *crate::CONTEXTS[i];
+    for i in 0..crate::core_count() {
+        if mask & (1 << i) == 0 { continue }
+        let ctx = crate::shared_context(i);
 
-            ctx.clear_local_cache();
-            ctx.clear_local_icache();
-        }
+        ctx.clear_local_cache();
+        ctx.clear_local_icache();
     }
 }
 
@@ -588,7 +625,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
         }
         4 => {
             let mask: u64 = crate::emu::read_memory(translate(ctx, arg0, false).unwrap());
-            for i in 0..unsafe{crate::CONTEXTS.len()} {
+            for i in 0..crate::core_count() {
                 if mask & (1 << i) == 0 { continue }
                 crate::shared_context(i).assert(2);
             }
@@ -600,12 +637,9 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             } else {
                 crate::emu::read_memory(translate(ctx, arg0, false).unwrap())
             };
-            unsafe {
-                for i in 0..crate::CONTEXTS.len() {
-                    if mask & (1 << i) == 0 { continue }
-                    let ctx = &mut *crate::CONTEXTS[i];
-                    ctx.clear_local_icache();
-                }
+            for i in 0..crate::core_count() {
+                if mask & (1 << i) == 0 { continue }
+                crate::shared_context(i).clear_local_cache();
             }
             0
         }
@@ -772,7 +806,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Andi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) & (imm as u64)),
         /* MISC-MEM */
         Op::Fence => std::sync::atomic::fence(MemOrder::SeqCst),
-        Op::FenceI => ctx.clear_local_icache(),
+        Op::FenceI => ctx.shared.clear_local_icache(),
         /* OP-IMM-32 */
         Op::Addiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64),
         Op::Slliw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
@@ -1555,8 +1589,8 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             } else {
                 ctx.prv = 0;
                 // Switch from S-mode to U-mode, clear local cache
-                ctx.clear_local_cache();
-                ctx.clear_local_icache();
+                ctx.shared.clear_local_cache();
+                ctx.shared.clear_local_icache();
             }
 
             // Set SIE according to SPIE
@@ -1652,11 +1686,8 @@ fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsaf
     let code_fn = unsafe { std::mem::transmute(code.as_ptr() as usize) };
     icache.map.insert(phys_pc, code_fn);
 
-    unsafe {
-        for i in 0..crate::CONTEXTS.len() {
-            let ctx = &mut *crate::CONTEXTS[i];
-            ctx.protect_code(phys_pc &! 4095);
-        }
+    for i in 0..crate::core_count() {
+        crate::shared_context(i).protect_code(phys_pc &! 4095);
     }
 
     code_fn
@@ -1794,8 +1825,8 @@ pub fn trap(ctx: &mut Context) {
     } else {
         ctx.sstatus &=! 0x100;
         // Switch from U-mode to S-mode, clear local cache
-        ctx.clear_local_cache();
-        ctx.clear_local_icache();
+        ctx.shared.clear_local_cache();
+        ctx.shared.clear_local_icache();
     }
     // Clear of set SPIE bit
     if (ctx.sstatus & 0x2) != 0 {
