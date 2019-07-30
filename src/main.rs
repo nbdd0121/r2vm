@@ -266,3 +266,15 @@ pub fn main() {
 
     unsafe { fibers[0].enter() }
 }
+
+pub fn print_stats_and_exit(code: i32) -> ! {
+    unsafe {
+        println!("TIME = {:?}", crate::util::cpu_time());
+        println!("CYCLE = {:x}", crate::event_loop().cycle());
+        for i in 0..crate::CONTEXTS.len() {
+            let ctx = &*crate::CONTEXTS[i];
+            println!("Hart {}: INSTRET = {:x}, MINSTRET = {:x}", i, ctx.instret, ctx.minstret);
+        }
+    }
+    std::process::exit(code)
+}

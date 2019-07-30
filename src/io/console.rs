@@ -42,15 +42,7 @@ pub fn console_init() {
                 match buffer {
                     b'x' => {
                         println!("Terminated");
-                        unsafe {
-                            println!("TIME = {:?}", crate::util::cpu_time());
-                            println!("CYCLE = {:x}", crate::event_loop().cycle());
-                            for i in 0..crate::CONTEXTS.len() {
-                                let ctx = &*crate::CONTEXTS[i];
-                                println!("Hart {}: INSTRET = {:x}, MINSTRET = {:x}", i, ctx.instret, ctx.minstret);
-                            }
-                        }
-                        std::process::exit(0);
+                        crate::print_stats_and_exit(0);
                     }
                     b'c' => {
                         unsafe { libc::raise(libc::SIGTRAP); }

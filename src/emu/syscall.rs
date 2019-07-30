@@ -549,13 +549,13 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             if crate::get_flags().strace {
                 eprintln!("exit({}) = ?", arg0);
             }
-            std::process::exit(arg0 as i32)
+            crate::print_stats_and_exit(arg0 as i32)
         }
         abi::SYS_exit_group => {
             if crate::get_flags().strace {
                 eprintln!("exit_group({}) = ?", arg0);
             }
-            std::process::exit(arg0 as i32)
+            crate::print_stats_and_exit(arg0 as i32)
         }
         abi::SYS_uname => {
             let ret = return_errno(libc::uname(arg0 as _) as _);
