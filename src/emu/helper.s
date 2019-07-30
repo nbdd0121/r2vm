@@ -24,16 +24,16 @@ helper_trap:
 .global helper_read_misalign
 helper_read_misalign:
     # Set scause and stval
-    mov qword ptr [rbp + 32 * 8 + 32], 4
-    mov [rbp + 32 * 8 + 40], rsi
+    mov qword ptr [rbp + 32 * 8 + 16], 4
+    mov [rbp + 32 * 8 + 24], rsi
     call helper_trap
 
 # RSI -> vaddr
 .global helper_write_misalign
 helper_write_misalign:
     # Set scause and stval
-    mov qword ptr [rbp + 32 * 8 + 32], 5
-    mov [rbp + 32 * 8 + 40], rsi
+    mov qword ptr [rbp + 32 * 8 + 16], 5
+    mov [rbp + 32 * 8 + 24], rsi
     call helper_trap
 
 .extern riscv_step
@@ -99,3 +99,11 @@ helper_icache_patch2:
 helper_check_interrupt:
     mov rdi, rbp
     jmp check_interrupt
+
+.extern find_block
+.global fiber_interp_run
+fiber_interp_run:
+    mov rdi, rbp
+    call find_block
+    call rax
+    jmp fiber_interp_run

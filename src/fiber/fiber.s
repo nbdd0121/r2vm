@@ -56,13 +56,3 @@ fiber_start:
     lea rbp, [rdi + 32]
     mov rsp, [rdi]
     ret
-
-.extern find_block
-.extern trap
-.extern check_interrupt
-.global fiber_interp_run
-fiber_interp_run:
-    mov rdi, rbp
-    call find_block
-    call rax
-    jmp fiber_interp_run

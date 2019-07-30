@@ -47,7 +47,7 @@ pub struct SharedContext {
 impl SharedContext {
     pub fn new() -> Self {
         // Check the constant used in helper.s
-        assert_eq!(offset_of!(Context, scause), 32 * 8 + 32);
+        assert_eq!(offset_of!(Context, scause), 32 * 8 + 16);
 
         SharedContext {
             sip: AtomicU64::new(0),
@@ -89,12 +89,12 @@ pub struct Context {
     pub pc: u64,
     pub instret: u64,
 
-    pub shared: SharedContext,
-
     // Note that changing the position of this field would need to change the hard-fixed constant
     // in assembly.
     pub scause: u64,
     pub stval: u64,
+
+    pub shared: SharedContext,
 
     // Floating point states
     pub fp_registers: [u64; 32],
