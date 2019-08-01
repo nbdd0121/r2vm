@@ -131,7 +131,7 @@ unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &m
     ctx.uc_mcontext.gregs[REG_RIP] = reader.0 as i64;
 }
 
-pub unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &mut libc::ucontext_t) {
+unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &mut libc::ucontext_t) {
     let current_ip = ctx.uc_mcontext.gregs[REG_RIP];
 
     // Decode the faulting instruction
@@ -169,6 +169,11 @@ pub unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ct
     ctx.uc_mcontext.gregs[REG_RIP] = reader.0 as i64;
 }
 
+/// Handle SIGINT to gracefully exit when hitting Ctrl+C in userspace-only simulation mode.
+unsafe extern "C" fn handle_int(_: libc::c_int, _: &mut libc::siginfo_t, _: &mut libc::ucontext_t) {
+    crate::print_stats_and_exit(2);
+}
+
 pub fn init() {
     unsafe {
         let mut act: libc::sigaction = std::mem::zeroed();
@@ -177,8 +182,10 @@ pub fn init() {
         libc::sigaction(libc::SIGFPE, &act, std::ptr::null_mut());
 
         act.sa_sigaction = handle_segv as usize;
-        act.sa_flags = libc::SA_SIGINFO;
         libc::sigaction(libc::SIGSEGV, &act, std::ptr::null_mut());
         libc::sigaction(libc::SIGBUS, &act, std::ptr::null_mut());
+
+        act.sa_sigaction = handle_int as usize;
+        libc::sigaction(libc::SIGINT, &act, std::ptr::null_mut());
     }
 }
