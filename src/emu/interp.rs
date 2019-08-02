@@ -711,7 +711,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             };
             for i in 0..crate::core_count() {
                 if mask & (1 << i) == 0 { continue }
-                crate::shared_context(i).clear_local_cache();
+                crate::shared_context(i).clear_local_icache();
             }
             0
         }
