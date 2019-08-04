@@ -1,4 +1,4 @@
-use riscv::{Op, Csr};
+use riscv::{Op, Csr, mmu::*};
 use softfp::{self, F32, F64};
 use std::convert::TryInto;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicI64, AtomicU64};
@@ -335,98 +335,12 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
 
 type Trap = u64;
 
-/// Type of access. Some other states that affect permission check, such as privilege level and
-/// MXR/SUM bits, are conveyed implictly through Contexts. ASID is also conveyed implicitly.
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub enum AccessType {
-    Read,
-    Write,
-    Execute,
-}
-
-const PTE_V: u64 = 0x01;
-const PTE_R: u64 = 0x02;
-const PTE_W: u64 = 0x04;
-const PTE_X: u64 = 0x08;
-const PTE_U: u64 = 0x10;
-const PTE_G: u64 = 0x20;
-const PTE_A: u64 = 0x40;
-const PTE_D: u64 = 0x80;
-
-/// Walk the page table under SV39. We don't support SV48 at the moment.
-pub fn walk_page(ctx: &Context, vpn: u64) -> u64 {
-    // Check if the address is canonical.
-    if (((vpn << (64 - 27)) as i64) >> (64 - 27 - 12)) as u64 >> 12 != vpn {
-        unimplemented!("non-canonical page number {:x}", vpn);
-    }
-
-    let mut ppn = ctx.satp & ((1u64 << 44) - 1);
-    let mut global = false;
-
-    for i in 0..3 {
-        let bits_left = 18 - i * 9;
-        let index = (vpn >> bits_left) & 511;
-        let pte_addr = (ppn << 12) + index * 8;
-        let pte: u64 = crate::emu::read_memory(pte_addr);
-        ppn = pte >> 10;
-
-        // Check for invalid PTE
-        if pte & PTE_V == 0 { return 0 }
-
-        // Check for malformed PTEs
-        if pte & (PTE_R | PTE_W | PTE_X) == PTE_W { return 0 }
-        if pte & (PTE_R | PTE_W | PTE_X) == PTE_W | PTE_X { return 0 }
-
-        // A global bit will cause the page to be global regardless if this is leaf.
-        if pte & PTE_G != 0 { global = true }
-
-        // Not leaf yet
-        if pte & (PTE_R | PTE_W | PTE_X) == 0 { continue }
-
-        // Check for misaligned huge page
-        if ppn & ((1 << bits_left) - 1) != 0 { return 0 }
-
-        // Synthesis a 4K PTE
-        let ppn = ppn | (vpn & ((1 << bits_left) - 1));
-        return ppn << 10 | pte & ((1 << 10) - 1) | (if global { PTE_G } else { 0 })
-    }
-
-    // Invalid if reached here
-    0
-}
-
-pub fn pte_check(ctx: &Context, pte: u64, access: AccessType) -> Result<(), ()> {
-    if pte & PTE_V == 0 { return Err(()) }
-
-    if ctx.prv == 0 {
-        if pte & PTE_U == 0 { return Err(()) }
-    } else {
-        if pte & PTE_U != 0 && ctx.sstatus & (1 << 18) == 0 { return Err(()) }
-    }
-
-    if pte & PTE_A == 0 { return Err(()) }
-
-    match access {
-        AccessType::Read => {
-            if pte & PTE_R == 0 && (pte & PTE_X == 0 || ctx.sstatus & (1 << 19) == 0) { return Err(()) }
-        }
-        AccessType::Write => {
-            if pte & PTE_W == 0 || pte & PTE_D == 0 { return Err(()) }
-        }
-        AccessType::Execute => {
-            if pte & PTE_X == 0 { return Err(()) }
-        }
-    }
-
-    Ok(())
-}
-
 fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, Trap> {
     // MMU off
     if (ctx.satp >> 60) == 0 { return Ok(addr) }
 
-    let pte = walk_page(ctx, addr >> 12);
-    match pte_check(ctx, pte, access) {
+    let pte = walk_page(ctx.satp, addr >> 12, |addr| crate::emu::read_memory(addr));
+    match check_permission(pte, access, ctx.prv as u8, ctx.sstatus) {
         Ok(_) => Ok(pte >> 10 << 12 | addr & 4095),
         Err(_) => Err(match access {
             AccessType::Read => 13,
