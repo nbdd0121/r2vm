@@ -140,7 +140,7 @@ impl<'a> Decoder<'a> {
             5 => Op::Sub(dst, src),
             6 => Op::Xor(dst, src),
             7 => Op::Cmp(dst, src),
-            _ => unsafe { std::hint::unreachable_unchecked() }
+            _ => unreachable!(),
         }
     }
 
