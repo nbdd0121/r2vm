@@ -73,8 +73,8 @@ impl Drop for PlaceHolder {
 }
 
 enum SlowPath {
-    Load(u64, u32, Option<PlaceHolder>, PlaceHolder, Label),
-    Store(u64, u32, Option<PlaceHolder>, PlaceHolder, Label),
+    Load(u32, Option<PlaceHolder>, PlaceHolder, Label),
+    Store(u32, Option<PlaceHolder>, PlaceHolder, Label),
     /// Slow path for a icache access miss
     ICache(PlaceHolder, Label),
 }
@@ -219,13 +219,13 @@ impl<'a> DbtCompiler<'a> {
     /// the precise location of exception.
     /// EBX encodes both the pc offset and the insret offset of the instruction relative to
     /// the end of the basic block.
-    fn emit_set_ebx(&mut self) {
+    /// This function gets the EBX to set.
+    fn get_ebx(&mut self) -> u32 {
         // Calculate the differences that need to apply
         let pc_rel = (self.pc_cur as i64 - self.pc_rel as i64) as i16;
         let instret_rel = (self.instret as i32 - self.instret_rel as i32) as i16;
         // Pack them into a single register
-        let ebx = (instret_rel as u16 as u32) << 16 | pc_rel as u16 as u32;
-        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
+        (instret_rel as u16 as u32) << 16 | pc_rel as u16 as u32
     }
 
     fn emit_helper_call(&mut self, helper: unsafe extern "C" fn()) {
@@ -244,7 +244,8 @@ impl<'a> DbtCompiler<'a> {
         // We currently assume that the instruction that we step through are exactly 8 bytes.
         let op: u64 = unsafe { std::mem::transmute(*op) };
         self.emit(Mov(Reg(Register::RSI), Imm(op as i64)));
-        self.emit_set_ebx();
+        let ebx = self.get_ebx();
+        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
         self.emit_helper_call(helper_step);
     }
 
@@ -473,15 +474,16 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
         let label_fin = self.label();
 
-        self.slow_path.push(SlowPath::Load(self.pc_cur, self.instret, jcc_misalign, jcc_miss, label_fin));
+        let ebx = self.get_ebx();
+        self.slow_path.push(SlowPath::Load(ebx, jcc_misalign, jcc_miss, label_fin));
     }
 
-    fn emit_load_slow(&mut self, jcc_misalign: Option<PlaceHolder>, jcc_miss: PlaceHolder, label_fin: Label) {
+    fn emit_load_slow(&mut self, ebx: u32, jcc_misalign: Option<PlaceHolder>, jcc_miss: PlaceHolder, label_fin: Label) {
         if let Some(jcc_misalign) = jcc_misalign {
             let label_misalign = self.label();
             self.patch(jcc_misalign, label_misalign);
-
-            self.emit_set_ebx();
+    
+            self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
             self.emit_helper_jmp(helper_read_misalign);
         }
 
@@ -489,7 +491,7 @@ impl<'a> DbtCompiler<'a> {
         self.patch(jcc_miss, label_miss);
 
         self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
-        self.emit_set_ebx();
+        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
         self.emit_helper_call(helper_translate_cache_miss);
 
         let jmp_fin = self.emit_jmp_long();
@@ -536,7 +538,8 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
             let label_fin = self.label();
 
-            self.slow_path.push(SlowPath::Store(self.pc_cur, self.instret, jcc_misalign, jcc_miss, label_fin));
+            let ebx = self.get_ebx();
+            self.slow_path.push(SlowPath::Store(ebx, jcc_misalign, jcc_miss, label_fin));
         }
 
         let reg = match size {
@@ -554,12 +557,12 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Mov(Mem(mem), OpReg(reg)));
     }
 
-    fn emit_store_slow(&mut self, jcc_misalign: Option<PlaceHolder>, jcc_miss: PlaceHolder, label_fin: Label) {
+    fn emit_store_slow(&mut self, ebx: u32, jcc_misalign: Option<PlaceHolder>, jcc_miss: PlaceHolder, label_fin: Label) {
         if let Some(jcc_misalign) = jcc_misalign {
             let label_misalign = self.label();
             self.patch(jcc_misalign, label_misalign);
 
-            self.emit_set_ebx();
+            self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
             self.emit_helper_jmp(helper_write_misalign);
         }
 
@@ -567,7 +570,7 @@ impl<'a> DbtCompiler<'a> {
         self.patch(jcc_miss, label_miss);
 
         self.emit(Mov(Reg(Register::EDX), Imm(1)));
-        self.emit_set_ebx();
+        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
         self.emit_helper_call(helper_translate_cache_miss);
 
         let jmp_fin = self.emit_jmp_long();
@@ -1490,6 +1493,42 @@ impl<'a> DbtCompiler<'a> {
         self.pc_rel = pc;
     }
 
+    /// Generate slow path.
+    fn emit_slow_path(&mut self) {
+        // Generate a gap to allow easy view of disassembly
+        self.emit(Nop);
+
+        // Generate slow path
+        for slow in std::mem::replace(&mut self.slow_path, Vec::new()) {
+            match slow {
+                SlowPath::Load(ebx, jcc_misalign, jcc_miss, label_fin) => {
+                    self.emit_load_slow(ebx, jcc_misalign, jcc_miss, label_fin);
+                }
+                SlowPath::Store(ebx, jcc_misalign, jcc_miss, label_fin) => {
+                    self.emit_store_slow(ebx, jcc_misalign, jcc_miss, label_fin);
+                }
+                SlowPath::ICache(jcc_miss, label_fin) => {
+                    self.emit_icache_slow(jcc_miss, label_fin);
+                }
+            }
+        }
+
+        if crate::get_flags().disassemble {
+            let pc_offset = self.buffer.as_ptr() as usize;
+            let mut pc = 0;
+            while pc < self.len {
+                let mut pc_next = pc;
+                let op = crate::x86::decode(&mut || {
+                    let ret = self.buffer[pc_next];
+                    pc_next += 1;
+                    ret
+                });
+                crate::x86::disasm::print_instr((pc_offset + pc) as u64, &self.buffer[pc..pc_next], &op);
+                pc = pc_next;
+            }
+        }
+    }
+
     /// Finish compilation. This routine will generate slow paths, etc.
     /// If the last op is a jump/branch, supply it here.
     pub fn end(&mut self, last: Option<(Op, bool)>) {
@@ -1549,42 +1588,6 @@ impl<'a> DbtCompiler<'a> {
             self.emit_chain_tail();
         }
 
-        // Generate a gap to allow easy view of disassembly
-        self.emit(Nop);
-
-        // Generate slow path
-        self.pc_rel = self.pc_start;
-        for slow in std::mem::replace(&mut self.slow_path, Vec::new()) {
-            match slow {
-                SlowPath::Load(pc_cur, instret, jcc_misalign, jcc_miss, label_fin) => {
-                    self.pc_cur = pc_cur;
-                    self.instret = instret;
-                    self.emit_load_slow(jcc_misalign, jcc_miss, label_fin);
-                }
-                SlowPath::Store(pc_cur, instret, jcc_misalign, jcc_miss, label_fin) => {
-                    self.pc_cur = pc_cur;
-                    self.instret = instret;
-                    self.emit_store_slow(jcc_misalign, jcc_miss, label_fin);
-                }
-                SlowPath::ICache(jcc_miss, label_fin) => {
-                    self.emit_icache_slow(jcc_miss, label_fin);
-                }
-            }
-        }
-
-        if crate::get_flags().disassemble {
-            let pc_offset = self.buffer.as_ptr() as usize;
-            let mut pc = 0;
-            while pc < self.len {
-                let mut pc_next = pc;
-                let op = crate::x86::decode(&mut || {
-                    let ret = self.buffer[pc_next];
-                    pc_next += 1;
-                    ret
-                });
-                crate::x86::disasm::print_instr((pc_offset + pc) as u64, &self.buffer[pc..pc_next], &op);
-                pc = pc_next;
-            }
-        }
+        self.emit_slow_path();
     }
 }
