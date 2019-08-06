@@ -533,27 +533,6 @@ impl ICache {
     }
 }
 
-#[cfg(not(feature = "thread"))]
-lazy_static! {
-    static ref ICACHE: spin::Mutex<ICache> = {
-        let ptr = unsafe { libc::mmap(0x7ffec0000000 as *mut _, HEAP_SIZE as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
-        assert_eq!(ptr, 0x7ffec0000000 as *mut _);
-        let ptr = ptr as usize;
-        spin::Mutex::new(ICache::new(ptr + 4096))
-    };
-}
-
-#[cfg(not(feature = "thread"))]
-fn icache(_hartid: u64) -> spin::MutexGuard<'static, ICache> {
-    ICACHE.lock()
-}
-
-#[cfg(not(feature = "thread"))]
-fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
-    std::iter::once(&ICACHE).map(|x| x.lock())
-}
-
-#[cfg(feature = "thread")]
 lazy_static! {
     static ref ICACHE: Vec<spin::Mutex<ICache>> = {
         let core_count = crate::core_count();
@@ -568,12 +547,10 @@ lazy_static! {
     };
 }
 
-#[cfg(feature = "thread")]
 fn icache(hartid: u64) -> spin::MutexGuard<'static, ICache> {
     ICACHE[hartid as usize].lock()
 }
 
-#[cfg(feature = "thread")]
 fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
     ICACHE.iter().map(|x| x.lock())
 }
