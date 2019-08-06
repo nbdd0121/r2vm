@@ -1630,7 +1630,7 @@ fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsaf
     loop {
         let (op, c) = decode_instr(&mut phys_pc_end, phys_pc_next);
         if op.can_change_control_flow() {
-            compiler.end(Some((op, c)));
+            compiler.end(op, c);
             break
         }
 
@@ -1638,7 +1638,7 @@ fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsaf
 
         // Need to stop when crossing page boundary
         if (phys_pc_end &! 4095) != (phys_pc &! 4095) {
-            compiler.end(None);
+            compiler.end_page();
             break
         }
     }

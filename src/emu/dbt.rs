@@ -76,7 +76,7 @@ enum SlowPath {
     Load(u32, Option<PlaceHolder>, PlaceHolder, Label),
     Store(u32, Option<PlaceHolder>, PlaceHolder, Label),
     /// Slow path for a icache access miss
-    ICache(PlaceHolder, Label),
+    ICache(u32, PlaceHolder, Label),
 }
 
 impl<'a> DbtCompiler<'a> {
@@ -253,6 +253,7 @@ impl<'a> DbtCompiler<'a> {
     // #endregion
 
     fn emit_branch(&mut self, rs1: u8, rs2: u8, imm: i32, mut cc: ConditionCode) {
+        assert_eq!(self.pc_end, self.pc_rel);
         if rs1 == rs2 {
             let result = match cc {
                 ConditionCode::Equal |
@@ -291,8 +292,20 @@ impl<'a> DbtCompiler<'a> {
 
         let target = self.pc_end.wrapping_add(imm as u64).wrapping_sub(4);
 
+        // emit_icache_access will fill ebx with values in case of an exception happening.
+        // We would like to produce correct ebx which is all 0, so we need to make sure pc_cur
+        // is equal to pc_rel, instret equal to instret_rel prior to calling, and reset
+        // them after calling.
+
+        // Save old pc_cur and set pc_rel, instret
+        let old_pc_cur = self.pc_cur;
+        self.pc_cur = self.pc_rel;
+        self.instret += 1;
+
         if self.pc_start &! 4095 == target &! 4095 {
             if (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE != target >> CACHE_LINE_LOG2_SIZE {
+
+                assert_eq!(self.get_ebx(), 0);
                 self.emit_icache_access(self.pc_rel);
             }
             self.emit_helper_call(helper_icache_patch2);
@@ -300,11 +313,16 @@ impl<'a> DbtCompiler<'a> {
             self.emit_chain_tail();
         }
 
+        // Restore
+        self.pc_cur = old_pc_cur;
+        self.instret -= 1;
+
         let label_not = self.label();
         self.patch(jcc_not, label_not);
     }
 
     fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32) {
+        assert_eq!(self.pc_end, self.pc_rel);
         if rd != 0 {
             self.emit(Mov(Reg(Register::RDX), OpMem(memory_of_pc())));
         }
@@ -320,6 +338,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_jal(&mut self, rd: u8, imm: i32) {
+        assert_eq!(self.pc_end, self.pc_rel);
         if rd != 0 {
             self.emit(Mov(Reg(Register::RAX), OpMem(memory_of_pc())));
         }
@@ -356,13 +375,15 @@ impl<'a> DbtCompiler<'a> {
         let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
         let label_fin = self.label();
 
-        self.slow_path.push(SlowPath::ICache(jcc_miss, label_fin));
+        let ebx = self.get_ebx();
+        self.slow_path.push(SlowPath::ICache(ebx, jcc_miss, label_fin));
     }
 
-    fn emit_icache_slow(&mut self, jcc_miss: PlaceHolder, label_fin: Label) {
+    fn emit_icache_slow(&mut self, ebx: u32, jcc_miss: PlaceHolder, label_fin: Label) {
         let label_miss = self.label();
         self.patch(jcc_miss, label_miss);
 
+        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
         self.emit_helper_call(helper_icache_miss);
 
         let jmp_fin = self.emit_jmp_long();
@@ -370,6 +391,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_chain_tail(&mut self) {
+        assert_eq!(self.get_ebx(), 0);
         let offset = offset_of!(Context, shared) + offset_of!(SharedContext, i_line);
 
         // RSI = addr
@@ -422,6 +444,8 @@ impl<'a> DbtCompiler<'a> {
             let (jcc_miss, label_miss_ret) = pack.unwrap();
             let label_miss = self.label();
             self.patch(jcc_miss, label_miss);
+            // When calling chain_tail, PC is also correctly set so always set EBX to 0.
+            self.emit(Xor(Reg(Register::EBX), OpReg(Register::EBX)));
             self.emit_helper_call(helper_icache_miss);
             let jmp_miss_ret = self.emit_jmp_short();
             self.patch(jmp_miss_ret, label_miss_ret);
@@ -1507,8 +1531,8 @@ impl<'a> DbtCompiler<'a> {
                 SlowPath::Store(ebx, jcc_misalign, jcc_miss, label_fin) => {
                     self.emit_store_slow(ebx, jcc_misalign, jcc_miss, label_fin);
                 }
-                SlowPath::ICache(jcc_miss, label_fin) => {
-                    self.emit_icache_slow(jcc_miss, label_fin);
+                SlowPath::ICache(ebx, jcc_miss, label_fin) => {
+                    self.emit_icache_slow(ebx, jcc_miss, label_fin);
                 }
             }
         }
@@ -1529,10 +1553,9 @@ impl<'a> DbtCompiler<'a> {
         }
     }
 
-    /// Finish compilation. This routine will generate slow paths, etc.
-    /// If the last op is a jump/branch, supply it here.
-    pub fn end(&mut self, last: Option<(Op, bool)>) {
-        let is_branch = last.map(|x| match x.0 {
+    /// Finish compilation with the last op being a jump/branch.
+    pub fn end(&mut self, op: Op, c: bool) {
+        let is_branch = match op {
             Op::Beq {..} |
             Op::Bne {..} |
             Op::Blt {..} |
@@ -1540,16 +1563,10 @@ impl<'a> DbtCompiler<'a> {
             Op::Bltu {..} |
             Op::Bgeu {..} => true,
             _ => false,
-        }).unwrap_or(false);
-        let can_change_pc = last.is_some();
+        };
 
-        if let Some((_, c)) = last {
-            self.pc_rel = self.pc_cur + if c { 2 } else { 4 };
-            self.instret_rel = self.instret + 1;
-        } else {
-            self.pc_rel = self.pc_cur;
-            self.instret_rel = self.instret;
-        }
+        self.pc_rel = self.pc_cur + if c { 2 } else { 4 };
+        self.instret_rel = self.instret + 1;
 
         // Pre-adjust PC
         self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
@@ -1566,17 +1583,16 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Add(Mem(mem_of_minstret), Imm(self.minstret as i64)));
         }
 
-        if let Some((op, c)) = last {
-            self.compile_op(&op, c, true);
-        }
+        self.compile_op(&op, c, true);
 
         // Epilogue
         self.emit_interrupt_check();
 
         // If the next basic block lives within the same page,
         // then we does not need to generate the guarding code for the jump.
-        if (!can_change_pc || (is_branch && !self.interp)) && self.pc_start &! 4095 == self.pc_rel &! 4095 {
+        if (is_branch && !self.interp) && self.pc_start &! 4095 == self.pc_rel &! 4095 {
             if (self.pc_rel - 1) >> CACHE_LINE_LOG2_SIZE != self.pc_rel >> CACHE_LINE_LOG2_SIZE {
+                assert_eq!(self.get_ebx(), 0);
                 self.emit_icache_access(self.pc_rel);
             }
 
@@ -1588,6 +1604,31 @@ impl<'a> DbtCompiler<'a> {
             self.emit_chain_tail();
         }
 
+        self.emit_slow_path();
+    }
+
+    /// Finish compilation because we reach the end of current page.
+    pub fn end_page(&mut self) {
+        self.pc_rel = self.pc_cur;
+        self.instret_rel = self.instret;
+
+        // Pre-adjust PC
+        self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
+
+        // Increase instret
+        let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
+        self.emit(Add(Mem(mem_of_instret), Imm(self.instret_rel as i64)));
+
+        // Increase minstret, the immediate is a placeholder and will be patched later
+        // Note minstret is not precisely tracked in case of exception
+        if self.minstret != 0 {
+            let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
+            // The PC-changing instruction is never a memory access, so use minstret.
+            self.emit(Add(Mem(mem_of_minstret), Imm(self.minstret as i64)));
+        }
+
+        self.emit_interrupt_check();
+        self.emit_chain_tail();
         self.emit_slow_path();
     }
 }

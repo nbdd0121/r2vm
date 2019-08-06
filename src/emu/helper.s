@@ -61,17 +61,8 @@ helper_icache_miss:
     mov rdi, rbp
     call insn_translate_cache_miss
     test al, al
-    jnz 1f
+    jnz helper_trap
     mov rsi, rdx
-    ret
-1:
-    # we're not yet prepared for this
-    # ud2
-
-    # this makes sense in the begin block only!!!!
-    mov rdi, rbp
-    call trap
-    add rsp, 8
     ret
 
 .global helper_icache_wrong
