@@ -45,7 +45,7 @@ lazy_static! {
 
     pub static ref VIRTIO_9P: Mutex<Mmio> = {
         assert!(!crate::get_flags().user_only);
-        Mutex::new(Mmio::new(Box::new(P9::new("/dev/root", std::path::Path::new("./shared")))))
+        Mutex::new(Mmio::new(Box::new(P9::new("share", std::path::Path::new("./share")))))
     };
 }
 
