@@ -65,6 +65,20 @@ helper_icache_miss:
     mov rsi, rdx
     ret
 
+.global helper_icache_cross_miss
+.extern icache_cross_miss
+helper_icache_cross_miss:
+    # The instruction to translate
+    movzx eax, word ptr [rsi]
+    shl eax, 16
+    or edx, eax
+    # Load the return address
+    mov rdi, [rsp]
+    movsx rax, dword ptr [rdi + 1]
+    lea rdi, [rdi+rax+5]
+    call icache_cross_miss
+    ret
+
 .global helper_icache_wrong
 .extern find_block_and_patch
 helper_icache_wrong:

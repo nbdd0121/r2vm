@@ -1589,32 +1589,7 @@ pub fn riscv_step(ctx: &mut Context, op: u64) -> Result<(), ()> {
 
 extern "C" fn no_op() {}
 
-fn decode_instr(pc: &mut u64, pc_next: u64) -> (Op, bool) {
-    let bits = crate::emu::read_memory::<u16>(*pc);
-    if bits & 3 == 3 {
-        let hi_bits = if *pc & 4095 == 4094 {
-            crate::emu::read_memory::<u16>(pc_next)
-        } else {
-            crate::emu::read_memory::<u16>(*pc + 2)
-        };
-        let bits = (hi_bits as u32) << 16 | bits as u32;
-        let (op, c) = (riscv::decode::decode(bits), false);
-        if crate::get_flags().disassemble {
-            riscv::disasm::print_instr(*pc, bits, &op);
-        }
-        *pc += 4;
-        (op, c)
-    } else {
-        let (op, c) = (riscv::decode::decode_compressed(bits), true);
-        if crate::get_flags().disassemble {
-            riscv::disasm::print_instr(*pc, bits as u32, &op);
-        }
-        *pc += 2;
-        (op, c)
-    }
-}
-
-fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsafe extern "C" fn() {
+fn translate_code(icache: &mut ICache, phys_pc: u64) -> unsafe extern "C" fn() {
     let mut phys_pc_end = phys_pc;
 
     if crate::get_flags().disassemble {
@@ -1628,7 +1603,30 @@ fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsaf
     compiler.begin(phys_pc);
 
     loop {
-        let (op, c) = decode_instr(&mut phys_pc_end, phys_pc_next);
+        let bits = crate::emu::read_memory::<u16>(phys_pc_end);
+        let (op, c) = if bits & 3 == 3 {
+            // The instruction will cross page boundary.
+            if phys_pc_end & 4095 == 4094 {
+                compiler.end_cross(bits);
+                break
+            }
+            let hi_bits = crate::emu::read_memory::<u16>(phys_pc_end + 2);
+            let bits = (hi_bits as u32) << 16 | bits as u32;
+            let op = riscv::decode::decode(bits);
+            if crate::get_flags().disassemble {
+                riscv::disasm::print_instr(phys_pc_end, bits, &op);
+            }
+            phys_pc_end += 4;
+            (op, false)
+        } else {
+            let op = riscv::decode::decode_compressed(bits);
+            if crate::get_flags().disassemble {
+                riscv::disasm::print_instr(phys_pc_end, bits as u32, &op);
+            }
+            phys_pc_end += 2;
+            (op, true)
+        };
+
         if op.can_change_control_flow() {
             compiler.end(op, c);
             break
@@ -1637,7 +1635,7 @@ fn translate_code(icache: &mut ICache, phys_pc: u64, phys_pc_next: u64) -> unsaf
         compiler.compile_op(&op, c, false);
 
         // Need to stop when crossing page boundary
-        if (phys_pc_end &! 4095) != (phys_pc &! 4095) {
+        if phys_pc_end & 4095 == 0 {
             compiler.end_page();
             break
         }
@@ -1669,14 +1667,7 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
     let mut icache = icache(ctx.hartid);
     match icache.map.get(&phys_pc).copied() {
         Some(v) => v,
-        None => {
-            // Ignore error in this case
-            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, AccessType::Execute) {
-                Ok(pc) => pc,
-                Err(_) => 0,
-            };
-            translate_code(&mut icache, phys_pc, phys_pc_next)
-        }
+        None => translate_code(&mut icache, phys_pc),
     }
 }
 
@@ -1697,14 +1688,7 @@ fn find_block_and_patch(ctx: &mut Context, ret: usize) {
     let mut icache = icache(ctx.hartid);
     let dbt_code = match icache.map.get(&phys_pc).copied() {
         Some(v) => v,
-        None => {
-            // Ignore error in this case
-            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, AccessType::Execute) {
-                Ok(pc) => pc,
-                Err(_) => 0,
-            };
-            translate_code(&mut icache, phys_pc, phys_pc_next)
-        }
+        None => translate_code(&mut icache, phys_pc),
     };
 
     unsafe { std::ptr::write_unaligned((ret - 23) as *mut u64, phys_pc) };
@@ -1728,14 +1712,7 @@ fn find_block_and_patch2(ctx: &mut Context, ret: usize) {
     let mut icache = icache(ctx.hartid);
     let dbt_code = match icache.map.get(&phys_pc).copied() {
         Some(v) => v,
-        None => {
-            // Ignore error in this case
-            let phys_pc_next = match translate(ctx, (pc &! 4095) + 4096, AccessType::Execute) {
-                Ok(pc) => pc,
-                Err(_) => 0,
-            };
-            translate_code(&mut icache, phys_pc, phys_pc_next)
-        }
+        None => translate_code(&mut icache, phys_pc),
     };
 
     unsafe { std::ptr::write_unaligned((ret - 5) as *mut u8, 0xE9) };

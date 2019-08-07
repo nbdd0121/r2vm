@@ -204,6 +204,7 @@ impl<'a> Decoder<'a> {
         }
 
         match opcode {
+            0x0F0B => Op::Illegal,
             0x0F40 ..= 0x0F4F => {
                 let cc = (opcode as u8 & 0xF).try_into().unwrap();
                 let (src, dst) = self.modrm(rex, opsize);
@@ -269,7 +270,8 @@ impl<'a> Decoder<'a> {
             }
             0x81 => {
                 let (operand, reg) = self.modrm(rex, opsize);
-                Self::decode_alu(operand, Imm(self.dword() as i32 as i64), reg as u8)
+                let imm = self.immediate(opsize.cap_to_dword());
+                Self::decode_alu(operand, Imm(imm), reg as u8)
             }
             0x83 => {
                 let (operand, reg) = self.modrm(rex, opsize);

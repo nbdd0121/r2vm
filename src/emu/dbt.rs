@@ -12,6 +12,18 @@ use crate::riscv::Op;
 use super::interp::{Context, SharedContext, CACHE_LINE_LOG2_SIZE};
 use std::convert::TryFrom;
 
+const PAGE_CROSS_RESERVATION: usize = 256;
+
+macro_rules! memory_of {
+    ($e:ident) => {
+        Register::RBP + offset_of!(Context, $e) as i32
+    };
+    (shared.$e:ident) => {
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, $e);
+        Register::RBP + offset as i32
+    };
+}
+
 #[inline]
 fn memory_of_register(reg: u8) -> Memory {
     (Register::RBP + reg as i32 * 8).qword()
@@ -29,6 +41,7 @@ extern "C" {
     fn helper_write_misalign();
     fn helper_translate_cache_miss();
     fn helper_icache_miss();
+    fn helper_icache_cross_miss();
     fn helper_icache_wrong();
     fn helper_icache_patch2();
     fn helper_check_interrupt();
@@ -60,6 +73,7 @@ pub struct DbtCompiler<'a> {
     instret_rel: u32,
 }
 
+#[derive(Clone, Copy)]
 struct Label(usize);
 enum PlaceHolder {
     Byte(usize),
@@ -157,7 +171,6 @@ impl<'a> DbtCompiler<'a> {
         match place {
             PlaceHolder::Byte(ptr) => {
                 self.buffer[ptr - 1] = target as u8;
-
             }
             PlaceHolder::Dword(ptr) => {
                 self.buffer[ptr-4..ptr].copy_from_slice(&(target as u32).to_le_bytes());
@@ -304,9 +317,8 @@ impl<'a> DbtCompiler<'a> {
 
         if self.pc_start &! 4095 == target &! 4095 {
             if (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE != target >> CACHE_LINE_LOG2_SIZE {
-
                 assert_eq!(self.get_ebx(), 0);
-                self.emit_icache_access(self.pc_rel);
+                self.emit_icache_access(self.pc_rel, false);
             }
             self.emit_helper_call(helper_icache_patch2);
         } else {
@@ -348,17 +360,17 @@ impl<'a> DbtCompiler<'a> {
         }
     }
 
-    fn emit_icache_access(&mut self, pc: u64) {
-        if cfg!(feature = "direct") && crate::get_flags().user_only { return }
-
-        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, i_line);
-
+    fn emit_icache_access(&mut self, pc: u64, set_rsi: bool) {
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
         let off = pc as i64 - self.pc_rel as i64;
         if off != 0 {
             self.emit(Add(Reg(Register::RSI), Imm(off)));
         }
+
+        if cfg!(feature = "direct") && crate::get_flags().user_only { return }
+
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, i_line);
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
@@ -373,6 +385,9 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
 
         let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
+        if set_rsi {
+            self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
+        }
         let label_fin = self.label();
 
         let ebx = self.get_ebx();
@@ -392,33 +407,7 @@ impl<'a> DbtCompiler<'a> {
 
     fn emit_chain_tail(&mut self) {
         assert_eq!(self.get_ebx(), 0);
-        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, i_line);
-
-        // RSI = addr
-        self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
-
-        let direct = cfg!(feature = "direct") && crate::get_flags().user_only;
-        let pack = if !direct {
-            // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
-            self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-            self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
-
-            // EAX = (idx & 1023) * 16
-            self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
-            self.emit(And(Reg(Register::EAX), Imm(1023)));
-            self.emit(Shl(Reg(Register::EAX), Imm(4)));
-
-            // RDX = ctx.line[(idx & 1023)].tag
-            self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
-            let jcc_miss = self.emit_jcc_short(ConditionCode::NotEqual);
-
-            // Check if the current block is the intended block to execute
-            self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
-
-            let label_miss_ret = self.label();
-
-            Some((jcc_miss, label_miss_ret))
-        } else { None };
+        self.emit_icache_access(self.pc_rel, true);
 
         // Check if the current block is the intended block to execute
         self.emit(Mov(Reg(Register::RAX), Imm(0x100000000)));
@@ -439,17 +428,6 @@ impl<'a> DbtCompiler<'a> {
         self.emit_helper_call(helper_icache_wrong);
         let jmp_wrong_ret = self.emit_jmp_short();
         self.patch(jmp_wrong_ret, label_wrong_ret);
-
-        if !direct {
-            let (jcc_miss, label_miss_ret) = pack.unwrap();
-            let label_miss = self.label();
-            self.patch(jcc_miss, label_miss);
-            // When calling chain_tail, PC is also correctly set so always set EBX to 0.
-            self.emit(Xor(Reg(Register::EBX), OpReg(Register::EBX)));
-            self.emit_helper_call(helper_icache_miss);
-            let jmp_miss_ret = self.emit_jmp_short();
-            self.patch(jmp_miss_ret, label_miss_ret);
-        }
     }
 
     fn emit_interrupt_check(&mut self) {
@@ -506,7 +484,7 @@ impl<'a> DbtCompiler<'a> {
         if let Some(jcc_misalign) = jcc_misalign {
             let label_misalign = self.label();
             self.patch(jcc_misalign, label_misalign);
-    
+
             self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
             self.emit_helper_jmp(helper_read_misalign);
         }
@@ -1487,7 +1465,7 @@ impl<'a> DbtCompiler<'a> {
         // First check if the op cross cache block boundary and we need to access the icache.
         self.pc_end = self.pc_cur + if compressed { 2 } else { 4 };
         if (self.pc_cur - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE {
-            self.emit_icache_access(self.pc_end - 1);
+            self.emit_icache_access(self.pc_end - 1, false);
         }
 
         // Actually emit the op
@@ -1519,8 +1497,7 @@ impl<'a> DbtCompiler<'a> {
 
     /// Generate slow path.
     fn emit_slow_path(&mut self) {
-        // Generate a gap to allow easy view of disassembly
-        self.emit(Nop);
+        let split = self.len;
 
         // Generate slow path
         for slow in std::mem::replace(&mut self.slow_path, Vec::new()) {
@@ -1541,6 +1518,9 @@ impl<'a> DbtCompiler<'a> {
             let pc_offset = self.buffer.as_ptr() as usize;
             let mut pc = 0;
             while pc < self.len {
+                if pc == split {
+                    eprintln!("       slow path:");
+                }
                 let mut pc_next = pc;
                 let op = crate::x86::decode(&mut || {
                     let ret = self.buffer[pc_next];
@@ -1551,6 +1531,55 @@ impl<'a> DbtCompiler<'a> {
                 pc = pc_next;
             }
         }
+    }
+
+    /// Finish compilation with the last instruction spanning across two pages.
+    pub fn end_cross(&mut self, lo_bits: u16) {
+        self.pc_rel = self.pc_cur + 4;
+        self.pc_end = self.pc_cur + 4;
+        self.instret_rel = self.instret + 1;
+
+        // Adjust PC, instret and minstret. minstret does not count the boundary-crossing
+        // instruction. For that instruction, it should be taken care specially when we
+        // generate code for it.
+        self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
+        self.emit(Add(Mem(memory_of!(instret)), Imm(self.instret_rel as i64)));
+        if self.minstret != 0 {
+            self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
+        }
+
+        // Access the word at the boundary. Keep RSI, as we will need its value.
+        self.emit_icache_access(self.pc_end - 2, true);
+        // Compare the next u16 with the stored tag. If it misses, execute the miss handler.
+        self.emit(Cmp(Mem((Register::RSI + 0).word()), Imm(0xCCCC)));
+        let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
+        let label_fin = self.label();
+
+        // Reserve some space for later filling
+        let jmp_miss = self.emit_jmp_long();
+        for _ in 5..PAGE_CROSS_RESERVATION {
+            self.emit(Nop);
+        }
+
+        self.pc_cur = self.pc_end;
+        self.instret += 1;
+
+        if cfg!(not(feature = "thread")) {
+            self.emit_helper_call(fiber_yield_raw);
+        }
+        self.emit_interrupt_check();
+        self.emit_chain_tail();
+
+        // Slow path. Execute in first run, or when the second half is changed (unlikely)
+        let label_miss = self.label();
+        self.patch(jcc_miss, label_miss);
+        self.patch(jmp_miss, label_miss);
+        self.emit(Mov(Reg(Register::EDX), Imm(lo_bits as i64)));
+        self.emit_helper_call(helper_icache_cross_miss);
+        let jmp_fin = self.emit_jmp_long();
+        self.patch(jmp_fin, label_fin);
+
+        self.emit_slow_path();
     }
 
     /// Finish compilation with the last op being a jump/branch.
@@ -1593,7 +1622,7 @@ impl<'a> DbtCompiler<'a> {
         if (is_branch && !self.interp) && self.pc_start &! 4095 == self.pc_rel &! 4095 {
             if (self.pc_rel - 1) >> CACHE_LINE_LOG2_SIZE != self.pc_rel >> CACHE_LINE_LOG2_SIZE {
                 assert_eq!(self.get_ebx(), 0);
-                self.emit_icache_access(self.pc_rel);
+                self.emit_icache_access(self.pc_rel, false);
             }
 
             // We want to have a direct jump to the target block.
@@ -1631,4 +1660,31 @@ impl<'a> DbtCompiler<'a> {
         self.emit_chain_tail();
         self.emit_slow_path();
     }
+}
+
+#[no_mangle]
+fn icache_cross_miss(patch: usize, pc: u64, insn: u32) {
+    let op = riscv::decode::decode(insn);
+    if crate::get_flags().disassemble {
+        riscv::disasm::print_instr(pc - 2, insn, &op);
+    }
+
+    let slice = unsafe { std::slice::from_raw_parts_mut(patch as *mut u8, PAGE_CROSS_RESERVATION) };
+    let mut compiler = DbtCompiler::new(slice);
+    // Treat the basic block range as `pc - 2` to `pc + 2`
+    compiler.pc_start = pc - 2;
+    compiler.pc_cur = pc - 2;
+    compiler.pc_end = pc + 2;
+    compiler.pc_rel = pc + 2;
+    compiler.instret_rel = 1;
+    compiler.emit_op(&op);
+    // Jump to end of reservation, which has the chain tail code.
+    let jmp = compiler.emit_jmp_long();
+    if compiler.minstret != 0 {
+        compiler.emit(Add(Mem(memory_of!(minstret)), Imm(compiler.minstret as i64)));
+    }
+    compiler.patch(jmp, Label(PAGE_CROSS_RESERVATION));
+    compiler.emit_slow_path();
+
+    unsafe { std::ptr::write_unaligned((patch - 8) as *mut u16, (insn >> 16) as u16); }
 }
