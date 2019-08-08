@@ -251,7 +251,7 @@ impl Op {
             Op::Csrrc { csr, .. } |
             Op::Csrrwi { csr, .. } |
             Op::Csrrsi { csr, .. } |
-            Op::Csrrci { csr, .. } => match csr {
+            Op::Csrrci { csr, .. } => match *csr {
                 // A common way of using basic blocks is to `batch' instret and pc increment. So if CSR to be accessed is
                 // instret, consider it as special.
                 Csr::Instret |

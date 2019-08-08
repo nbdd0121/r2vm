@@ -9,7 +9,7 @@ pub const PTE_A: u64 = 0x40;
 pub const PTE_D: u64 = 0x80;
 
 /// Type of access. This excludes STATUS, PRV and other states that may influence permission check.
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum AccessType {
     Read,
     Write,

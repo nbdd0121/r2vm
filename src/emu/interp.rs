@@ -254,7 +254,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
         Csr::Sip => ctx.shared.sip.load(MemOrder::Relaxed),
         Csr::Satp => ctx.satp,
         _ => {
-            error!("read illegal csr {:x}", csr as i32);
+            error!("read illegal csr {:x}", csr.0);
             ctx.scause = 2;
             ctx.stval = 0;
             return Err(())
@@ -324,7 +324,7 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
             ctx.shared.clear_local_icache();
         }
         _ => {
-            error!("write illegal csr {:x} = {:x}", csr as i32, value);
+            error!("write illegal csr {:x} = {:x}", csr.0, value);
             ctx.scause = 2;
             ctx.stval = 0;
             return Err(())

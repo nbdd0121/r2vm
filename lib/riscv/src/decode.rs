@@ -1,5 +1,3 @@
-use core::convert::TryInto;
-
 use super::op::Op;
 
 // #region: decoding helpers for 32-bit instructions
@@ -845,10 +843,7 @@ pub fn decode(bits: u32) -> Op {
                 0b100 => Op::Illegal,
                 _ => {
                     // Otherwise this is CSR instruction
-                    let csr = match csr(bits).try_into() {
-                        Ok(csr) => csr,
-                        Err(_) => return Op::Illegal,
-                    };
+                    let csr = super::Csr(csr(bits));
                     match function {
                         0b001 => Op::Csrrw { rd, rs1, csr },
                         0b010 => Op::Csrrs { rd, rs1, csr },

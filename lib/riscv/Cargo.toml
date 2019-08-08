@@ -4,10 +4,6 @@ version = "0.1.0"
 authors = ["Gary Guo <gary@garyguo.net>"]
 edition = "2018"
 
-[dependencies]
-num-traits = "0.2"
-num-derive = "0.2"
-
 [features]
 default = [ "std" ]
 std = []
