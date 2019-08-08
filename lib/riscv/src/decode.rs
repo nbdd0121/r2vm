@@ -844,6 +844,12 @@ pub fn decode(bits: u32) -> Op {
                 _ => {
                     // Otherwise this is CSR instruction
                     let csr = super::Csr(csr(bits));
+                    // For CSRRS, CSRRC, CSRRSI, CSRRCI, rs1 = 0 means readonly.
+                    // If the CSR is readonly while we try to write it, it is an exception.
+                    let readonly = function & 0b010 != 0 && rs1 == 0;
+                    if csr.readonly() && !readonly {
+                        return Op::Illegal
+                    }
                     match function {
                         0b001 => Op::Csrrw { rd, rs1, csr },
                         0b010 => Op::Csrrs { rd, rs1, csr },

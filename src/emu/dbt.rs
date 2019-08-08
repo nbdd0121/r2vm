@@ -1574,7 +1574,7 @@ impl<'a> DbtCompiler<'a> {
         let label_miss = self.label();
         self.patch(jcc_miss, label_miss);
         self.patch(jmp_miss, label_miss);
-        self.emit(Mov(Reg(Register::EDX), Imm(lo_bits as i64)));
+        self.emit(Mov(Reg(Register::ECX), Imm(lo_bits as i64)));
         self.emit_helper_call(helper_icache_cross_miss);
         let jmp_fin = self.emit_jmp_long();
         self.patch(jmp_fin, label_fin);
@@ -1663,11 +1663,14 @@ impl<'a> DbtCompiler<'a> {
 }
 
 #[no_mangle]
-fn icache_cross_miss(patch: usize, pc: u64, insn: u32) {
-    let op = riscv::decode::decode(insn);
+fn icache_cross_miss(ctx: &mut Context, pc: u64, patch: usize, insn: u32) {
+    let mut op = riscv::decode::decode(insn);
     if crate::get_flags().disassemble {
         riscv::disasm::print_instr(pc - 2, insn, &op);
     }
+
+    // We must not emit code for protected ops
+    if (ctx.prv as u8) < op.min_prv_level() { op = Op::Illegal }
 
     let slice = unsafe { std::slice::from_raw_parts_mut(patch as *mut u8, PAGE_CROSS_RESERVATION) };
     let mut compiler = DbtCompiler::new(slice);

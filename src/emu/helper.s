@@ -68,14 +68,15 @@ helper_icache_miss:
 .global helper_icache_cross_miss
 .extern icache_cross_miss
 helper_icache_cross_miss:
+    mov rdi, rbp
     # The instruction to translate
     movzx eax, word ptr [rsi]
     shl eax, 16
-    or edx, eax
+    or ecx, eax
     # Load the return address
-    mov rdi, [rsp]
-    movsx rax, dword ptr [rdi + 1]
-    lea rdi, [rdi+rax+5]
+    mov rdx, [rsp]
+    movsx rax, dword ptr [rdx + 1]
+    lea rdx, [rdx+rax+5]
     call icache_cross_miss
     ret
 

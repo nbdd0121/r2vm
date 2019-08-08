@@ -264,4 +264,22 @@ impl Op {
             _ => false,
         }
     }
+
+    /// Get the minimal privilege level required to execute the op
+    pub fn min_prv_level(self) -> u8 {
+        match self {
+            Op::Csrrw { csr, .. } |
+            Op::Csrrs { csr, .. } |
+            Op::Csrrc { csr, .. } |
+            Op::Csrrwi { csr, .. } |
+            Op::Csrrsi { csr, .. } |
+            Op::Csrrci { csr, .. } => {
+                csr.min_prv_level()
+            }
+            Op::Sret |
+            Op::Wfi |
+            Op::SfenceVma {..} => 1,
+            _ => 0,
+        }
+    }
 }

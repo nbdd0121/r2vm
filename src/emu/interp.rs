@@ -214,11 +214,6 @@ impl Context {
 ///   into regions, so privilege check can be easily done.
 /// * U-mode code does not access floating point CSRs with FS == Off.
 fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
-    if ctx.prv < csr.min_prv_level() as _ {
-        ctx.scause = 2;
-        ctx.stval = 0;
-        return Err(())
-    }
     Ok(match csr {
         Csr::Fflags => {
             ctx.test_and_set_fs()?;
@@ -262,12 +257,9 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
     })
 }
 
+/// This function does not check privilege level, so it must be checked ahead of time.
+/// This function also does not check for readonly CSRs, which is handled by decoder.
 fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
-    if csr.readonly() || ctx.prv < csr.min_prv_level() as _ {
-        ctx.scause = 2;
-        ctx.stval = 0;
-        return Err(())
-    }
     match csr {
         Csr::Fflags => {
             ctx.test_and_set_fs()?;
@@ -639,6 +631,8 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
     }
 }
 
+/// Perform a single step of instruction.
+/// This function does not check privilege level, so it must be checked ahead of time.
 fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     macro_rules! read_reg {
         ($rs: expr) => {{
@@ -1551,7 +1545,6 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
 
         /* Privileged */
         Op::Sret => {
-            if ctx.prv != 1 { trap!(2, 0) }
             ctx.pc = ctx.sepc;
 
             // Set privilege according to SPP
@@ -1576,11 +1569,8 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             // Set SPP to U
             ctx.sstatus &=! 0x100;
         }
-        Op::Wfi => {
-            if ctx.prv != 1 { trap!(2, 0) }
-        }
+        Op::Wfi => (),
         Op::SfenceVma { rs1, rs2 } => {
-            if ctx.prv != 1 { trap!(2, 0) }
             let asid = if rs2 == 0 { None } else { Some(read_reg!(rs2) as u16) };
             let vpn = if rs1 == 0 { None } else { Some(read_reg!(rs1) >> 12) };
             global_sfence(1 << ctx.hartid, asid, vpn)
@@ -1612,7 +1602,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> unsafe extern 
 
     loop {
         let bits = crate::emu::read_memory::<u16>(phys_pc_end);
-        let (op, c) = if bits & 3 == 3 {
+        let (mut op, c) = if bits & 3 == 3 {
             // The instruction will cross page boundary.
             if phys_pc_end & 4095 == 4094 {
                 compiler.end_cross(bits);
@@ -1634,6 +1624,9 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> unsafe extern 
             phys_pc_end += 2;
             (op, true)
         };
+
+        // We must not emit code for protected ops
+        if (prv as u8) < op.min_prv_level() { op = Op::Illegal }
 
         if op.can_change_control_flow() {
             compiler.end(op, c);
