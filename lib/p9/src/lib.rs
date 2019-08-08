@@ -23,11 +23,18 @@ pub trait FileSystem {
 
     fn statfs(&mut self, file: &mut Self::File) -> Result<serialize::StatFs>;
     fn attach(&mut self) -> Result<Self::File>;
+
+    fn readlink(&mut self, _file: &mut Self::File) -> Result<String> {
+        Err(std::io::Error::from_raw_os_error(libc::ENOTSUP))
+    }
+
     fn getattr(&mut self, file: &mut Self::File) -> Result<serialize::Stat>;
     fn walk(&mut self, file: &mut Self::File, path: &str) -> Result<Self::File>;
     fn open(&mut self, file: &mut Self::File, flags: u32) -> Result<()>;
     fn create(&mut self, file: &mut Self::File, name: &str, flags: u32, mode: u32, gid: u32) -> Result<Self::File>;
     fn readdir(&mut self, file: &mut Self::File, offset: u64) -> Result<Option<(String, Self::File)>>;
+    fn mkdir(&mut self, dir: &mut Self::File, name: &str, mode: u32, gid: u32) -> Result<Self::File>;
+    fn renameat(&mut self, olddir: &mut Self::File, oldname: &str, newdir: &mut Self::File, newname: &str) -> Result<()>;
     fn unlinkat(&mut self, file: &mut Self::File, name: &str) -> Result<()>;
     fn read(&mut self, file: &mut Self::File, offset: u64, buf: &mut [u8]) -> Result<usize>;
     fn write(&mut self, file: &mut Self::File, offset: u64, buf: &[u8]) -> Result<usize>;
@@ -74,6 +81,10 @@ impl<T: FileSystem> P9Handler<T> {
                 let file = self.fids.get_mut(&fid).unwrap();
                 Fcall::Rstatfs { stat: self.fs.statfs(file)? }
             }
+            Fcall::Treadlink { fid } => {
+                let file = self.fids.get_mut(&fid).unwrap();
+                Fcall::Rreadlink { target: self.fs.readlink(file)? }
+            }
             Fcall::Tgetattr { fid, request_mask } => {
                 let file = self.fids.get_mut(&fid).unwrap();
                 let stat = self.fs.getattr(file)?;
@@ -83,6 +94,11 @@ impl<T: FileSystem> P9Handler<T> {
                 let file = self.fids.get_mut(&fid).unwrap();
                 self.fs.setattr(file, valid, attr)?;
                 Fcall::Rsetattr {}
+            }
+            // We don't support xattr yet.
+            Fcall::Txattrwalk { .. } |
+            Fcall::Txattrcreate { .. } => {
+                return Err(std::io::Error::from_raw_os_error(libc::ENOTSUP));
             }
             Fcall::Treaddir { fid, offset, count } => {
                 let mut offset = if offset == 0 { 0 } else { offset + 1 };
@@ -107,6 +123,17 @@ impl<T: FileSystem> P9Handler<T> {
                     offset += 1;
                 }
                 Fcall::Rreaddir { count: cur_len as u32, data: vec }
+            }
+            Fcall::Tmkdir { dfid, name, mode, gid } => {
+                let dir = self.fids.get_mut(&dfid).unwrap();
+                let mut file = self.fs.mkdir(dir, &name, mode, gid)?;
+                Fcall::Rmkdir { qid: file.qid() }
+            }
+            Fcall::Trenameat { olddirfid, oldname, newdirfid, newname } => {
+                let mut olddir = self.fids.get(&olddirfid).unwrap().clone();
+                let newdir = self.fids.get_mut(&newdirfid).unwrap();
+                self.fs.renameat(&mut olddir, &oldname, newdir, &newname)?;
+                Fcall::Rrenameat {}
             }
             Fcall::Tunlinkat { dirfd, name, .. } => {
                 let dir = self.fids.get_mut(&dirfd).unwrap();

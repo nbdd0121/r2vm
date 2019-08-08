@@ -10,6 +10,7 @@ use std::fs::ReadDir;
 use std::io::{Read, Write, Seek};
 use std::time::SystemTime;
 use std::ffi::CString;
+use std::io::Result;
 
 pub struct File {
     path: PathBuf,
@@ -104,6 +105,11 @@ impl FileSystem for Passthrough {
             fd: None,
             dir: None,
         })
+    }
+
+    fn readlink(&mut self, file: &mut Self::File) -> Result<String> {
+        let path = std::fs::read_link(&file.path)?;
+        Ok(path.into_os_string().into_string().unwrap())
     }
 
     fn getattr(&mut self, file: &mut Self::File) -> std::io::Result<Stat> {
@@ -201,6 +207,22 @@ impl FileSystem for Passthrough {
             fd: None,
             dir: None
         })))
+    }
+
+    fn mkdir(&mut self, dir: &mut Self::File, name: &str, _mode: u32, _gid: u32) -> Result<Self::File> {
+        let path = dir.path.join(name);
+        std::fs::create_dir(&path)?;
+        let meta = std::fs::symlink_metadata(&path)?;
+        Ok(File {
+            path,
+            meta,
+            fd: None,
+            dir: None,
+        })
+    }
+
+    fn renameat(&mut self, olddir: &mut Self::File, oldname: &str, newdir: &mut Self::File, newname: &str) -> Result<()> {
+        std::fs::rename(olddir.path.join(oldname), newdir.path.join(newname))
     }
 
     fn unlinkat(&mut self, dir: &mut Self::File, name: &str) -> std::io::Result<()> {
