@@ -401,9 +401,14 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
         let start = page.saturating_sub(4096);
         let end = page + 4096;
         for mut icache in icaches() {
-            let keys: Vec<u64> = icache.map.range(start .. end).map(|(k,_)|*k).collect();
+            let keys: Vec<u64> = icache.s_map.range(start .. end).map(|(k,_)|*k).collect();
             for key in keys {
-                let blk = icache.map.remove(&key).unwrap();
+                let blk = icache.s_map.remove(&key).unwrap();
+                unsafe { *(blk as *mut u8) = 0xC3 }
+            }
+            let keys: Vec<u64> = icache.u_map.range(start .. end).map(|(k,_)|*k).collect();
+            for key in keys {
+                let blk = icache.u_map.remove(&key).unwrap();
                 unsafe { *(blk as *mut u8) = 0xC3 }
             }
         }
@@ -473,7 +478,8 @@ use std::collections::BTreeMap;
 const HEAP_SIZE: usize = 1024 * 1024 * 128;
 
 struct ICache {
-    pub map: BTreeMap<u64, unsafe extern "C" fn()>,
+    s_map: BTreeMap<u64, unsafe extern "C" fn()>,
+    u_map: BTreeMap<u64, unsafe extern "C" fn()>,
     heap_start: usize,
     heap_offset: usize,
 }
@@ -481,7 +487,8 @@ struct ICache {
 impl ICache {
     fn new(ptr: usize) -> ICache {
         ICache {
-            map: BTreeMap::default(),
+            s_map: BTreeMap::default(),
+            u_map: BTreeMap::default(),
             heap_start: ptr,
             heap_offset: 0,
         }
@@ -505,7 +512,8 @@ impl ICache {
         };
 
         if rollover {
-            self.map.clear();
+            self.s_map.clear();
+            self.u_map.clear();
         }
 
         std::slice::from_raw_parts_mut((self.heap_offset + self.heap_start) as *mut u8, size)
@@ -1589,7 +1597,7 @@ pub fn riscv_step(ctx: &mut Context, op: u64) -> Result<(), ()> {
 
 extern "C" fn no_op() {}
 
-fn translate_code(icache: &mut ICache, phys_pc: u64) -> unsafe extern "C" fn() {
+fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> unsafe extern "C" fn() {
     let mut phys_pc_end = phys_pc;
 
     if crate::get_flags().disassemble {
@@ -1645,7 +1653,8 @@ fn translate_code(icache: &mut ICache, phys_pc: u64) -> unsafe extern "C" fn() {
     icache.alloc_size(compiler.len);
 
     let code_fn = unsafe { std::mem::transmute(code.as_ptr() as usize) };
-    icache.map.insert(phys_pc, code_fn);
+    let map = if prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
+    map.insert(phys_pc, code_fn);
 
     for i in 0..crate::core_count() {
         crate::shared_context(i).protect_code(phys_pc &! 4095);
@@ -1665,9 +1674,10 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
         }
     };
     let mut icache = icache(ctx.hartid);
-    match icache.map.get(&phys_pc).copied() {
+    let map = if ctx.prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
+    match map.get(&phys_pc).copied() {
         Some(v) => v,
-        None => translate_code(&mut icache, phys_pc),
+        None => translate_code(&mut icache, ctx.prv, phys_pc),
     }
 }
 
@@ -1686,9 +1696,10 @@ fn find_block_and_patch(ctx: &mut Context, ret: usize) {
 
     // Access the cache for blocks
     let mut icache = icache(ctx.hartid);
-    let dbt_code = match icache.map.get(&phys_pc).copied() {
+    let map = if ctx.prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
+    let dbt_code = match map.get(&phys_pc).copied() {
         Some(v) => v,
-        None => translate_code(&mut icache, phys_pc),
+        None => translate_code(&mut icache, ctx.prv, phys_pc),
     };
 
     unsafe { std::ptr::write_unaligned((ret - 23) as *mut u64, phys_pc) };
@@ -1710,9 +1721,10 @@ fn find_block_and_patch2(ctx: &mut Context, ret: usize) {
 
     // Access the cache for blocks
     let mut icache = icache(ctx.hartid);
-    let dbt_code = match icache.map.get(&phys_pc).copied() {
+    let map = if ctx.prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
+    let dbt_code = match map.get(&phys_pc).copied() {
         Some(v) => v,
-        None => translate_code(&mut icache, phys_pc),
+        None => translate_code(&mut icache, ctx.prv, phys_pc),
     };
 
     unsafe { std::ptr::write_unaligned((ret - 5) as *mut u8, 0xE9) };
