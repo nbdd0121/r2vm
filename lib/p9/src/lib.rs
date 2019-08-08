@@ -26,8 +26,13 @@ pub trait FileSystem {
     fn getattr(&mut self, file: &mut Self::File) -> Result<serialize::Stat>;
     fn walk(&mut self, file: &mut Self::File, path: &str) -> Result<Self::File>;
     fn open(&mut self, file: &mut Self::File, flags: u32) -> Result<()>;
+    fn create(&mut self, file: &mut Self::File, name: &str, flags: u32, mode: u32, gid: u32) -> Result<Self::File>;
     fn readdir(&mut self, file: &mut Self::File, offset: u64) -> Result<Option<(String, Self::File)>>;
+    fn unlinkat(&mut self, file: &mut Self::File, name: &str) -> Result<()>;
     fn read(&mut self, file: &mut Self::File, offset: u64, buf: &mut [u8]) -> Result<usize>;
+    fn write(&mut self, file: &mut Self::File, offset: u64, buf: &[u8]) -> Result<usize>;
+    fn fsync(&mut self, file: &mut Self::File) -> Result<()>;
+    fn setattr(&mut self, file: &mut Self::File, valid: u32, stat: serialize::SetAttr) -> Result<()>;
 }
 
 pub struct P9Handler<T: FileSystem> {
@@ -57,6 +62,14 @@ impl<T: FileSystem> P9Handler<T> {
                 let qid = file.qid();
                 Fcall::Rlopen { qid, iounit: self.iounit }
             }
+            Fcall::Tlcreate { fid, name, flags, mode, gid } => {
+                let file = self.fids.get_mut(&fid).unwrap();
+                // Set O_LARGEFILE to zero
+                let newfile = self.fs.create(file, &name, flags &! O_LARGEFILE, mode, gid)?;
+                *file = newfile;
+                let qid = file.qid();
+                Fcall::Rlcreate { qid, iounit: self.iounit }
+            }
             Fcall::Tstatfs { fid } => {
                 let file = self.fids.get_mut(&fid).unwrap();
                 Fcall::Rstatfs { stat: self.fs.statfs(file)? }
@@ -65,6 +78,11 @@ impl<T: FileSystem> P9Handler<T> {
                 let file = self.fids.get_mut(&fid).unwrap();
                 let stat = self.fs.getattr(file)?;
                 Fcall::Rgetattr { valid: request_mask, qid: file.qid(), stat }
+            }
+            Fcall::Tsetattr { fid, valid, attr} => {
+                let file = self.fids.get_mut(&fid).unwrap();
+                self.fs.setattr(file, valid, attr)?;
+                Fcall::Rsetattr {}
             }
             Fcall::Treaddir { fid, offset, count } => {
                 let mut offset = if offset == 0 { 0 } else { offset + 1 };
@@ -89,6 +107,11 @@ impl<T: FileSystem> P9Handler<T> {
                     offset += 1;
                 }
                 Fcall::Rreaddir { count: cur_len as u32, data: vec }
+            }
+            Fcall::Tunlinkat { dirfd, name, .. } => {
+                let dir = self.fids.get_mut(&dirfd).unwrap();
+                self.fs.unlinkat(dir, &name)?;
+                Fcall::Runlinkat {}
             }
             Fcall::Tversion { msize, .. } => {
                 self.iounit = msize - 24;
@@ -118,6 +141,16 @@ impl<T: FileSystem> P9Handler<T> {
                 let len = self.fs.read(file, offset, &mut buf)?;
                 buf.truncate(len);
                 Fcall::Rread { data: buf }
+            }
+            Fcall::Twrite { fid, offset, data } => {
+                let file = self.fids.get_mut(&fid).unwrap();
+                let len = self.fs.write(file, offset, &data)?;
+                Fcall::Rwrite { count: len as _ }
+            }
+            Fcall::Tfsync { fid } => {
+                let file = self.fids.get_mut(&fid).unwrap();
+                self.fs.fsync(file)?;
+                Fcall::Rfsync {}
             }
             Fcall::Tclunk { fid } => {
                 self.fids.remove(&fid);

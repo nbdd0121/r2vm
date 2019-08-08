@@ -40,6 +40,16 @@ pub struct Stat {
 }
 
 #[derive(Debug)]
+pub struct SetAttr {
+    pub mode: u32,
+    pub uid: u32,
+    pub gid: u32,
+    pub size: u64,
+    pub atime: SystemTime,
+    pub mtime: SystemTime,
+}
+
+#[derive(Debug)]
 pub struct StatFs {
     pub r#type: u32,
     pub bsize: u32,
@@ -70,7 +80,7 @@ pub enum Fcall {
     Rreadlink { target: String },
     Tgetattr { fid: u32, request_mask: u64 },
     Rgetattr { valid: u64, qid: Qid, stat: Stat },
-    Tsetattr { /*TODO*/},
+    Tsetattr { fid: u32, valid: u32, attr: SetAttr },
     Rsetattr {},
     Txattrwalk { fid: u32, newfid: u32, name: String },
     Rxattrwalk { size: u64 },
@@ -251,6 +261,34 @@ impl Serializable for Stat {
     }
 }
 
+impl Serializable for SetAttr {
+    fn decode(reader: &mut dyn Read) -> Result<Self> {
+        macro_rules! decode {
+            () => {
+                Serializable::decode(reader)?
+            };
+        }
+        let stat = SetAttr {
+            mode: decode!(),
+            uid: decode!(),
+            gid: decode!(),
+            size: decode!(),
+            atime: decode!(),
+            mtime: decode!(),
+        };
+        Ok(stat)
+    }
+
+    fn encode(&self, writer: &mut dyn Write) -> Result<()> {
+        self.mode.encode(writer)?;
+        self.uid.encode(writer)?;
+        self.gid.encode(writer)?;
+        self.size.encode(writer)?;
+        self.atime.encode(writer)?;
+        self.mtime.encode(writer)
+    }
+}
+
 impl Serializable for StatFs {
     fn decode(_reader: &mut dyn Read) -> Result<Self> { unimplemented!() }
 
@@ -312,10 +350,23 @@ impl Serializable for (u16, Fcall) {
                 fid: decode!(),
                 request_mask: decode!(),
             },
+            26 => Fcall::Tsetattr {
+                fid: decode!(),
+                valid: decode!(),
+                attr: decode!(),
+            },
             40 => Fcall::Treaddir {
                 fid: decode!(),
                 offset: decode!(),
                 count: decode!(),
+            },
+            50 => Fcall::Tfsync {
+                fid: decode!(),
+            },
+            76 => Fcall::Tunlinkat {
+                dirfd: decode!(),
+                name: decode!(),
+                flags: decode!(),
             },
             100 => Fcall::Tversion {
                 msize: decode!(),
@@ -384,14 +435,19 @@ impl Serializable for (u16, Fcall) {
             Fcall::Rlerror {..} => 7,
             Fcall::Rstatfs {..} => 9,
             Fcall::Rlopen {..} => 13,
+            Fcall::Rlcreate {..} => 15,
             Fcall::Rgetattr {..} => 25,
+            Fcall::Rsetattr {..} => 27,
             Fcall::Rreaddir {..} => 41,
+            Fcall::Rfsync {..} => 51,
+            Fcall::Runlinkat {..} => 77,
             Fcall::Rversion {..} => 101,
             Fcall::Rauth {..} => 103,
             Fcall::Rattach {..} => 105,
             Fcall::Rflush {..} => 109,
             Fcall::Rwalk {..} => 111,
             Fcall::Rread {..} => 117,
+            Fcall::Rwrite {..} => 119,
             Fcall::Rclunk {..} => 121,
             _ => unimplemented!(),
         };
@@ -404,7 +460,8 @@ impl Serializable for (u16, Fcall) {
             Fcall::Rstatfs { stat } => {
                 stat.encode(writer)?;
             }
-            Fcall::Rlopen { qid, iounit } => {
+            Fcall::Rlopen { qid, iounit } |
+            Fcall::Rlcreate { qid, iounit } => {
                 qid.encode(writer)?;
                 iounit.encode(writer)?;
             }
@@ -413,6 +470,7 @@ impl Serializable for (u16, Fcall) {
                 qid.encode(writer)?;
                 stat.encode(writer)?;
             }
+            Fcall::Rsetattr {} => (),
             Fcall::Rreaddir { count, data } => {
                 count.encode(writer)?;
                 for datum in data {
@@ -422,6 +480,8 @@ impl Serializable for (u16, Fcall) {
                     datum.name.encode(writer)?;
                 }
             }
+            Fcall::Rfsync {} => (),
+            Fcall::Runlinkat {} => (),
             Fcall::Rversion { msize, version } => {
                 writer.write_u32::<LE>(*msize)?;
                 version.encode(writer)?;
@@ -442,6 +502,9 @@ impl Serializable for (u16, Fcall) {
             Fcall::Rread { data } => {
                 (data.len() as u32).encode(writer)?;
                 writer.write_all(&data)?;
+            }
+            Fcall::Rwrite { count } => {
+                count.encode(writer)?;
             }
             Fcall::Rclunk {} => (),
             _ => unimplemented!(),

@@ -1,12 +1,13 @@
 
 
-use super::serialize::{Qid, Stat, StatFs};
+use super::serialize::{Qid, Stat, StatFs, SetAttr};
 use super::{FileSystem, Inode};
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::ffi::OsStrExt;
 use std::fs::ReadDir;
-use std::io::Read;
+use std::io::{Read, Write, Seek};
 use std::time::SystemTime;
 use std::ffi::CString;
 
@@ -28,11 +29,15 @@ impl Clone for File {
     }
 }
 
-pub struct Passthrough(PathBuf);
+pub struct Passthrough {
+    root: PathBuf,
+}
 
 impl Passthrough {
     pub fn new(root: &Path) -> std::io::Result<Passthrough> {
-        Ok(Passthrough(root.canonicalize()?))
+        Ok(Passthrough {
+            root: root.canonicalize()?
+        })
     }
 }
 
@@ -53,6 +58,15 @@ impl Inode for File {
     fn mode(&mut self) -> u32 {
         self.meta.mode()
     }
+}
+
+fn set_mode(opt: &mut std::fs::OpenOptions, flags: u32) {
+    opt.read(true);
+    if flags & 0o1 != 0 { opt.read(false).write(true); }
+    if flags & 0o2 != 0 { opt.write(true); }
+    if flags & 0o100 != 0 { opt.create(true); }
+    if flags & 0o1000 != 0 { opt.truncate(true); }
+    if flags & 0o2000 != 0 { opt.append(true); }
 }
 
 impl FileSystem for Passthrough {
@@ -82,7 +96,7 @@ impl FileSystem for Passthrough {
     }
 
     fn attach(&mut self) -> std::io::Result<Self::File> {
-        let pathbuf = self.0.clone();
+        let pathbuf = self.root.clone();
         let metadata = std::fs::symlink_metadata(&pathbuf)?;
         Ok(File{ 
             path: pathbuf,
@@ -109,8 +123,7 @@ impl FileSystem for Passthrough {
     }
     
     fn walk(&mut self, file: &mut Self::File, path: &str) -> std::io::Result<Self::File> {
-        let mut pathbuf = file.path.clone();
-        pathbuf.push(path);
+        let pathbuf = file.path.join(path);
         let metadata = std::fs::symlink_metadata(&pathbuf)?;
         Ok(File {
             path: pathbuf,
@@ -126,16 +139,26 @@ impl FileSystem for Passthrough {
             file.dir = Some((dir, 0));
         } else {
             let mut fd = std::fs::OpenOptions::new();
-            fd.read(true);
-            if flags & 0o1 != 0 { fd.read(false).write(true); }
-            if flags & 0o2 != 0 { fd.write(true); }
-            if flags & 0o100 != 0 { fd.create(true); }
-            if flags & 0o1000 != 0 { fd.truncate(true); }
-            if flags & 0o2000 != 0 { fd.append(true); }
+            set_mode(&mut fd, flags);
             let fd = fd.open(&file.path)?;
             file.fd = Some(fd);
         }
         Ok(())
+    }
+
+    fn create(&mut self, file: &mut Self::File, name: &str, flags: u32, mode: u32, _gid: u32) -> std::io::Result<Self::File> {
+        let pathbuf = file.path.join(name);
+        let mut fd = std::fs::OpenOptions::new();
+        set_mode(&mut fd, flags);
+        fd.mode(mode);
+        let fd = fd.open(&pathbuf)?;
+        let meta = fd.metadata()?;
+        Ok(File {
+            path: pathbuf,
+            meta,
+            fd: Some(fd),
+            dir: None,
+        })
     }
 
     fn readdir(&mut self, file: &mut Self::File, offset: u64) -> std::io::Result<Option<(String, Self::File)>> {
@@ -179,11 +202,79 @@ impl FileSystem for Passthrough {
             dir: None
         })))
     }
+
+    fn unlinkat(&mut self, dir: &mut Self::File, name: &str) -> std::io::Result<()> {
+        let path = dir.path.join(name);
+        if std::fs::symlink_metadata(&path)?.is_dir() {
+            std::fs::remove_dir(&path)
+        } else {
+            std::fs::remove_file(&path)
+        }
+    }
     
     fn read(&mut self, file: &mut Self::File, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
-        use std::io::Seek;
         let fd = file.fd.as_mut().unwrap();
         fd.seek(std::io::SeekFrom::Start(offset))?;
         fd.read(buf)
+    }
+
+    fn write(&mut self, file: &mut Self::File, offset: u64, buf: &[u8]) -> std::io::Result<usize> {
+        let fd = file.fd.as_mut().unwrap();
+        fd.seek(std::io::SeekFrom::Start(offset))?;
+        fd.write(buf)
+    }
+
+    fn fsync(&mut self, file: &mut Self::File) -> std::io::Result<()> {
+        let fd = file.fd.as_mut().unwrap();
+        fd.sync_data()
+    }
+
+    fn setattr(&mut self, file: &mut Self::File, valid: u32, stat: SetAttr) -> std::io::Result<()> {
+        if valid & 0x0000_0001 != 0 {
+            std::fs::set_permissions(&file.path, PermissionsExt::from_mode(stat.mode))?;
+        }
+
+        if valid & (0x0000_0002 | 0x0000_0004) != 0 {
+            // TODO
+        }
+
+        if valid & 0x0000_0008 != 0 {
+            std::fs::OpenOptions::new().write(true).open(&file.path)?.set_len(stat.size)?;
+        }
+
+        if valid & (0x0000_0010 | 0x0000_0020) != 0 {
+            let atime = (if valid & 0x0000_0080 != 0 {
+                stat.atime
+            } else if valid & 0x0000_0010 != 0 {
+                SystemTime::now()
+            } else {
+                file.meta.accessed()?
+            }).duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+            let mtime = (if valid & 0x0000_0100 != 0 {
+                stat.mtime
+            } else if valid & 0x0000_0020 != 0 {
+                SystemTime::now()
+            } else {
+                file.meta.modified()?
+            }).duration_since(SystemTime::UNIX_EPOCH).unwrap();
+
+            let path_str_c = CString::new(file.path.as_os_str().as_bytes()).unwrap();
+            let time = [libc::timeval {
+                tv_sec: atime.as_secs() as _,
+                tv_usec: atime.subsec_micros() as _,
+            }, libc::timeval {
+                tv_sec: mtime.as_secs() as _,
+                tv_usec: mtime.subsec_micros() as _,
+            }];
+            if unsafe {libc::utimes(path_str_c.as_ptr(), time.as_ptr())} != 0 {
+                return Err(std::io::Error::last_os_error())
+            }
+        }
+
+        // Update metadata
+        file.meta = std::fs::symlink_metadata(&file.path)?;
+
+        Ok(())
     }
 }
