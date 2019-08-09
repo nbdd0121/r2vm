@@ -5,7 +5,9 @@
 .global fiber_event_loop
 fiber_event_loop:
     mov rdi, rbp
+    add rsp, 8
     call event_loop_handle
+    sub rsp, 8
 3:
     # Increase the global cycle counter
     mov rax, [rbp]
@@ -19,5 +21,7 @@ fiber_event_loop:
     jmp 3b
 1:
     mov rdi, rbp
+    add rsp, 8
     call event_loop_handle
+    sub rsp, 8
     jmp 2b

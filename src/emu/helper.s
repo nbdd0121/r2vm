@@ -114,6 +114,8 @@ helper_san_fail:
 .global fiber_interp_run
 fiber_interp_run:
     mov rdi, rbp
+    add rsp, 8
     call find_block
     call rax
+    sub rsp, 8
     jmp fiber_interp_run

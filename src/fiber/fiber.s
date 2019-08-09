@@ -5,6 +5,33 @@
 
 .global fiber_start
 
+# Save all non-volatile registers. Will change RAX.
+fiber_save_raw:
+    pop rax
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 8
+    stmxcsr [rsp]
+    fnstcw  [rsp + 4]
+    jmp rax
+
+# Restore all non-volatile registers and return
+fiber_restore_ret_raw:
+    fldcw [rsp + 4]
+    ldmxcsr [rsp]
+    add rsp, 8
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
+
 # Yield to next fiber
 # Before calling this, make sure:
 # - rbp already points to the desired FiberStack.
@@ -53,6 +80,36 @@ fiber_sleep:
     ret
 
 fiber_start:
-    lea rbp, [rdi + 32]
-    mov rsp, [rdi]
+    # Get the return address, and save all volatile registers (will be destroyed when entering
+    # fiber).
+    call fiber_save_raw
+
+    # To ensure that we are capable of returning from any exiting fiber, we need to fill
+    # top of each fiber stack with this format:
+    # +-----------+
+    # | 0         | // This is necessary as AMD64 requires 16-byte stack alignment
+    # +-----------+
+    # | Saved RSP |
+    # +-----------+
+    # | Exit RIP  |
+    # + ----------+
+    mov rbp, rdi
+    movabs rax, offset fiber_exit
+1:
+    mov [rbp - 32 + 0x200000 - 16], rsp
+    mov [rbp - 32 + 0x200000 - 24], rax
+    mov rbp, [rbp - 16]
+    cmp rbp, rdi
+    jne 1b
+
+    mov rsp, [rbp - 32]
     ret
+
+fiber_exit:
+    # Retrieve the original RSP and restore
+    mov rsp, [rsp]
+    mov rax, rbp
+    and rax, -0x200000
+    add rax, 32
+
+    jmp fiber_restore_ret_raw

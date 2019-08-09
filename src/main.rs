@@ -247,24 +247,27 @@ pub fn main() {
     unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args)) };
     std::mem::drop(loader);
 
+    let mut group = fiber::FiberGroup::new();
+    group.add(fibers[0]);
+
     if cfg!(not(feature = "thread")) {
         // Chain fibers together
         for i in 0..num_cores {
-            let fiber = &fibers[i];
-            let fiber2 = &fibers[i + 1];
-            fiber.chain(fiber2);
+            group.add(fibers[i + 1]);
         }
     } else {
         // Chain fibers together
         for i in 0..num_cores {
             let fiber = fibers[i+1];
             std::thread::spawn(move || {
-                unsafe { fiber.enter() }
+                let mut group = fiber::FiberGroup::new();
+                group.add(fiber);
+                group.run();
             });
         }
     }
 
-    unsafe { fibers[0].enter() }
+    group.run()
 }
 
 pub fn print_stats_and_exit(code: i32) -> ! {
