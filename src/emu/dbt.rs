@@ -45,6 +45,7 @@ extern "C" {
     fn helper_icache_wrong();
     fn helper_icache_patch2();
     fn helper_check_interrupt();
+    fn helper_san_fail();
 }
 
 pub struct DbtCompiler<'a> {
@@ -1460,12 +1461,24 @@ impl<'a> DbtCompiler<'a> {
 
     /// Compile an op. The op should follow the previous one, and it should not be an op that
     /// might possibly change control flow.
-    pub fn compile_op(&mut self, op: &Op, compressed: bool, last: bool) {
+    pub fn compile_op(&mut self, op: &Op, compressed: bool, bits: u32, last: bool) {
 
         // First check if the op cross cache block boundary and we need to access the icache.
         self.pc_end = self.pc_cur + if compressed { 2 } else { 4 };
-        if (self.pc_cur - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE {
-            self.emit_icache_access(self.pc_end - 1, false);
+        if cfg!(feature = "sanitize") {
+            // Check for potentially bugs caused by invalidation mistake
+            self.emit_icache_access(self.pc_end - 1, true);
+            if bits != 0 {
+                let mem = Register::RSI - if compressed { 1 } else { 3 };
+                let mem = if compressed { mem.word() } else { mem.dword() };
+                self.emit(Cmp(Mem(mem), Imm(bits as i64)));
+                let jcc = self.emit_jcc_long(ConditionCode::NotEqual);
+                self.patch_absolute(jcc, helper_san_fail as usize);
+            }
+        } else {
+            if (self.pc_cur - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE {
+                self.emit_icache_access(self.pc_end - 1, false);
+            }
         }
 
         // Actually emit the op
@@ -1612,7 +1625,7 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Add(Mem(mem_of_minstret), Imm(self.minstret as i64)));
         }
 
-        self.compile_op(&op, c, true);
+        self.compile_op(&op, c, 0, true);
 
         // Epilogue
         self.emit_interrupt_check();

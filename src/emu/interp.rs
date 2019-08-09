@@ -1600,7 +1600,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> unsafe extern 
 
     loop {
         let bits = crate::emu::read_memory::<u16>(phys_pc_end);
-        let (mut op, c) = if bits & 3 == 3 {
+        let (mut op, c, bits) = if bits & 3 == 3 {
             // The instruction will cross page boundary.
             if phys_pc_end & 4095 == 4094 {
                 compiler.end_cross(bits);
@@ -1613,14 +1613,14 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> unsafe extern 
                 riscv::disasm::print_instr(phys_pc_end, bits, &op);
             }
             phys_pc_end += 4;
-            (op, false)
+            (op, false, bits)
         } else {
             let op = riscv::decode::decode_compressed(bits);
             if crate::get_flags().disassemble {
                 riscv::disasm::print_instr(phys_pc_end, bits as u32, &op);
             }
             phys_pc_end += 2;
-            (op, true)
+            (op, true, bits as u32)
         };
 
         // We must not emit code for protected ops
@@ -1631,7 +1631,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> unsafe extern 
             break
         }
 
-        compiler.compile_op(&op, c, false);
+        compiler.compile_op(&op, c, bits, false);
 
         // Need to stop when crossing page boundary
         if phys_pc_end & 4095 == 0 {

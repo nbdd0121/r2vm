@@ -106,6 +106,10 @@ helper_check_interrupt:
     mov rdi, rbp
     jmp check_interrupt
 
+.global helper_san_fail
+helper_san_fail:
+    ud2
+
 .extern find_block
 .global fiber_interp_run
 fiber_interp_run:
