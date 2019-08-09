@@ -1461,7 +1461,7 @@ impl<'a> DbtCompiler<'a> {
 
     /// Compile an op. The op should follow the previous one, and it should not be an op that
     /// might possibly change control flow.
-    pub fn compile_op(&mut self, op: &Op, compressed: bool, bits: u32, last: bool) {
+    pub fn compile_op(&mut self, op: &Op, compressed: bool, bits: u32) {
 
         // First check if the op cross cache block boundary and we need to access the icache.
         self.pc_end = self.pc_cur + if compressed { 2 } else { 4 };
@@ -1493,7 +1493,7 @@ impl<'a> DbtCompiler<'a> {
         }
 
         // In non-fast mode, generate a yield call.
-        if cfg!(not(feature = "fast")) || (cfg!(not(feature = "thread")) && last) {
+        if cfg!(not(feature = "fast")) {
             self.emit_helper_call(fiber_yield_raw);
         }
 
@@ -1625,7 +1625,13 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Add(Mem(mem_of_minstret), Imm(self.minstret as i64)));
         }
 
-        self.compile_op(&op, c, 0, true);
+        self.compile_op(&op, c, 0);
+
+        // In fast & non-thread mode, generate a yield call.
+        // Non-fast mode already have this generated in compile_op.
+        if cfg!(feature = "fast") && cfg!(not(feature = "thread")) {
+            self.emit_helper_call(fiber_yield_raw);
+        }
 
         // Epilogue
         self.emit_interrupt_check();

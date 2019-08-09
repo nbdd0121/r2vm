@@ -1631,7 +1631,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> unsafe extern 
             break
         }
 
-        compiler.compile_op(&op, c, bits, false);
+        compiler.compile_op(&op, c, bits);
 
         // Need to stop when crossing page boundary
         if phys_pc_end & 4095 == 0 {
