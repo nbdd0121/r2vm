@@ -46,12 +46,14 @@ pub struct EventLoop {
     cycle: AtomicU64,
     next_event: AtomicU64,
     // Only used in threaded mode
-    epoch: Instant,
+    epoch: std::cell::Cell<Instant>,
     condvar: Condvar,
     // This has to be a Box to allow repr(C)
     events: Mutex<BinaryHeap<Entry>>,
     shutdown: AtomicBool,
 }
+
+unsafe impl Sync for EventLoop {}
 
 extern {
     // See also `event.s` for this function
@@ -64,7 +66,7 @@ impl EventLoop {
         EventLoop {
             cycle: AtomicU64::new(0),
             next_event: AtomicU64::new(u64::max_value()),
-            epoch: Instant::now(),
+            epoch: std::cell::Cell::new(Instant::now()),
             condvar: Condvar::new(),
             events: Mutex::new(BinaryHeap::new()),
             shutdown: AtomicBool::new(false),
@@ -73,6 +75,22 @@ impl EventLoop {
 
     /// Stop this event loop.
     pub fn shutdown(&self) {
+        // Acquire the lock so nobody is modifying the data structures when we are touching some
+        // time-sensitive data.
+        let guard = self.events.lock().unwrap();
+        // As event loops can be restarted after shutdown, we need to synchonize non-threaded and
+        // threaded counters.
+        if crate::threaded() {
+            // This won't conflict with `event_loop_wait` as they are in different mode.
+            self.cycle.store(self.cycle(), Ordering::Relaxed);
+        } else {
+            // Calculate number of micros since now. We can only round-up as cycle shouldn't go back.
+            let micro = (self.cycle() + 99) / 100;
+            // No need to worry about data race here due to mode difference.
+            self.epoch.replace(Instant::now() - Duration::from_micros(micro));
+        }
+        std::mem::drop(guard);
+
         self.shutdown.store(true, Ordering::Relaxed);
         // Queue a no-op event to wake the loop up.
         self.queue(0, Box::new(|| {}));
@@ -81,7 +99,7 @@ impl EventLoop {
     /// Query the current cycle count.
     pub fn cycle(&self) -> u64 {
         if crate::threaded() {
-            let duration = Instant::now().duration_since(self.epoch);
+            let duration = Instant::now().duration_since(self.epoch.get());
             duration.as_micros() as u64 * 100
         } else {
             self.cycle.load(Ordering::Relaxed)
@@ -138,10 +156,10 @@ impl EventLoop {
     pub fn event_loop(&self) {
         let mut guard = self.events.lock().unwrap();
         loop {
-            let cycle = self.cycle();
             if self.shutdown.load(Ordering::Relaxed) {
                 return;
             }
+            let cycle = self.cycle();
             let result = self.handle_events(&mut guard, cycle);
             if crate::threaded() {
                 guard = match result {

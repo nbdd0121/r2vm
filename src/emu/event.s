@@ -7,7 +7,7 @@
 event_loop_wait:
     call fiber_save_raw
 1:
-    # Increase the global cycle counter
+    # Increase the global cycle counter. No need for atomics, as we are the only writer.
     mov rax, [rbp]
     add rax, 1
     mov [rbp], rax
