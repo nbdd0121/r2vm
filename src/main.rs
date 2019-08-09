@@ -208,8 +208,8 @@ pub fn main() {
     let num_cores = if get_flags().user_only { 1 } else { 4 };
 
     // Create a fiber for event-driven simulation, e.g. timer, I/O
-    let event_loop = emu::EventLoop::new();
-    let event_fiber = event_loop.create_fiber();
+    let event_fiber = fiber::Fiber::new();
+    unsafe { std::ptr::write(event_fiber.data_pointer(), emu::EventLoop::new()) };
     unsafe { EVENT_LOOP = event_fiber.data_pointer() }
     fibers.push(event_fiber);
 
@@ -244,7 +244,6 @@ pub fn main() {
         let fiber = fiber::Fiber::new();
         let ptr = fiber.data_pointer();
         unsafe { *ptr = newctx }
-        fiber.set_fn(|| unsafe{fiber_interp_run()});
         contexts.push(ptr);
         fibers.push(fiber);
     }
@@ -260,6 +259,14 @@ pub fn main() {
     // Load the program
     unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args)) };
     std::mem::drop(loader);
+
+    fibers[0].set_fn(|| {
+        let this: &emu::EventLoop = unsafe { &*fiber::Fiber::scratchpad() };
+        this.event_loop()
+    });
+    for fiber in &mut fibers[1..] {
+        fiber.set_fn(|| unsafe{fiber_interp_run()});
+    }
 
     if !crate::threaded() {
         // Run multiple fibers in the same group.

@@ -162,7 +162,7 @@ unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &
             };
             write_location(ctx, &Location::Reg(reg), data)
         }
-        _ => unimplemented!(),
+        _ => unimplemented!("{:x} {:?}", current_ip, op),
     };
 
     // Advance to next ip.

@@ -26,18 +26,21 @@ impl FiberStack {
             panic!("cannot create fiber stack");
         }
         let stack = FiberStack(std::num::NonZeroUsize::new(map as usize + 32).unwrap());
-
-        unsafe {
-            *stack.sp() = map as usize + 0x200000 - 32;
-            *stack.next() = stack;
-            *stack.prev() = stack;
-        }
+        stack.init();
         stack
     }
 
     #[allow(dead_code)]
     unsafe fn deallocate(self) {
         libc::free((self.0.get() - 32) as _)
+    }
+
+    fn init(self) {
+        unsafe {
+            *self.sp() = self.0.get() - 32 + 0x200000 - 32;
+            *self.next() = self;
+            *self.prev() = self;
+        }
     }
 
     fn data_pointer(self) -> usize {
@@ -131,17 +134,21 @@ impl FiberGroup {
     }
 
     /// Start executing this fiber group. Exits when there are no running fibers.
-    pub fn run(&mut self) {
+    /// The ownership of all fibers are returned (THIS IS A HACK).
+    pub fn run(&mut self) -> Vec<Fiber> {
         let inner = &mut self.0;
+        let mut ret = Vec::new();
         loop {
             // Run fiber group. Function will return when any fiber exits.
             let stack = unsafe { fiber_start(inner.last.unwrap()) };
+            ret.push(Fiber(stack));
             let next = unsafe { *stack.next() };
             if stack == next {
+                stack.init();
                 // The removing fiber is the only fiber, returning
                 inner.first = None;
                 inner.last = None;
-                return;
+                return ret;
             }
             unsafe {
                 let prev = *stack.prev();
@@ -154,6 +161,8 @@ impl FiberGroup {
                 *prev.next() = next;
                 *next.prev() = prev;
             }
+            // Prepare for next use
+            stack.init();
         }
     }
 }

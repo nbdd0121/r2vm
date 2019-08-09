@@ -71,15 +71,6 @@ impl EventLoop {
         }
     }
 
-    /// Creata a fiber for the event loop
-    pub fn create_fiber(self) -> crate::fiber::Fiber {
-        let event_fiber = crate::fiber::Fiber::new();
-        let ptr = event_fiber.data_pointer();
-        unsafe { std::ptr::write(ptr, self) }
-        event_fiber.set_fn(event_loop);
-        event_fiber
-    }
-
     /// Stop this event loop.
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
@@ -143,27 +134,26 @@ impl EventLoop {
             (entry.handler)();
         }
     }
-}
 
-pub fn event_loop() {
-    let this: &EventLoop = unsafe { &*crate::fiber::Fiber::scratchpad() };
-    let mut guard = this.events.lock().unwrap();
-    loop {
-        let cycle = this.cycle();
-        if this.shutdown.load(Ordering::Relaxed) {
-            return;
-        }
-        let result = this.handle_events(&mut guard, cycle);
-        if crate::threaded() {
-            guard = match result {
-                None => this.condvar.wait(guard).unwrap(),
-                Some(v) => this.condvar.wait_timeout(guard, Duration::from_micros(v - cycle)).unwrap().0,
+    pub fn event_loop(&self) {
+        let mut guard = self.events.lock().unwrap();
+        loop {
+            let cycle = self.cycle();
+            if self.shutdown.load(Ordering::Relaxed) {
+                return;
             }
-        } else {
-            this.next_event.store(result.unwrap_or(u64::max_value()), Ordering::Relaxed);
-            std::mem::drop(guard);
-            unsafe { event_loop_wait() }
-            guard = this.events.lock().unwrap();
+            let result = self.handle_events(&mut guard, cycle);
+            if crate::threaded() {
+                guard = match result {
+                    None => self.condvar.wait(guard).unwrap(),
+                    Some(v) => self.condvar.wait_timeout(guard, Duration::from_micros(v - cycle)).unwrap().0,
+                }
+            } else {
+                self.next_event.store(result.unwrap_or(u64::max_value()), Ordering::Relaxed);
+                std::mem::drop(guard);
+                unsafe { event_loop_wait() }
+                guard = self.events.lock().unwrap();
+            }
         }
     }
 }
