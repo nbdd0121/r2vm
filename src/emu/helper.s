@@ -104,7 +104,17 @@ helper_icache_patch2:
 .extern check_interrupt
 helper_check_interrupt:
     mov rdi, rbp
-    jmp check_interrupt
+    sub rsp, 8
+    call check_interrupt
+    test al, al
+    jnz 1f
+    add rsp, 8
+    ret
+1:
+    # If check_interrupt returns Err(()), it indicates that we would like to shutdown.
+    # We therefore need to return from fiber_interp_run.
+    add rsp, 24
+    ret
 
 .global helper_san_fail
 helper_san_fail:
@@ -114,8 +124,8 @@ helper_san_fail:
 .global fiber_interp_run
 fiber_interp_run:
     mov rdi, rbp
-    add rsp, 8
+    sub rsp, 8
     call find_block
     call rax
-    sub rsp, 8
+    add rsp, 8
     jmp fiber_interp_run

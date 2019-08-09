@@ -3,14 +3,14 @@
 use std::collections::BinaryHeap;
 use std::sync::Mutex;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use std::sync::Condvar;
 use std::time::{Duration, Instant};
 
 struct Entry {
     time: u64,
-    handler: Box<Fn()>,
+    handler: Box<FnOnce()>,
 }
 
 // #region Ordering relation for Entry
@@ -42,12 +42,15 @@ impl Ord for Entry {
 
 #[repr(C)]
 pub struct EventLoop {
+    // Only used in non-threaded mode
     cycle: AtomicU64,
     next_event: AtomicU64,
+    // Only used in threaded mode
     epoch: Instant,
     condvar: Condvar,
     // This has to be a Box to allow repr(C)
     events: Mutex<BinaryHeap<Entry>>,
+    shutdown: AtomicBool,
 }
 
 extern {
@@ -64,6 +67,7 @@ impl EventLoop {
             epoch: Instant::now(),
             condvar: Condvar::new(),
             events: Mutex::new(BinaryHeap::new()),
+            shutdown: AtomicBool::new(false),
         }
     }
 
@@ -74,6 +78,13 @@ impl EventLoop {
         unsafe { std::ptr::write(ptr, self) }
         event_fiber.set_fn(event_loop);
         event_fiber
+    }
+
+    /// Stop this event loop.
+    pub fn shutdown(&self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        // Queue a no-op event to wake the loop up.
+        self.queue(0, Box::new(|| {}));
     }
 
     /// Query the current cycle count.
@@ -88,7 +99,7 @@ impl EventLoop {
 
     /// Add a new event to the event loop for triggering. If it happens in the past it will be
     /// dequeued and triggered as soon as `cycle` increments for the next time.
-    pub fn queue(&self, cycle: u64, handler: Box<Fn()->()>) {
+    pub fn queue(&self, cycle: u64, handler: Box<FnOnce()>) {
         let mut guard = self.events.lock().unwrap();
         guard.push(Entry {
             time: cycle,
@@ -114,7 +125,7 @@ impl EventLoop {
         self.cycle() / 100
     }
 
-    pub fn queue_time(&self, time: u64, handler: Box<Fn()->()>) {
+    pub fn queue_time(&self, time: u64, handler: Box<FnOnce()>) {
         self.queue(time * 100, handler);
     }
 
@@ -132,14 +143,16 @@ impl EventLoop {
             (entry.handler)();
         }
     }
-
 }
 
-extern "C" fn event_loop() {
+pub fn event_loop() {
     let this: &EventLoop = unsafe { &*crate::fiber::Fiber::scratchpad() };
     let mut guard = this.events.lock().unwrap();
     loop {
         let cycle = this.cycle();
+        if this.shutdown.load(Ordering::Relaxed) {
+            return;
+        }
         let result = this.handle_events(&mut guard, cycle);
         if cfg!(feature = "thread") {
             guard = match result {

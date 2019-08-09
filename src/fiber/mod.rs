@@ -68,7 +68,7 @@ impl Fiber {
         self.0.data_pointer() as _
     }
 
-    pub fn set_fn(&self, f: unsafe extern "C" fn()->()) {
+    pub fn set_fn(&self, f: fn()) {
         unsafe { *((self.0.data_pointer() - 32 + 0x200000 - 32) as *mut usize) = f as usize };
     }
 

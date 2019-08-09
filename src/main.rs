@@ -230,7 +230,7 @@ pub fn main() {
         let fiber = fiber::Fiber::new();
         let ptr = fiber.data_pointer();
         unsafe { *ptr = newctx }
-        fiber.set_fn(fiber_interp_run);
+        fiber.set_fn(|| unsafe{fiber_interp_run()});
         contexts.push(ptr);
         fibers.push(fiber);
     }
@@ -247,27 +247,24 @@ pub fn main() {
     unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args)) };
     std::mem::drop(loader);
 
-    let mut group = fiber::FiberGroup::new();
-    group.add(fibers[0]);
-
     if cfg!(not(feature = "thread")) {
-        // Chain fibers together
-        for i in 0..num_cores {
-            group.add(fibers[i + 1]);
+        // Run multiple fibers in the same group.
+        let mut group = fiber::FiberGroup::new();
+        for fiber in fibers {
+            group.add(fiber);
         }
+        group.run();
     } else {
-        // Chain fibers together
-        for i in 0..num_cores {
-            let fiber = fibers[i+1];
+        // Run one fiber per thread.
+        let handles: Vec<_> = fibers.into_iter().map(|fiber| {
             std::thread::spawn(move || {
                 let mut group = fiber::FiberGroup::new();
                 group.add(fiber);
                 group.run();
-            });
-        }
+            })
+        }).collect();
+        for handle in handles { handle.join().unwrap(); }
     }
-
-    group.run()
 }
 
 pub fn print_stats_and_exit(code: i32) -> ! {

@@ -37,24 +37,21 @@ impl CacheLine {
 /// can be safely accessed both from the execution thread and other harts.
 #[repr(C)]
 pub struct SharedContext {
-    /// This field stored wether there are interrupts not yet seen by the current hart. Interrupts
-    /// can be masked by setting SIE register or SSTATUS.SIE, yet we couldn't atomically fetch
-    /// these registers and determine if the hart should be interrupted if we are not the unique
-    /// owner of `Context`. The field exists to mitigate it.
-    ///
-    /// Our solution is to have the `new_interrupts` field. It is asserted when an external
-    /// interrupt arrives, similar to SIP. This field will be periodically checked by the running
-    /// hart, and the hart will stop and interrupt itself if this field is not zero, and check if
-    /// it actually should take an interrupt, or the interrupt is indeed masked out. It will then
-    /// reset this field to 0. By doing so, it woundn't need to check interrupts later.
-    ///
-    /// Timer interrupts are treated a little bit differently. To avoid to deal with atomicity
-    /// issues related to `mtimecmp`, we make `mtimecmp` local to the hart. Instead, when we think
-    /// there might be a new timer interrupt, we set the corresponding bit in `new_interrupts`.
-    /// The hart will check and set `sip` if there is indeed a timer interrupt.
-    ///
-    /// Technically a bool is sufficient because we only need zero check. However we prefer to keep
-    /// everything with same size and align so we will have AtomicU64 at the moment.
+    /// This field stored incoming message alarms. This field will be periodically checked by the
+    /// running hart, and the running hart will enter slow path when any bit is set, therefore
+    /// receive and process these messages. Alarm message include:
+    /// * Whether there are interrupts not yet seen by the current hart. Interrupts
+    ///   can be masked by setting SIE register or SSTATUS.SIE, yet we couldn't atomically fetch
+    ///   these registers and determine if the hart should be interrupted if we are not the unique
+    ///   owner of `Context`. Our solution is to use message alarms. One bit is asserted when an
+    ///   external interrupt arrives. The message handler will check if it actually should take an
+    ///   interrupt, or the interrupt is indeed masked out. It will clear the bit regardless SIE,
+    ///   By doing so, it wouldn't need to check interrupts later.
+    /// * Timer interrupts are treated a little bit differently. To avoid to deal with atomicity
+    ///   issues related to `mtimecmp`, we make `mtimecmp` local to the hart. Instead, when we
+    ///   think there might be a new timer interrupt, we set a bit in `new_interrupts`.
+    ///   The hart will check and set `sip` if there is indeed a timer interrupt.
+    /// * Shutdown notice.
     pub new_interrupts: AtomicU64,
 
     /// Interrupts currently pending. SIP is a very special register when doing simulation,
@@ -114,6 +111,10 @@ impl SharedContext {
     /// `sip`. This should be called, e.g. if SIE or SSTATUS is modified.
     pub fn alert(&self) {
         self.new_interrupts.fetch_or(1, MemOrder::Release);
+    }
+
+    pub fn shutdown(&self) {
+        self.new_interrupts.fetch_or(2, MemOrder::Release);
     }
 
     pub fn clear_local_cache(&self) {
@@ -1725,8 +1726,13 @@ fn find_block_and_patch2(ctx: &mut Context, ret: usize) {
 
 #[no_mangle]
 /// Check if an enabled interrupt is pending, and take it if so.
-pub fn check_interrupt(ctx: &mut Context) {
-    let _ = ctx.shared.new_interrupts.swap(0, MemOrder::Acquire);
+/// If `{Err}` is returned, the running fiber will exit.
+pub fn check_interrupt(ctx: &mut Context) -> Result<(), ()> {
+    let alarm = ctx.shared.new_interrupts.swap(0, MemOrder::Acquire);
+
+    if alarm & 2 != 0 {
+        return Err(())
+    }
 
     if crate::event_loop().time() >= ctx.timecmp {
         ctx.shared.sip.fetch_or(32, MemOrder::Relaxed);
@@ -1735,13 +1741,14 @@ pub fn check_interrupt(ctx: &mut Context) {
     // Find out which interrupts can be taken
     let interrupt_mask = ctx.interrupt_pending();
     // No interrupt pending
-    if interrupt_mask == 0 { return }
+    if interrupt_mask == 0 { return Ok(()) }
     // Find the highest priority interrupt
     let pending = 63 - interrupt_mask.leading_zeros() as u64;
     // Interrupts have the highest bit set
     ctx.scause = (1 << 63) | pending;
     ctx.stval = 0;
     trap(ctx);
+    Ok(())
 }
 
 /// Trigger a trap. pc must be already adjusted properly before calling.
