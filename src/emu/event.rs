@@ -157,6 +157,7 @@ impl EventLoop {
         let mut guard = self.events.lock().unwrap();
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
+                self.shutdown.store(false, Ordering::Relaxed);
                 return;
             }
             let cycle = self.cycle();

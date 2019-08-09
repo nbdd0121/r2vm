@@ -94,10 +94,6 @@ pub fn get_flags() -> &'static Flags {
     unsafe { &FLAGS }
 }
 
-pub fn threaded() -> bool {
-    get_flags().thread.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 pub static mut CONTEXTS: &'static mut [*mut emu::interp::Context] = &mut [];
 
 pub fn shared_context(id: usize) -> &'static emu::interp::SharedContext {
@@ -114,6 +110,26 @@ static mut EVENT_LOOP: *const emu::EventLoop = std::ptr::null_mut();
 
 pub fn event_loop() -> &'static emu::EventLoop {
     unsafe { &*EVENT_LOOP }
+}
+
+pub fn threaded() -> bool {
+    get_flags().thread.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Update the current threading mode
+pub fn set_threaded(mode: bool) {
+    // First shutdown event loop as it is prone to influence of this flag
+    event_loop().shutdown();
+
+    // Actually set the flag
+    get_flags().thread.store(mode, std::sync::atomic::Ordering::Relaxed);
+
+    // Shutdown all execution threads
+    for i in 0..core_count() {
+        shared_context(i).shutdown();
+    }
+
+    // The control is now handed to main, which will restart all of them.
 }
 
 extern {
@@ -260,31 +276,41 @@ pub fn main() {
     unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args)) };
     std::mem::drop(loader);
 
-    fibers[0].set_fn(|| {
-        let this: &emu::EventLoop = unsafe { &*fiber::Fiber::scratchpad() };
-        this.event_loop()
-    });
-    for fiber in &mut fibers[1..] {
-        fiber.set_fn(|| unsafe{fiber_interp_run()});
-    }
-
-    if !crate::threaded() {
-        // Run multiple fibers in the same group.
-        let mut group = fiber::FiberGroup::new();
-        for fiber in fibers {
-            group.add(fiber);
+    loop {
+        fibers[0].set_fn(|| {
+            let this: &emu::EventLoop = unsafe { &*fiber::Fiber::scratchpad() };
+            this.event_loop()
+        });
+        for fiber in &mut fibers[1..] {
+            fiber.set_fn(|| unsafe{fiber_interp_run()});
         }
-        group.run();
-    } else {
-        // Run one fiber per thread.
-        let handles: Vec<_> = fibers.into_iter().map(|fiber| {
-            std::thread::spawn(move || {
-                let mut group = fiber::FiberGroup::new();
+
+        if !crate::threaded() {
+            // Run multiple fibers in the same group.
+            let mut group = fiber::FiberGroup::new();
+            for fiber in fibers {
                 group.add(fiber);
-                group.run();
-            })
-        }).collect();
-        for handle in handles { handle.join().unwrap(); }
+            }
+            fibers = group.run();
+        } else {
+            // Run one fiber per thread.
+            let handles: Vec<_> = fibers.into_iter().map(|fiber| {
+                std::thread::spawn(move || {
+                    let mut group = fiber::FiberGroup::new();
+                    group.add(fiber);
+                    group.run().pop().unwrap()
+                })
+            }).collect();
+            fibers = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+        }
+
+        // Remove old translation cache
+        emu::interp::icache_reset();
+
+        // Alert all contexts in case they having interrupts yet to process
+        for i in 0..core_count() {
+            shared_context(i).alert();
+        }
     }
 }
 

@@ -40,6 +40,10 @@ pub fn console_init() {
             if buffer == 1 {
                 std::io::stdin().read_exact(std::slice::from_mut(&mut buffer)).unwrap();
                 match buffer {
+                    b't' => {
+                        crate::set_threaded(!crate::threaded());
+                        continue
+                    }
                     b'x' => {
                         println!("Terminated");
                         crate::print_stats_and_exit(0);

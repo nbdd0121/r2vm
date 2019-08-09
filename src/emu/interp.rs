@@ -554,6 +554,14 @@ fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
     ICACHE.iter().map(|x| x.lock())
 }
 
+pub fn icache_reset() {
+    for mut icache in icaches() {
+        icache.s_map.clear();
+        icache.u_map.clear();
+        icache.heap_offset = 0;
+    }
+}
+
 /// Broadcast sfence
 fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
     for i in 0..crate::core_count() {
