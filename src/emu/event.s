@@ -1,27 +1,18 @@
 .intel_syntax noprefix
 
+.global event_loop_wait
+.extern fiber_save_raw
 .extern fiber_yield_raw
-.extern event_loop_handle
-.global fiber_event_loop
-fiber_event_loop:
-    mov rdi, rbp
-    add rsp, 8
-    call event_loop_handle
-    sub rsp, 8
-3:
+.extern fiber_restore_ret_raw
+event_loop_wait:
+    call fiber_save_raw
+1:
     # Increase the global cycle counter
     mov rax, [rbp]
     add rax, 1
     mov [rbp], rax
-    # If the cycle counter exceeds the `next_event` value, we need to do things.
+    # If the cycle counter exceeds the `next_event` value, we can return
     cmp rax, [rbp + 8]
-    jae 1f
-2:
+    jae fiber_restore_ret_raw
     call fiber_yield_raw
-    jmp 3b
-1:
-    mov rdi, rbp
-    add rsp, 8
-    call event_loop_handle
-    sub rsp, 8
-    jmp 2b
+    jmp 1b

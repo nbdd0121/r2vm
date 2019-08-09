@@ -5,7 +5,9 @@
 
 .global fiber_start
 
-# Save all non-volatile registers. Will change RAX.
+# Save all non-volatile registers.
+# will destroy RAX and set RBP to the fiber base pointer
+.global fiber_save_raw
 fiber_save_raw:
     pop rax
     push rbx
@@ -17,9 +19,14 @@ fiber_save_raw:
     sub rsp, 8
     stmxcsr [rsp]
     fnstcw  [rsp + 4]
+    # Retrieve the fiber base pointer
+    mov rbp, rsp
+    and rbp, -0x200000
+    add rbp, 32
     jmp rax
 
 # Restore all non-volatile registers and return
+.global fiber_restore_ret_raw
 fiber_restore_ret_raw:
     fldcw [rsp + 4]
     ldmxcsr [rsp]
@@ -113,3 +120,10 @@ fiber_exit:
     add rax, 32
 
     jmp fiber_restore_ret_raw
+
+.global fiber_current
+fiber_current:
+    mov rax, rsp
+    and rax, -0x200000
+    add rax, 32
+    ret

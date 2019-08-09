@@ -1,5 +1,6 @@
 extern {
     fn fiber_start(cell: FiberStack) -> FiberStack;
+    fn fiber_current() -> FiberStack;
     fn fiber_sleep(num: usize);
 }
 
@@ -78,6 +79,10 @@ impl Fiber {
     /// it will just crash if the current code is not running inside fiber.
     pub fn sleep(num: usize) {
         unsafe { fiber_sleep(num) }
+    }
+
+    pub fn scratchpad<T>() -> *mut T {
+        unsafe { fiber_current().data_pointer() as _ }
     }
 }
 
