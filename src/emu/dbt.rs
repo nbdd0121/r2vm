@@ -298,7 +298,7 @@ impl<'a> DbtCompiler<'a> {
 
         self.emit(Add(Mem(memory_of_pc()), Imm(imm.wrapping_sub(4) as i64)));
 
-        if cfg!(not(feature = "thread")) {
+        if !crate::threaded() {
             self.emit_helper_call(fiber_yield_raw);
         }
 
@@ -1492,8 +1492,8 @@ impl<'a> DbtCompiler<'a> {
             self.emit_op(op)
         }
 
-        // In non-fast mode, generate a yield call.
-        if cfg!(not(feature = "fast")) {
+        // In non-threaded mode, generate a yield call.
+        if !crate::threaded() {
             self.emit_helper_call(fiber_yield_raw);
         }
 
@@ -1577,7 +1577,7 @@ impl<'a> DbtCompiler<'a> {
         self.pc_cur = self.pc_end;
         self.instret += 1;
 
-        if cfg!(not(feature = "thread")) {
+        if !crate::threaded() {
             self.emit_helper_call(fiber_yield_raw);
         }
         self.emit_interrupt_check();
@@ -1626,12 +1626,6 @@ impl<'a> DbtCompiler<'a> {
         }
 
         self.compile_op(&op, c, 0);
-
-        // In fast & non-thread mode, generate a yield call.
-        // Non-fast mode already have this generated in compile_op.
-        if cfg!(feature = "fast") && cfg!(not(feature = "thread")) {
-            self.emit_helper_call(fiber_yield_raw);
-        }
 
         // Epilogue
         self.emit_interrupt_check();

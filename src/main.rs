@@ -35,6 +35,7 @@ Options:
   --with-instret        Enable precise instret updating in binary translated
                         code.
   --monitor-performance Display metrics about performance in compilation phase.
+  --thread              Use non-accurate threaded mode for execution.
   --sysroot             Change the sysroot to a non-default value.
   --init                Specify the init program for full system emulation.
   --help                Display this help message.
@@ -52,9 +53,11 @@ pub struct Flags {
     disassemble: bool,
 
     // A flag to determine whether instret should be updated precisely in binary translated code.
+    // XXX: Not currently used
     no_instret: bool,
 
     // Whether compilation performance counters should be enabled.
+    // XXX: Not currently used
     monitor_performance: bool,
 
     // The actual path of the executable. Needed to redirect /proc/self/*
@@ -69,6 +72,9 @@ pub struct Flags {
 
     // Path of init to execute. If supplied, it will be included in Linux bootcmd
     init: Option<String>,
+
+    // Whether threaded mode should be used
+    thread: std::sync::atomic::AtomicBool,
 }
 
 static mut FLAGS: Flags = Flags {
@@ -81,10 +87,15 @@ static mut FLAGS: Flags = Flags {
     sysroot: None,
     user_only: true,
     init: None,
+    thread: std::sync::atomic::AtomicBool::new(false),
 };
 
 pub fn get_flags() -> &'static Flags {
     unsafe { &FLAGS }
+}
+
+pub fn threaded() -> bool {
+    get_flags().thread.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 pub static mut CONTEXTS: &'static mut [*mut emu::interp::Context] = &mut [];
@@ -146,6 +157,9 @@ pub fn main() {
             }
             "--monitor-performance" => unsafe {
                 FLAGS.monitor_performance = true;
+            }
+            "--thread" => unsafe {
+                FLAGS.thread.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             "--help" => {
                 eprintln!(usage_string!(), interp_name);
@@ -247,7 +261,7 @@ pub fn main() {
     unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args)) };
     std::mem::drop(loader);
 
-    if cfg!(not(feature = "thread")) {
+    if !crate::threaded() {
         // Run multiple fibers in the same group.
         let mut group = fiber::FiberGroup::new();
         for fiber in fibers {

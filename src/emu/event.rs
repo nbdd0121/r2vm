@@ -89,7 +89,7 @@ impl EventLoop {
 
     /// Query the current cycle count.
     pub fn cycle(&self) -> u64 {
-        if cfg!(feature = "thread") {
+        if crate::threaded() {
             let duration = Instant::now().duration_since(self.epoch);
             duration.as_micros() as u64 * 100
         } else {
@@ -106,7 +106,7 @@ impl EventLoop {
             handler,
         });
 
-        if cfg!(feature = "thread") {
+        if crate::threaded() {
             // If the event just queued is the next event, we need to wake the event loop up.
             if guard.peek().unwrap().time == cycle {
                 self.condvar.notify_one()
@@ -154,7 +154,7 @@ pub fn event_loop() {
             return;
         }
         let result = this.handle_events(&mut guard, cycle);
-        if cfg!(feature = "thread") {
+        if crate::threaded() {
             guard = match result {
                 None => this.condvar.wait(guard).unwrap(),
                 Some(v) => this.condvar.wait_timeout(guard, Duration::from_micros(v - cycle)).unwrap().0,
