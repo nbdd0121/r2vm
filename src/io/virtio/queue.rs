@@ -105,6 +105,13 @@ impl Queue {
         *(elem_ptr as usize as *mut u32) = avail.idx as u32;
         *((elem_ptr + 4) as usize as *mut u32) = avail.bytes_written as u32;
         *used_idx_ptr = used_idx + 1;
+
+        // Write requires invalidating icache
+        for slice in avail.write {
+            let start = slice.as_ptr() as usize;
+            let end = start + slice.len();
+            crate::emu::interp::icache_invalidate(start, end);
+        }
     }
 }
 

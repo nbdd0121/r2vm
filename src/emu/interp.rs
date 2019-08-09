@@ -325,6 +325,23 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
     Ok(())
 }
 
+pub fn icache_invalidate(start: usize, end: usize) {
+    let start = (start &! 4095) as u64;
+    let end = ((end + 4095) &! 4095) as u64;
+    for mut icache in icaches() {
+        let keys: Vec<u64> = icache.s_map.range(start .. end).map(|(k,_)|*k).collect();
+        for key in keys {
+            let blk = icache.s_map.remove(&key).unwrap();
+            unsafe { *(blk as *mut u8) = 0xC3 }
+        }
+        let keys: Vec<u64> = icache.u_map.range(start .. end).map(|(k,_)|*k).collect();
+        for key in keys {
+            let blk = icache.u_map.remove(&key).unwrap();
+            unsafe { *(blk as *mut u8) = 0xC3 }
+        }
+    }
+}
+
 type Trap = u64;
 
 fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, Trap> {
@@ -388,26 +405,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
     let line: &CacheLine = &ctx.shared.line[(idx & 1023) as usize];
     let mut tag = idx << 1;
     if write {
-        // Invalidate presence in I$, so if the code is executed, we won't silently write into it.
-        let page = out >> 12 << 12;
-        let start = page.saturating_sub(4096);
-        let end = page + 4096;
-        for mut icache in icaches() {
-            let keys: Vec<u64> = icache.s_map.range(start .. end).map(|(k,_)|*k).collect();
-            for key in keys {
-                let blk = icache.s_map.remove(&key).unwrap();
-                unsafe { *(blk as *mut u8) = 0xC3 }
-            }
-            let keys: Vec<u64> = icache.u_map.range(start .. end).map(|(k,_)|*k).collect();
-            for key in keys {
-                let blk = icache.u_map.remove(&key).unwrap();
-                unsafe { *(blk as *mut u8) = 0xC3 }
-            }
-        }
-        let line = &ctx.shared.i_line[(idx & 1023) as usize];
-        if line.tag.load(MemOrder::Relaxed) == idx {
-            line.invalidate();
-        }
+        icache_invalidate(out as usize, out as usize + 1);
     } else {
         tag |= 1;
     }

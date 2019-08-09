@@ -20,7 +20,7 @@ pub enum AccessType {
 pub fn walk_page(satp: u64, vpn: u64, mut read_mem: impl FnMut(u64) -> u64) -> u64 {
     // Check if the address is canonical.
     if (((vpn << (64 - 27)) as i64) >> (64 - 27 - 12)) as u64 >> 12 != vpn {
-        unimplemented!("non-canonical page number {:x}", vpn);
+        return 0;
     }
 
     let mut ppn = satp & ((1u64 << 44) - 1);
