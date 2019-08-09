@@ -167,6 +167,12 @@ impl fmt::Display for Register {
     }
 }
 
+impl fmt::Debug for Register {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Memory {
     // We don't need to worry about the size, Rust can optimise it to 1 bytes
@@ -216,6 +222,12 @@ impl fmt::Display for Memory {
     }
 }
 
+impl fmt::Debug for Memory {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 /// Represent a register or memory location. Can be used as left-value operand.
 #[derive(Clone, Copy)]
 pub enum Location {
@@ -257,6 +269,12 @@ impl fmt::Display for Location {
             Location::Reg(it) => it.fmt(f),
             Location::Mem(it) => it.fmt(f),
         }
+    }
+}
+
+impl fmt::Debug for Location {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 
@@ -317,8 +335,14 @@ impl fmt::Display for Operand {
     }
 }
 
+impl fmt::Debug for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum ConditionCode {
     Overflow = 0x0,
     NotOverflow = 0x1,
@@ -394,7 +418,7 @@ impl fmt::Display for ConditionCode {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Op {
     Illegal,
     Adc(Location, Operand),
