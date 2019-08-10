@@ -61,7 +61,7 @@ impl Queue {
         let mut idx = unsafe { *(idx_ptr as usize as *const u16) };
 
         // Now we have obtained this descriptor, increment the index to skip over this.
-        self.last_avail_idx += 1;
+        self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
 
         let mut avail = Buffer {
             idx,
@@ -104,7 +104,7 @@ impl Queue {
         let elem_ptr = self.used_addr + 4 + (used_idx & (self.num - 1)) as u64 * 8;
         *(elem_ptr as usize as *mut u32) = avail.idx as u32;
         *((elem_ptr + 4) as usize as *mut u32) = avail.bytes_written as u32;
-        *used_idx_ptr = used_idx + 1;
+        *used_idx_ptr = used_idx.wrapping_add(1);
 
         // Write requires invalidating icache
         for slice in avail.write {
