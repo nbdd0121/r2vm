@@ -96,6 +96,7 @@ impl Drop for Fiber {
 }
 
 struct FiberGroupData {
+    fibers: Vec<Fiber>,
     first: Option<FiberStack>,
     last: Option<FiberStack>,
 }
@@ -105,6 +106,7 @@ pub struct FiberGroup(FiberGroupData);
 impl FiberGroup {
     pub fn new() -> FiberGroup {
         FiberGroup(FiberGroupData {
+            fibers: Vec::new(),
             first: None,
             last: None,
         })
@@ -130,25 +132,23 @@ impl FiberGroup {
 
             inner.last = Some(fiber.0);
         }
-        std::mem::forget(fiber);
+        inner.fibers.push(fiber);
     }
 
     /// Start executing this fiber group. Exits when there are no running fibers.
     /// The ownership of all fibers are returned (THIS IS A HACK).
     pub fn run(&mut self) -> Vec<Fiber> {
         let inner = &mut self.0;
-        let mut ret = Vec::new();
         loop {
             // Run fiber group. Function will return when any fiber exits.
             let stack = unsafe { fiber_start(inner.last.unwrap()) };
-            ret.push(Fiber(stack));
             let next = unsafe { *stack.next() };
             if stack == next {
                 stack.init();
                 // The removing fiber is the only fiber, returning
                 inner.first = None;
                 inner.last = None;
-                return ret;
+                return std::mem::replace(&mut inner.fibers, Vec::new());
             }
             unsafe {
                 let prev = *stack.prev();
