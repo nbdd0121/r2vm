@@ -1024,13 +1024,11 @@ impl<Desc: FpDesc> Fp<Desc> {
     // #region Classification
     //
 
-    #[allow(dead_code)]
     pub fn is_normal(&self) -> bool {
         let exponent = self.biased_exponent();
         exponent != 0 && exponent != Self::INFINITY_BIASED_EXPONENT
     }
 
-    #[allow(dead_code)]
     pub fn is_finite(&self) -> bool {
         self.biased_exponent() != Self::INFINITY_BIASED_EXPONENT
     }
@@ -1040,7 +1038,6 @@ impl<Desc: FpDesc> Fp<Desc> {
         self.trailing_significand() == Desc::Holder::zero()
     }
 
-    #[allow(dead_code)]
     pub fn is_subnormal(&self) -> bool {
         self.biased_exponent() == 0 &&
         self.trailing_significand() != Desc::Holder::zero()
