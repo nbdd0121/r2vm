@@ -35,7 +35,7 @@ Options:
   --with-instret        Enable precise instret updating in binary translated
                         code.
   --monitor-performance Display metrics about performance in compilation phase.
-  --thread              Use non-accurate threaded mode for execution.
+  --lockstep            Use lockstep non-threaded mode for execution.
   --sysroot             Change the sysroot to a non-default value.
   --init                Specify the init program for full system emulation.
   --help                Display this help message.
@@ -87,7 +87,7 @@ static mut FLAGS: Flags = Flags {
     sysroot: None,
     user_only: true,
     init: None,
-    thread: std::sync::atomic::AtomicBool::new(false),
+    thread: std::sync::atomic::AtomicBool::new(true),
 };
 
 pub fn get_flags() -> &'static Flags {
@@ -174,8 +174,8 @@ pub fn main() {
             "--monitor-performance" => unsafe {
                 FLAGS.monitor_performance = true;
             }
-            "--thread" => unsafe {
-                FLAGS.thread.store(true, std::sync::atomic::Ordering::Relaxed);
+            "--lockstep" => unsafe {
+                FLAGS.thread.store(false, std::sync::atomic::Ordering::Relaxed);
             }
             "--help" => {
                 eprintln!(usage_string!(), interp_name);
