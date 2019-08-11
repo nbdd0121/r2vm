@@ -12,6 +12,9 @@ static mut BRK         : u64 = 0;
 static mut HEAP_START  : u64 = 0;
 static mut HEAP_END    : u64 = 0;
 
+/// A flag to determine whether to trace all system calls. If true then all guest system calls will be logged.
+pub static STRACE: RoCell<bool> = RoCell::new(false);
+
 /// The actual path of the executable. Needed to redirect /proc/self/*
 pub static EXEC_PATH: RoCell<CString> = unsafe { RoCell::new_uninit() };
 
@@ -322,7 +325,7 @@ pub fn translate_path(path: &Path) -> Cow<Path> {
     // TODO: Replace this once we get proper type for sysroot
     let newpath = SYSROOT.join(path.strip_prefix("/").unwrap());
     if !newpath.exists() { return Cow::Borrowed(path) }
-    if crate::get_flags().strace {
+    if *STRACE {
         eprintln!("Translate {} to {}", path.display(), newpath.display());
     }
     Cow::Owned(newpath)
@@ -348,7 +351,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let buffer = arg0 as *mut i8;
             let size = arg1 as usize;
             let ret = if libc::getcwd(buffer, size).is_null() { -abi::EINVAL } else { 0 };
-            if crate::get_flags().strace {
+            if *STRACE {
                 if ret == 0 {
                     eprintln!(
                         "getcwd({}, {}) = 0",
@@ -366,7 +369,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let dirfd: i32 = if arg0 == abi::AT_FDCWD { libc::AT_FDCWD } else { arg0 as _ };
             let pathname = CStr::from_ptr(arg1 as usize as _);
             let ret = return_errno(libc::unlinkat(dirfd, translate_path_cstr(pathname).as_ptr(), arg2 as _) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!(
                     "unlinkat({}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, ret
                 );
@@ -383,7 +386,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 arg2 as _,
                 arg3 as _
             ) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!(
                     "faccessat({}, {}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret
                 );
@@ -403,7 +406,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 }
                 _ => return_errno(libc::openat(dirfd, translate_path_cstr(pathname).as_ptr(), flags, arg3) as _),
             };
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!(
                     "openat({}, {}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret
                 );
@@ -417,14 +420,14 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             } else {
                 return_errno(libc::close(arg0 as _) as _)
             };
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("close({}) = {}", arg0, ret);
             }
             ret
         }
         abi::SYS_lseek => {
             let ret = return_errno(libc::lseek(arg0 as _, arg1 as _, arg2 as _));
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("lseek({}, {}, {}) = {}", arg0, arg1, arg2, ret);
             }
             ret
@@ -432,7 +435,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         abi::SYS_read => {
             let buffer = arg1 as usize as _;
             let ret = return_errno(libc::read(arg0 as _, buffer, arg2 as _) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("read({}, {}, {}) = {}",
                     arg0,
                     Escape(std::slice::from_raw_parts(buffer as _, if ret >= 0 { ret as usize } else { arg2 as usize })),
@@ -445,7 +448,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         abi::SYS_write => {
             let buffer = arg1 as usize as _;
             let ret = return_errno(libc::write(arg0 as _, buffer, arg2 as _) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("write({}, {}, {}) = {}",
                     arg0,
                     Escape(std::slice::from_raw_parts(buffer as _, arg2 as usize)),
@@ -459,7 +462,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let guest_iov = std::slice::from_raw_parts(arg1 as usize as *const abi::iovec, arg2 as _);
             let host_iov: Vec<_> = guest_iov.iter().map(convert_iovec_to_host).collect();
             let ret = return_errno(libc::writev(arg0 as _, host_iov.as_ptr(), arg2 as _) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("writev({}, {}, {}) = {}",
                     arg0,
                     arg1,
@@ -489,7 +492,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 }
                 _ => return_errno(libc::readlinkat(dirfd, translate_path_cstr(pathname).as_ptr(), buffer, arg3 as _) as _)
             };
-            if crate::get_flags().strace {
+            if *STRACE {
                 if ret > 0 {
                     eprintln!(
                         "readlinkat({}, {}, {}, {}) = {}",
@@ -522,7 +525,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 convert_stat_from_host(guest_stat, &host_stat);
             }
 
-            if crate::get_flags().strace {
+            if *STRACE {
                 if ret == 0 {
                     eprintln!(
                         "fstatat({}, {}, {{st_mode={:#o}, st_size={}, ...}}, {}) = 0",
@@ -544,7 +547,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 convert_stat_from_host(guest_stat, &host_stat);
             }
 
-            if crate::get_flags().strace {
+            if *STRACE {
                 if ret == 0 {
                     eprintln!("fstat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0", arg0, host_stat.st_mode, host_stat.st_size);
                 } else {
@@ -554,20 +557,20 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             ret
         }
         abi::SYS_exit => {
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("exit({}) = ?", arg0);
             }
             crate::print_stats_and_exit(arg0 as i32)
         }
         abi::SYS_exit_group => {
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("exit_group({}) = ?", arg0);
             }
             crate::print_stats_and_exit(arg0 as i32)
         }
         abi::SYS_uname => {
             let ret = return_errno(libc::uname(arg0 as _) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("uname({:#x}) = {}", arg0, ret);
             }
             ret
@@ -578,49 +581,49 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let guest_tv = &mut *(arg0 as usize as *mut abi::timeval);
             guest_tv.tv_sec = time.as_secs() as _;
             guest_tv.tv_usec = time.subsec_micros() as _;
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("gettimeofday({{{}, {}}}, NULL) = 0", time.as_secs(), time.subsec_micros());
             }
             0
         }
         abi::SYS_getpid => {
             let ret = libc::getpid();
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("getpid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_getppid => {
             let ret = libc::getppid();
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("getppid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_getuid => {
             let ret = libc::getuid();
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("getuid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_geteuid => {
             let ret = libc::geteuid();
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("geteuid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_getgid => {
             let ret = libc::getgid();
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("getgid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_getegid => {
             let ret = libc::getegid();
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("getegid() = {}", ret);
             }
             ret as i64
@@ -653,21 +656,21 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                     BRK = arg0;
                 }
             }
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("brk({}) = {}", Pointer(arg0), Pointer(BRK));
             }
             BRK as i64
         }
         abi::SYS_munmap => {
             let ret = return_errno(libc::munmap(arg0 as _, arg1 as _) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("munmap({:#x}, {}) = {}", arg0, arg1, ret);
             }
             ret
         }
         // This is linux specific call, we will just return ENOSYS.
         abi::SYS_mremap => {
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("mremap({}, {}, {}, {}, {:#x}) = -ENOSYS", arg0, arg1, arg2, arg3, arg4);
             }
             -abi::ENOSYS as i64
@@ -677,7 +680,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let flags = convert_mmap_flags_to_host(arg3 as _);
             let arg4 = arg4 as _;
             let ret = return_errno(libc::mmap(arg0 as _, arg1 as _, prot, flags, arg4, arg5 as _) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("mmap({}, {}, {}, {}, {}, {}) = {:#x}", Pointer(arg0), arg1, arg2, arg3, arg4, arg5, ret);
             }
             ret
@@ -685,7 +688,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         abi::SYS_mprotect => {
             let prot = convert_mmap_prot_to_host(arg2 as _);
             let ret = return_errno(libc::mprotect(arg0 as _, arg1 as _, prot) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("mprotect({:#x}, {}, {}) = {:#x}", arg0, arg1, arg2, ret);
             }
             ret
@@ -694,7 +697,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let pathname = CStr::from_ptr(arg0 as usize as _);
             let flags = convert_open_flags_to_host(arg1 as _);
             let ret = return_errno(libc::open(translate_path_cstr(pathname).as_ptr(), flags, arg2 as libc::mode_t) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("open({}, {}, {}) = {}", Escape(pathname.to_bytes()), arg1, arg2, ret);
             }
             ret
@@ -702,7 +705,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         abi::SYS_unlink => {
             let pathname = CStr::from_ptr(arg0 as usize as _);
             let ret = return_errno(libc::unlink(translate_path_cstr(pathname).as_ptr()) as _);
-            if crate::get_flags().strace {
+            if *STRACE {
                 eprintln!("unlink({}) = {}", Escape(pathname.to_bytes()), ret);
             }
             ret
@@ -718,7 +721,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 convert_stat_from_host(guest_stat, &host_stat);
             }
 
-            if crate::get_flags().strace {
+            if *STRACE {
                 if ret == 0 {
                     eprintln!(
                         "stat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0",

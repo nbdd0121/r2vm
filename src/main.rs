@@ -29,12 +29,6 @@ Options:
                         call to helper function instead.
   --strace              Log system calls.
   --disassemble         Log decoded instructions.
-  --engine=interpreter  Use interpreter instead of dynamic binary translator.
-  --engine=dbt          Use simple binary translator instead of IR-based
-                        optimising binary translator.
-  --with-instret        Enable precise instret updating in binary translated
-                        code.
-  --monitor-performance Display metrics about performance in compilation phase.
   --lockstep            Use lockstep non-threaded mode for execution.
   --sysroot             Change the sysroot to a non-default value.
   --init                Specify the init program for full system emulation.
@@ -46,19 +40,8 @@ pub struct Flags {
     // Whether direct memory access or call to helper should be generated for guest memory access.
     no_direct_memory_access: bool,
 
-    // A flag to determine whether to trace all system calls. If true then all guest system calls will be logged.
-    strace: bool,
-
     // A flag to determine whether to print instruction out when it is decoded.
     disassemble: bool,
-
-    // A flag to determine whether instret should be updated precisely in binary translated code.
-    // XXX: Not currently used
-    no_instret: bool,
-
-    // Whether compilation performance counters should be enabled.
-    // XXX: Not currently used
-    monitor_performance: bool,
 
     // If we are only emulating userspace code
     user_only: bool,
@@ -72,11 +55,8 @@ pub struct Flags {
 
 static mut FLAGS: Flags = Flags {
     no_direct_memory_access: true,
-    strace: false,
     disassemble: false,
-    no_instret: true,
-    monitor_performance: false,
-    user_only: true,
+    user_only: false,
     init: None,
     thread: std::sync::atomic::AtomicBool::new(true),
 };
@@ -152,18 +132,10 @@ pub fn main() {
                 FLAGS.no_direct_memory_access = true;
             }
             "--strace" => unsafe {
-                FLAGS.strace = true;
+                RoCell::replace(&emu::syscall::STRACE, true);
             }
             "--disassemble" => unsafe {
                 FLAGS.disassemble = true;
-            }
-            "--engine=dbt" => panic!("engine dbt"),
-            "--engine=interpreter" => panic!("engine int"),
-        	"--with-instret" => unsafe {
-                FLAGS.no_instret = false;
-            }
-            "--monitor-performance" => unsafe {
-                FLAGS.monitor_performance = true;
             }
             "--lockstep" => unsafe {
                 FLAGS.thread.store(false, std::sync::atomic::Ordering::Relaxed);
