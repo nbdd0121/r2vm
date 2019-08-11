@@ -133,7 +133,6 @@ unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &m
 
 unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &mut libc::ucontext_t) {
     let current_ip = ctx.uc_mcontext.gregs[REG_RIP];
-    assert!(current_ip >= 0x7ffec0000000 && current_ip < 0x7fff00000000);
 
     // Decode the faulting instruction
     let mut reader = MemReader(current_ip as usize);

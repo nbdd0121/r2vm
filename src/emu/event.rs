@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 struct Entry {
     time: u64,
-    handler: Box<FnOnce()>,
+    handler: Box<FnOnce() + Send>,
 }
 
 // #region Ordering relation for Entry
@@ -46,14 +46,12 @@ pub struct EventLoop {
     cycle: AtomicU64,
     next_event: AtomicU64,
     // Only used in threaded mode
-    epoch: std::cell::Cell<Instant>,
+    epoch: crate::util::RoCell<Instant>,
     condvar: Condvar,
     // This has to be a Box to allow repr(C)
     events: Mutex<BinaryHeap<Entry>>,
     shutdown: AtomicBool,
 }
-
-unsafe impl Sync for EventLoop {}
 
 extern {
     // See also `event.s` for this function
@@ -66,7 +64,7 @@ impl EventLoop {
         EventLoop {
             cycle: AtomicU64::new(0),
             next_event: AtomicU64::new(u64::max_value()),
-            epoch: std::cell::Cell::new(Instant::now()),
+            epoch: crate::util::RoCell::new(Instant::now()),
             condvar: Condvar::new(),
             events: Mutex::new(BinaryHeap::new()),
             shutdown: AtomicBool::new(false),
@@ -87,7 +85,7 @@ impl EventLoop {
             // Calculate number of micros since now. We can only round-up as cycle shouldn't go back.
             let micro = (self.cycle() + 99) / 100;
             // No need to worry about data race here due to mode difference.
-            self.epoch.replace(Instant::now() - Duration::from_micros(micro));
+            unsafe { crate::util::RoCell::replace(&self.epoch, Instant::now() - Duration::from_micros(micro)) };
         }
         std::mem::drop(guard);
 
@@ -99,7 +97,7 @@ impl EventLoop {
     /// Query the current cycle count.
     pub fn cycle(&self) -> u64 {
         if crate::threaded() {
-            let duration = Instant::now().duration_since(self.epoch.get());
+            let duration = Instant::now().duration_since(*self.epoch);
             duration.as_micros() as u64 * 100
         } else {
             self.cycle.load(Ordering::Relaxed)
@@ -108,7 +106,7 @@ impl EventLoop {
 
     /// Add a new event to the event loop for triggering. If it happens in the past it will be
     /// dequeued and triggered as soon as `cycle` increments for the next time.
-    pub fn queue(&self, cycle: u64, handler: Box<FnOnce()>) {
+    pub fn queue(&self, cycle: u64, handler: Box<FnOnce() + Send>) {
         let mut guard = self.events.lock().unwrap();
         guard.push(Entry {
             time: cycle,
@@ -134,7 +132,7 @@ impl EventLoop {
         self.cycle() / 100
     }
 
-    pub fn queue_time(&self, time: u64, handler: Box<FnOnce()>) {
+    pub fn queue_time(&self, time: u64, handler: Box<FnOnce() + Send>) {
         self.queue(time * 100, handler);
     }
 

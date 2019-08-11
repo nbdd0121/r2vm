@@ -21,7 +21,7 @@ pub mod emu;
 pub mod fiber;
 
 use std::ffi::{CString};
-use std::ptr;
+use util::RoCell;
 
 macro_rules! usage_string {() => ("Usage: {} [options] program [arguments...]
 Options:
@@ -60,13 +60,6 @@ pub struct Flags {
     // XXX: Not currently used
     monitor_performance: bool,
 
-    // The actual path of the executable. Needed to redirect /proc/self/*
-    exec_path: *const i8,
-
-    // Path of sysroot. When the guest application tries to open a file, and the corresponding file exists in sysroot,
-    // it will be redirected.
-    sysroot: Option<String>,
-
     // If we are only emulating userspace code
     user_only: bool,
 
@@ -83,8 +76,6 @@ static mut FLAGS: Flags = Flags {
     disassemble: false,
     no_instret: true,
     monitor_performance: false,
-    exec_path: ptr::null(),
-    sysroot: None,
     user_only: true,
     init: None,
     thread: std::sync::atomic::AtomicBool::new(true),
@@ -106,10 +97,10 @@ pub fn core_count() -> usize {
     cnt
 }
 
-static mut EVENT_LOOP: *const emu::EventLoop = std::ptr::null_mut();
+static EVENT_LOOP: RoCell<&'static emu::EventLoop> = unsafe { RoCell::new_uninit() };
 
 pub fn event_loop() -> &'static emu::EventLoop {
-    unsafe { &*EVENT_LOOP }
+    &EVENT_LOOP
 }
 
 pub fn threaded() -> bool {
@@ -203,12 +194,10 @@ pub fn main() {
 
     let program_name = item.unwrap();
 
-    let cprogram_name = CString::new(program_name.as_str()).unwrap();
     unsafe {
-        FLAGS.exec_path = cprogram_name.as_ptr();
+        RoCell::init(&emu::syscall::EXEC_PATH, CString::new(program_name.as_str()).unwrap());
+        RoCell::init(&emu::syscall::SYSROOT, sysroot.into());
     }
-    std::mem::forget(cprogram_name);
-    unsafe { FLAGS.sysroot = Some(sysroot) };
 
     let loader = emu::loader::Loader::new(program_name.as_ref()).unwrap();
     // Simple guess: If not elf, then we load it as if it is a flat binary kernel
@@ -226,7 +215,7 @@ pub fn main() {
     // Create a fiber for event-driven simulation, e.g. timer, I/O
     let event_fiber = fiber::Fiber::new();
     unsafe { std::ptr::write(event_fiber.data_pointer(), emu::EventLoop::new()) };
-    unsafe { EVENT_LOOP = event_fiber.data_pointer() }
+    unsafe { RoCell::init(&EVENT_LOOP, &*event_fiber.data_pointer()) }
     fibers.push(event_fiber);
 
     for i in 0..num_cores {

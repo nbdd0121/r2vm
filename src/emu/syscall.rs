@@ -1,7 +1,8 @@
 use std::fmt::{self, Write};
 use std::ffi::{CStr, CString};
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use crate::util::RoCell;
 
 use super::abi;
 use super::ureg;
@@ -10,6 +11,13 @@ static mut ORIGINAL_BRK: u64 = 0;
 static mut BRK         : u64 = 0;
 static mut HEAP_START  : u64 = 0;
 static mut HEAP_END    : u64 = 0;
+
+/// The actual path of the executable. Needed to redirect /proc/self/*
+pub static EXEC_PATH: RoCell<CString> = unsafe { RoCell::new_uninit() };
+
+/// Path of sysroot. When the guest application tries to open a file, and the corresponding file exists in sysroot,
+/// it will be redirected.
+pub static SYSROOT: RoCell<PathBuf> = unsafe { RoCell::new_uninit() };
 
 /// Initialise brk when program is being loaded. Should not be called after execution has started.
 pub unsafe fn init_brk(brk: ureg) {
@@ -312,7 +320,7 @@ pub fn translate_path(path: &Path) -> Cow<Path> {
     // We assume relative paths cannot point to sysroot
     if path.is_relative() { return Cow::Borrowed(path) }
     // TODO: Replace this once we get proper type for sysroot
-    let newpath = Path::new(crate::get_flags().sysroot.as_ref().unwrap()).join(path.strip_prefix("/").unwrap());
+    let newpath = SYSROOT.join(path.strip_prefix("/").unwrap());
     if !newpath.exists() { return Cow::Borrowed(path) }
     if crate::get_flags().strace {
         eprintln!("Translate {} to {}", path.display(), newpath.display());
@@ -391,7 +399,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let proc_self = is_proc_self(pathname);
             let ret = match proc_self {
                 Some(v) if v == std::ffi::OsStr::new("exe") => {
-                    libc::openat(dirfd, crate::get_flags().exec_path, flags, arg3) as _
+                    libc::openat(dirfd, EXEC_PATH.as_ptr(), flags, arg3) as _
                 }
                 _ => return_errno(libc::openat(dirfd, translate_path_cstr(pathname).as_ptr(), flags, arg3) as _),
             };
@@ -469,7 +477,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let proc_self = is_proc_self(pathname);
             let ret = match proc_self {
                 Some(v) if v == std::ffi::OsStr::new("exe") => {
-                    let path = libc::realpath(crate::get_flags().exec_path, std::ptr::null_mut());
+                    let path = libc::realpath(EXEC_PATH.as_ptr(), std::ptr::null_mut());
                     if path.is_null() {
                         return_errno(-1)
                     } else {

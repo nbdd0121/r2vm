@@ -6,7 +6,7 @@ use spin::Mutex;
 pub mod interp;
 mod abi;
 mod event;
-mod syscall;
+pub mod syscall;
 mod dbt;
 pub mod signal;
 pub mod loader;

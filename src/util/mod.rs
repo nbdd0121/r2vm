@@ -2,7 +2,9 @@ mod split_int;
 pub use split_int::SplitInt;
 
 mod atomic_ext;
+mod ro_cell;
 pub use atomic_ext::AtomicExt;
+pub use ro_cell::RoCell;
 
 macro_rules! offset_of {
     ($ty:ty, $field:ident) => {
