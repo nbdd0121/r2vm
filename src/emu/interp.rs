@@ -343,20 +343,22 @@ pub fn icache_invalidate(start: usize, end: usize) {
     }
 }
 
-type Trap = u64;
-
-fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, Trap> {
+fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, ()> {
     // MMU off
     if (ctx.satp >> 60) == 0 { return Ok(addr) }
 
     let pte = walk_page(ctx.satp, addr >> 12, |addr| crate::emu::read_memory(addr as usize));
     match check_permission(pte, access, ctx.prv as u8, ctx.sstatus) {
         Ok(_) => Ok(pte >> 10 << 12 | addr & 4095),
-        Err(_) => Err(match access {
-            AccessType::Read => 13,
-            AccessType::Write => 15,
-            AccessType::Execute => 12,
-        })
+        Err(_) => {
+            ctx.scause = match access {
+                AccessType::Read => 13,
+                AccessType::Write => 15,
+                AccessType::Execute => 12,
+            };
+            ctx.stval = addr;
+            Err(())
+        }
     }
 }
 
@@ -366,14 +368,7 @@ pub const CACHE_LINE_LOG2_SIZE: usize = 12;
 #[no_mangle]
 fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let out = match translate(ctx, addr, AccessType::Execute) {
-        Err(trap) => {
-            ctx.scause = trap as u64;
-            ctx.stval = addr;
-            return Err(())
-        }
-        Ok(out) => out,
-    };
+    let out = translate(ctx, addr, AccessType::Execute)?;
     let line: &CacheLine = &ctx.shared.i_line[(idx & 1023) as usize];
     line.tag.store(idx, MemOrder::Relaxed);
     line.paddr.store(out ^ addr, MemOrder::Relaxed);
@@ -395,14 +390,7 @@ fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
 #[export_name = "translate_cache_miss"]
 fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let out = match translate(ctx, addr, if write { AccessType::Write} else { AccessType::Read }) {
-        Err(trap) => {
-            ctx.scause = trap as u64;
-            ctx.stval = addr;
-            return Err(())
-        }
-        Ok(out) => out,
-    };
+    let out = translate(ctx, addr, if write { AccessType::Write} else { AccessType::Read })?;
     let line: &CacheLine = &ctx.shared.line[(idx & 1023) as usize];
     let mut tag = idx << 1;
     if write {
@@ -1683,7 +1671,6 @@ fn find_block(ctx: &mut Context) -> unsafe extern "C" fn() {
 
 #[no_mangle]
 fn find_block_and_patch(ctx: &mut Context, ret: usize) {
-
     let pc = ctx.pc;
     let phys_pc = match insn_translate(ctx, pc) {
         Ok(pc) => pc,
