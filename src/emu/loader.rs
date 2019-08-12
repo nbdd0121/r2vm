@@ -4,7 +4,6 @@ use std::os::unix::io::{IntoRawFd, AsRawFd, FromRawFd};
 use std::ffi::CStr;
 use rand::RngCore;
 use super::abi;
-use super::{sreg, ureg};
 
 const PF_R    : u32 = 0x4;
 const PF_W    : u32 = 0x2;
@@ -94,7 +93,7 @@ impl Loader {
     /// Guest if the elf file is a user-space program or a kernel.
     pub fn guess_kernel(&self) -> bool {
         // We use a very simple heuristics here: user-space programs usually isn't located that high.
-        (self.ehdr().e_entry as sreg) < 0
+        (self.ehdr().e_entry as i64) < 0
     }
 
     fn find_interpreter(&self) -> Option<&str> {
@@ -111,11 +110,11 @@ impl Loader {
         None
     }
 
-    unsafe fn load_image(&self, load_addr: &mut ureg, brk: &mut ureg) -> ureg {
+    unsafe fn load_image(&self, load_addr: &mut u64, brk: &mut u64) -> u64 {
         let ehdr = self.ehdr();
 
         // Scan the bounds of the image.
-        let mut loaddr = ureg::max_value();
+        let mut loaddr = u64::max_value();
         let mut hiaddr = 0;
         for h in self.phdr() {
             if h.p_type == libc::PT_LOAD {
@@ -137,7 +136,7 @@ impl Loader {
             if map == libc::MAP_FAILED {
                 panic!("mmap failed while loading");
             }
-            map as usize as ureg - loaddr
+            map as usize as u64 - loaddr
         } else {
             let map = libc::mmap(
                 loaddr as usize as _,
@@ -220,9 +219,9 @@ impl Loader {
         bias + ehdr.e_entry
     }
 
-    unsafe fn load_kernel(&self, load_addr: ureg) -> ureg {
+    unsafe fn load_kernel(&self, load_addr: u64) -> u64 {
         // Scan the bounds of the image.
-        let mut loaddr = ureg::max_value();
+        let mut loaddr = u64::max_value();
         let mut hiaddr = 0;
         for h in self.phdr() {
             if h.p_type == libc::PT_LOAD {
@@ -260,7 +259,7 @@ impl Loader {
         hiaddr - loaddr
     }
 
-    unsafe fn load_elf(&self, sp: &mut ureg) -> ureg {
+    unsafe fn load_elf(&self, sp: &mut u64) -> u64 {
         let mut load_addr = 0;
         let mut brk = 0;
         let entry = self.load_image(&mut load_addr, &mut brk);
@@ -284,9 +283,9 @@ impl Loader {
         brk = (brk + 4095) &! 4095;
         super::syscall::init_brk(brk);
 
-        let mut push = |value: ureg| {
-            *sp -= std::mem::size_of::<ureg>() as ureg;
-            *(*sp as usize as *mut ureg) = value;
+        let mut push = |value: u64| {
+            *sp -= std::mem::size_of::<u64>() as u64;
+            *(*sp as usize as *mut u64) = value;
         };
 
         // Setup auxillary vectors.
@@ -309,7 +308,7 @@ impl Loader {
         actual_entry
     }
 
-    unsafe fn load_bin(&self, location: ureg) {
+    unsafe fn load_bin(&self, location: u64) {
         libc::memcpy(location as usize as _, self.memory, self.file_size as _);
     }
 }
@@ -317,7 +316,7 @@ impl Loader {
 pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>) {
     if crate::get_flags().user_only {
         // Set sp to be the highest possible address.
-        let mut sp: ureg = 0x7fff0000;
+        let mut sp: u64 = 0x7fff0000;
         let map = libc::mmap(
             (sp - 0x800000) as usize as _,
             0x800000,
@@ -327,8 +326,8 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>) {
             panic!("mmap failed while loading");
         }
 
-        let sp_alloc = |sp: &mut ureg, size: usize| {
-            *sp -= size as ureg;
+        let sp_alloc = |sp: &mut u64, size: usize| {
+            *sp -= size as u64;
             std::slice::from_raw_parts_mut(*sp as usize as _, size)
         };
 
@@ -355,9 +354,9 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>) {
         // Align the stack to 8-byte boundary.
         sp &= !7;
 
-        let push = |sp: &mut ureg, value: ureg| {
-            *sp -= std::mem::size_of::<ureg>() as ureg;
-            *(*sp as usize as *mut ureg) = value;
+        let push = |sp: &mut u64, value: u64| {
+            *sp -= std::mem::size_of::<u64>() as u64;
+            *(*sp as usize as *mut u64) = value;
         };
 
         // Random data

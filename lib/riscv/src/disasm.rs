@@ -257,7 +257,7 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::Andi { rd, rs1, imm } |
         Op::Addiw { rd, rs1, imm } |
         // The shifts technically should have a unsigned argument, but since immediates for shifts are small numbers,
-        // converting to sreg_t does not hurt.
+        // converting to signed does not hurt.
         Op::Slli { rd, rs1, imm } |
         Op::Srli { rd, rs1, imm } |
         Op::Srai { rd, rs1, imm } |

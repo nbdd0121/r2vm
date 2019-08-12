@@ -13,12 +13,6 @@ pub mod loader;
 pub use event::EventLoop;
 pub use syscall::syscall;
 
-// Type definition of guest sizes
-#[allow(non_camel_case_types)]
-pub type ureg = u64;
-#[allow(non_camel_case_types)]
-pub type sreg = i64;
-
 lazy_static! {
     /// The global PLIC
     pub static ref PLIC: Mutex<Plic> = {
@@ -51,8 +45,8 @@ lazy_static! {
 
 /// This governs the boundary between RAM and I/O memory. If an address is strictly above this
 /// location, then it is considered I/O. For user-space applications, we consider all memory
-/// locations as RAM, so the default value here is `ureg::max_value()`.
-static mut IO_BOUNDARY: ureg = ureg::max_value();
+/// locations as RAM, so the default value here is `u64::max_value()`.
+static mut IO_BOUNDARY: u64 = u64::max_value();
 
 pub fn init() {
     unsafe {
@@ -166,7 +160,7 @@ pub fn write_memory<T: Copy>(addr: u64, value: T) {
     unsafe { write_memory_unsafe(addr, value) }
 }
 
-pub fn phys_read(addr: ureg, size: u32) -> ureg {
+pub fn phys_read(addr: u64, size: u32) -> u64 {
     if addr > unsafe { IO_BOUNDARY } {
         let addr = (addr - 0x80000000) as usize;
         if addr >= 0x100000 {
@@ -191,7 +185,7 @@ pub fn phys_read(addr: ureg, size: u32) -> ureg {
     }
 }
 
-pub fn phys_write(addr: ureg, value: ureg, size: u32) {
+pub fn phys_write(addr: u64, value: u64, size: u32) {
     if addr > unsafe { IO_BOUNDARY } {
         let addr = (addr - 0x80000000) as usize;
         if addr >= 0x100000 {

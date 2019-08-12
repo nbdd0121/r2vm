@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use crate::util::RoCell;
 
 use super::abi;
-use super::ureg;
 
 static mut ORIGINAL_BRK: u64 = 0;
 static mut BRK         : u64 = 0;
@@ -23,7 +22,7 @@ pub static EXEC_PATH: RoCell<CString> = unsafe { RoCell::new_uninit() };
 pub static SYSROOT: RoCell<PathBuf> = unsafe { RoCell::new_uninit() };
 
 /// Initialise brk when program is being loaded. Should not be called after execution has started.
-pub unsafe fn init_brk(brk: ureg) {
+pub unsafe fn init_brk(brk: u64) {
     ORIGINAL_BRK = brk;
     BRK          = brk;
     HEAP_START   = brk;
