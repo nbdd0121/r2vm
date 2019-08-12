@@ -26,14 +26,33 @@ lazy_static! {
         assert!(!crate::get_flags().user_only);
         let mut vec = Vec::new();
 
-        let file = std::fs::OpenOptions::new()
-                                        .read(true)
-                                        .open("rootfs.img")
-                                        .unwrap();
-        let file = crate::io::block::Shadow::new(file);
-        vec.push(Mutex::new(Mmio::new(Box::new(Block::new(Box::new(file))))));
-        vec.push(Mutex::new(Mmio::new(Box::new(Rng::new_seeded()))));
-        vec.push(Mutex::new(Mmio::new(Box::new(P9::new("share", std::path::Path::new("./share"))))));
+        for config in crate::CONFIG.drive.iter() {
+            let file = std::fs::OpenOptions::new()
+                                            .read(true)
+                                            .write(!config.shadow)
+                                            .open(&config.path)
+                                            .unwrap();
+            let file: Box<dyn crate::io::block::Block + Send> = if config.shadow {
+                Box::new(crate::io::block::Shadow::new(file))
+            } else {
+                Box::new(file)
+            };
+            let dev = Box::new(Block::new((vec.len() + 1) as u32, file));
+            vec.push(Mutex::new(Mmio::new(dev)));
+        }
+
+        for config in crate::CONFIG.random.iter() {
+            let rng = match config.r#type {
+                crate::config::RandomType::Pseudo => Rng::new_seeded((vec.len() + 1) as u32, config.seed),
+                crate::config::RandomType::OS => Rng::new_os((vec.len() + 1) as u32),
+            };
+            vec.push(Mutex::new(Mmio::new(Box::new(rng))));
+        }
+
+        for config in crate::CONFIG.share.iter() {
+            let dev = Box::new(P9::new((vec.len() + 1) as u32, &config.tag, &config.path));
+            vec.push(Mutex::new(Mmio::new(dev)));
+        }
 
         vec
     };
@@ -68,10 +87,7 @@ pub fn device_tree() -> fdt::Node {
     root.add_prop("#size-cells", 2u32);
 
     let chosen = root.add_node("chosen");
-    chosen.add_prop("bootargs", match crate::get_flags().init {
-        None => std::borrow::Cow::Borrowed("console=hvc0 root=/dev/vda rw"),
-        Some(ref v) => std::borrow::Cow::Owned(format!("console=hvc0 root=/dev/vda rw init={}", v)),
-    }.as_ref());
+    chosen.add_prop("bootargs", crate::CONFIG.cmdline.as_str());
 
     let cpus = root.add_node("cpus");
     cpus.add_prop("timebase-frequency", 1000000u32);

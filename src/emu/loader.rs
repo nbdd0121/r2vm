@@ -45,6 +45,10 @@ impl<'a> Iterator for PhdrIter<'a> {
 }
 
 impl Loader {
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.memory as *const u8, self.file_size as _) }
+    }
+
     fn ehdr(&self) -> &libc::Elf64_Ehdr {
         unsafe { &*(self.memory as *const libc::Elf64_Ehdr) }
     }

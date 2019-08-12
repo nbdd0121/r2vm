@@ -7,6 +7,8 @@ extern crate pretty_env_logger;
 extern crate rand;
 extern crate fnv;
 extern crate byteorder;
+extern crate serde;
+extern crate toml;
 
 extern crate softfp;
 extern crate p9;
@@ -19,6 +21,7 @@ pub mod io;
 pub mod util;
 pub mod emu;
 pub mod fiber;
+pub mod config;
 
 use std::ffi::{CString};
 use util::RoCell;
@@ -31,7 +34,6 @@ Options:
   --disassemble         Log decoded instructions.
   --lockstep            Use lockstep non-threaded mode for execution.
   --sysroot             Change the sysroot to a non-default value.
-  --init                Specify the init program for full system emulation.
   --help                Display this help message.
 ")}
 
@@ -46,9 +48,6 @@ pub struct Flags {
     // If we are only emulating userspace code
     user_only: bool,
 
-    // Path of init to execute. If supplied, it will be included in Linux bootcmd
-    init: Option<String>,
-
     // Whether threaded mode should be used
     thread: std::sync::atomic::AtomicBool,
 }
@@ -57,7 +56,6 @@ static mut FLAGS: Flags = Flags {
     no_direct_memory_access: true,
     disassemble: false,
     user_only: false,
-    init: None,
     thread: std::sync::atomic::AtomicBool::new(true),
 };
 
@@ -103,6 +101,8 @@ pub fn set_threaded(mode: bool) {
     // The control is now handed to main, which will restart all of them.
 }
 
+static CONFIG: RoCell<config::Config> = unsafe { RoCell::new_uninit() };
+
 extern {
     fn fiber_interp_run();
 }
@@ -147,9 +147,6 @@ pub fn main() {
             _ => if arg.starts_with("--sysroot=") {
                 let path_slice = &arg["--sysroot=".len()..];
                 sysroot = path_slice.to_owned();
-            } else if arg.starts_with("--init=") {
-                let path_slice = &arg["--init=".len()..];
-                unsafe { FLAGS.init = Some(path_slice.to_owned()) }
             } else {
                 eprintln!("{}: unrecognized option '{}'", interp_name, arg);
                 std::process::exit(1);
@@ -171,12 +168,22 @@ pub fn main() {
         RoCell::init(&emu::syscall::SYSROOT, sysroot.into());
     }
 
-    let loader = emu::loader::Loader::new(program_name.as_ref()).unwrap();
-    // Simple guess: If not elf, then we load it as if it is a flat binary kernel
-    unsafe { FLAGS.user_only = match loader.validate_elf() {
-        Ok(_) => !loader.guess_kernel(),
-        Err(_) => false,
-    }; }
+    let mut loader = emu::loader::Loader::new(program_name.as_ref()).unwrap();
+    // We accept two types of input. The file can either be a user-space ELF file,
+    // or it can be a config file.
+    if loader.validate_elf().is_ok() {
+        if loader.guess_kernel() {
+            panic!("For full-system emulation, please use a config file")
+        }
+        unsafe { FLAGS.user_only = true }
+    } else {
+        // Full-system emulation is needed. Originally we uses kernel path as "program name"
+        // directly, but as full-system emulation requires many peripheral devices as well,
+        // we decided to only accept config files.
+        let config: config::Config = toml::from_slice(loader.as_slice()).expect("Invalid config file");
+        unsafe { RoCell::init(&CONFIG, config) };
+        loader = emu::loader::Loader::new(&CONFIG.kernel).unwrap();
+    }
 
     // Create fibers for all threads
     let mut fibers = Vec::new();

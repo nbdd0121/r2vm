@@ -1,5 +1,6 @@
 use std::cell::UnsafeCell;
 use std::mem::MaybeUninit;
+use std::ops::Deref;
 
 /// A cell that is readonly.
 /// It is expected to remain readonly for most time. Some use cases include set-once global
@@ -36,9 +37,17 @@ impl<T> RoCell<T> {
     }
 }
 
-impl<T> std::ops::Deref for RoCell<T> {
+impl<T> Deref for RoCell<T> {
     type Target = T;
+
+    #[inline]
     fn deref(&self) -> &T {
         unsafe { &*(*self.0.get()).as_ptr() }
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for RoCell<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.deref(), f)
     }
 }

@@ -13,10 +13,11 @@ pub struct P9 {
     queue: Queue,
     config: Box<[u8]>,
     handler: P9Handler<Passthrough>,
+    irq: u32,
 }
 
 impl P9 {
-    pub fn new(mount_tag: &str, path: &std::path::Path) -> P9 {
+    pub fn new(irq: u32, mount_tag: &str, path: &std::path::Path) -> P9 {
         // Config space is composed of u16 length followed by the tag bytes
         let config = {
             let tag_len = mount_tag.len();
@@ -33,6 +34,7 @@ impl P9 {
             queue: Queue::new(),
             config: config.into_boxed_slice(),
             handler: P9Handler::new(Passthrough::new(path).unwrap()),
+            irq,
         }
     }
 }
@@ -72,7 +74,7 @@ impl Device for P9 {
         }
 
         // TODO
-        crate::emu::PLIC.lock().trigger(3);
+        crate::emu::PLIC.lock().trigger(self.irq);
     }
 
 }

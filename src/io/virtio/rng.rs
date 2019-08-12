@@ -7,27 +7,29 @@ pub struct Rng {
     status: u32,
     queue: Queue,
     rng: Box<dyn rand::RngCore + Send>,
+    irq: u32,
 }
 
 impl Rng {
     /// Create a virtio entropy source device using a given random number generator.
-    pub fn new(rng: Box<dyn rand::RngCore + Send>) -> Rng {
+    pub fn new(irq: u32, rng: Box<dyn rand::RngCore + Send>) -> Rng {
         Rng {
             status: 0,
             queue: Queue::new(),
             rng,
+            irq,
         }
     }
 
     /// Create a virtio entropy source device, fulfilled by OS's entropy source.
-    pub fn new_os() -> Rng {
-        Self::new(Box::new(rand::rngs::OsRng::new().unwrap()))
+    pub fn new_os(irq: u32) -> Rng {
+        Self::new(irq, Box::new(rand::rngs::OsRng::new().unwrap()))
     }
 
     /// Create a virtio entropy source device with a fixed seed.
     /// **This is not cryptographically secure!!!**
-    pub fn new_seeded() -> Rng {
-        Self::new(Box::new(rand::rngs::SmallRng::seed_from_u64(0xcafebabedeadbeef)))
+    pub fn new_seeded(irq: u32, seed: u64) -> Rng {
+        Self::new(irq, Box::new(rand::rngs::SmallRng::seed_from_u64(seed)))
     }
 }
 
@@ -55,6 +57,6 @@ impl Device for Rng {
             unsafe { self.queue.put(buffer); }
         }
 
-        crate::emu::PLIC.lock().trigger(2);
+        crate::emu::PLIC.lock().trigger(self.irq);
     }
 }
