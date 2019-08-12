@@ -2,6 +2,7 @@ use crate::io::IoMemorySync;
 use crate::io::plic::Plic;
 use crate::io::virtio::{Mmio, Block, Rng, P9};
 use spin::Mutex;
+use lazy_static::lazy_static;
 
 pub mod interp;
 mod abi;

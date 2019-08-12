@@ -1,4 +1,4 @@
-use crate::x86::{Register, Operand, Memory, Op, Location, Size};
+use x86::{Register, Operand, Memory, Op, Location, Size};
 
 const REG_RAX: usize = libc::REG_RAX as usize;
 const REG_RDX: usize = libc::REG_RDX as usize;
@@ -101,7 +101,7 @@ unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &m
 
     // Decode the faulting instruction
     let mut reader = MemReader(current_ip as usize);
-    let op = crate::x86::decode(&mut reader.iter_func());
+    let op = x86::decode(&mut reader.iter_func());
 
     let opr = match op {
         Op::Div(opr) |
@@ -136,7 +136,7 @@ unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &
 
     // Decode the faulting instruction
     let mut reader = MemReader(current_ip as usize);
-    let op = crate::x86::decode(&mut reader.iter_func());
+    let op = x86::decode(&mut reader.iter_func());
 
     // Replay the read/write, as if they are accessing directly to guest physical memory
     match op {

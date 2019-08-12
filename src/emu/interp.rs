@@ -4,6 +4,7 @@ use std::convert::TryInto;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicI64, AtomicU64};
 use std::sync::atomic::Ordering as MemOrder;
 use crate::util::AtomicExt;
+use lazy_static::lazy_static;
 
 /// A cache line. `{CacheLine}` is composed of atomic variables because we sometimes need cross-
 /// thread invalidation. Note that usually paddr isn't touched, but by keeping tag and paddr

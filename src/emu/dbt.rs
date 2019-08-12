@@ -6,9 +6,9 @@
 //! | [RSP-8]  | return address                                       |   |   |   |
 //! | [RSP-16] | next translated PC, when executing a helper function |   |   |   |
 
-use crate::x86::{Op as X86Op, Op::*, Register, Memory, Size, ConditionCode};
-use crate::x86::builder::*;
-use crate::riscv::Op;
+use x86::{Op as X86Op, Op::*, Register, Memory, Size, ConditionCode};
+use x86::builder::*;
+use riscv::Op;
 use super::interp::{Context, SharedContext, CACHE_LINE_LOG2_SIZE};
 use std::convert::TryFrom;
 
@@ -112,7 +112,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit(&mut self, op: X86Op) {
-        crate::x86::encode(op, &mut |x| {
+        x86::encode(op, &mut |x| {
             self.buffer[self.len] = x;
             self.len += 1;
         });
@@ -1535,12 +1535,12 @@ impl<'a> DbtCompiler<'a> {
                     eprintln!("       slow path:");
                 }
                 let mut pc_next = pc;
-                let op = crate::x86::decode(&mut || {
+                let op = x86::decode(&mut || {
                     let ret = self.buffer[pc_next];
                     pc_next += 1;
                     ret
                 });
-                crate::x86::disasm::print_instr((pc_offset + pc) as u64, &self.buffer[pc..pc_next], &op);
+                x86::disasm::print_instr((pc_offset + pc) as u64, &self.buffer[pc..pc_next], &op);
                 pc = pc_next;
             }
         }

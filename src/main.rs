@@ -1,20 +1,5 @@
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate lazy_static;
-extern crate spin;
-extern crate pretty_env_logger;
-extern crate rand;
-extern crate fnv;
-extern crate byteorder;
-extern crate serde;
-extern crate toml;
-
-extern crate softfp;
-extern crate p9;
-extern crate x86;
-extern crate riscv;
-extern crate fdt;
 
 pub mod io;
 #[macro_use]
@@ -64,13 +49,14 @@ pub fn get_flags() -> &'static Flags {
 }
 
 pub static mut CONTEXTS: &'static mut [*mut emu::interp::Context] = &mut [];
+static SHARED_CONTEXTS: RoCell<Vec<&'static emu::interp::SharedContext>> = unsafe { RoCell::new_uninit() };
 
 pub fn shared_context(id: usize) -> &'static emu::interp::SharedContext {
-    unsafe { &(*CONTEXTS[id]).shared }
+    SHARED_CONTEXTS[id]
 }
 
 pub fn core_count() -> usize {
-    let cnt = unsafe { CONTEXTS.len() };
+    let cnt = SHARED_CONTEXTS.len();
     assert_ne!(cnt, 0);
     cnt
 }
@@ -232,7 +218,10 @@ pub fn main() {
         fibers.push(fiber);
     }
 
-    unsafe { CONTEXTS = Box::leak(contexts.into_boxed_slice()) }
+    unsafe {
+        CONTEXTS = Box::leak(contexts.into_boxed_slice());
+        RoCell::init(&SHARED_CONTEXTS, CONTEXTS.iter().map(|x| &(**x).shared).collect());
+    }
 
     // These should only be initialised for full-system emulation
     if !get_flags().user_only {
