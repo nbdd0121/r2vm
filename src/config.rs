@@ -1,12 +1,17 @@
 use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
 
+fn default_core() -> usize { 4 }
 fn default_cmdline() -> String {
     "console=hvc0 rw root=/dev/vda".to_owned()
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Config {
+    /// Number of cores.
+    #[serde(default = "default_core")]
+    pub core: usize,
+
     /// Location of kernel.
     /// It should be of ELF format, not containing any firmware.
     pub kernel: PathBuf,

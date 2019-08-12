@@ -189,7 +189,7 @@ pub fn main() {
     let mut fibers = Vec::new();
     let mut contexts = Vec::new();
 
-    let num_cores = if get_flags().user_only { 1 } else { 4 };
+    let num_cores = if get_flags().user_only { 1 } else { CONFIG.core };
 
     // Create a fiber for event-driven simulation, e.g. timer, I/O
     let event_fiber = fiber::Fiber::new();
