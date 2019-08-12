@@ -3,12 +3,14 @@ mod mmio;
 mod block;
 mod rng;
 mod p9;
+mod network;
 
 pub use queue::{Queue, Buffer, BufferReader, BufferWriter};
 pub use mmio::Mmio;
 pub use block::Block;
 pub use rng::Rng;
 pub use self::p9::P9;
+pub use network::Network;
 
 #[derive(Clone, Copy)]
 pub enum DeviceId {
@@ -40,8 +42,11 @@ pub trait Device {
     /// Get the configuration space. In current implementation this is readonly.
     fn config_space(&self) -> &[u8];
 
-    /// Get queues associated with the device
-    fn queues(&mut self) -> &mut [Queue];
+    /// Get number of queues of this device
+    fn num_queues(&self) -> usize;
+
+    /// Operate on a queue associated with the device
+    fn with_queue(&mut self, idx: usize, f: &mut FnMut(&mut Queue));
 
     /// Reset a device
     fn reset(&mut self);

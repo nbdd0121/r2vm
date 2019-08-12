@@ -87,31 +87,32 @@ impl IoMemory for Mmio {
             ADDR_DRIVER_FEATURES_SEL => self.driver_features_sel as u32,
             ADDR_QUEUE_SEL           => self.queue_sel as u32,
             ADDR_QUEUE_NUM_MAX       => {
-                let queues = self.device.queues();
-                if self.queue_sel >= queues.len() {
+                if self.queue_sel >= self.device.num_queues() {
                     0
                 } else {
                     32768
                 }
             }
             ADDR_QUEUE_NUM | ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW ... ADDR_QUEUE_USED_HIGH => {
-                let queues = self.device.queues();
-                if self.queue_sel >= queues.len() {
+                if self.queue_sel >= self.device.num_queues() {
                     error!(target: "Mmio", "attempting to access unavailable queue {}", self.queue_sel);
                     return 0;
                 }
-                let queue = &mut queues[self.queue_sel];
-                match addr {
-                    ADDR_QUEUE_NUM        => queue.num as u32,
-                    ADDR_QUEUE_READY      => queue.ready as u32,
-                    ADDR_QUEUE_DESC_LOW   => queue.desc_addr.lo(),
-                    ADDR_QUEUE_DESC_HIGH  => queue.desc_addr.hi(),
-                    ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr.lo(),
-                    ADDR_QUEUE_AVAIL_HIGH => queue.avail_addr.hi(),
-                    ADDR_QUEUE_USED_LOW   => queue.used_addr.lo(),
-                    ADDR_QUEUE_USED_HIGH  => queue.used_addr.hi(),
-                    _ => unsafe { std::hint::unreachable_unchecked() }
-                }
+                let mut ret = 0;
+                self.device.with_queue(self.queue_sel, &mut |queue| {
+                    ret = match addr {
+                        ADDR_QUEUE_NUM        => queue.num as u32,
+                        ADDR_QUEUE_READY      => queue.ready as u32,
+                        ADDR_QUEUE_DESC_LOW   => queue.desc_addr.lo(),
+                        ADDR_QUEUE_DESC_HIGH  => queue.desc_addr.hi(),
+                        ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr.lo(),
+                        ADDR_QUEUE_AVAIL_HIGH => queue.avail_addr.hi(),
+                        ADDR_QUEUE_USED_LOW   => queue.used_addr.lo(),
+                        ADDR_QUEUE_USED_HIGH  => queue.used_addr.hi(),
+                        _ => unsafe { std::hint::unreachable_unchecked() }
+                    }
+                });
+                ret
             }
             // As currently config space is readonly, the interrupt status must be an used buffer.
             ADDR_INTERRUPT_STATUS    => 1,
@@ -166,31 +167,37 @@ impl IoMemory for Mmio {
                     error!(target: "Mmio", "DriverFeaturesSel register is set to {}", value)
                 },
             ADDR_QUEUE_SEL           => self.queue_sel = value as usize,
-            ADDR_QUEUE_NUM ... ADDR_QUEUE_NOTIFY | ADDR_QUEUE_DESC_LOW ... ADDR_QUEUE_USED_HIGH => {
-                let queues = self.device.queues();
-                if self.queue_sel >= queues.len() {
+            ADDR_QUEUE_NOTIFY        => {
+                if self.queue_sel >= self.device.num_queues() {
                     error!(target: "Mmio", "attempting to access unavailable queue {}", self.queue_sel);
                     return;
                 }
-                let queue = &mut queues[self.queue_sel];
-                match addr {
-                    ADDR_QUEUE_NUM           => {
-                        if value.is_power_of_two() && value <= 32768 {
-                            queue.num = value as u16
-                        } else {
-                            error!(target: "Mmio", "invalid queue size {}", value)
-                        }
-                    }
-                    ADDR_QUEUE_READY      => queue.ready = (value & 1) != 0,
-                    ADDR_QUEUE_NOTIFY     => self.device.notify(self.queue_sel),
-                    ADDR_QUEUE_DESC_LOW   => queue.desc_addr.set_lo(value),
-                    ADDR_QUEUE_DESC_HIGH  => queue.desc_addr.set_hi(value),
-                    ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr.set_lo(value),
-                    ADDR_QUEUE_AVAIL_HIGH => queue.avail_addr.set_hi(value),
-                    ADDR_QUEUE_USED_LOW   => queue.used_addr.set_lo(value),
-                    ADDR_QUEUE_USED_HIGH  => queue.used_addr.set_hi(value),
-                    _ => unsafe { std::hint::unreachable_unchecked() }
+                self.device.notify(self.queue_sel);
+            }
+            ADDR_QUEUE_NUM ... ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW ... ADDR_QUEUE_USED_HIGH => {
+                if self.queue_sel >= self.device.num_queues() {
+                    error!(target: "Mmio", "attempting to access unavailable queue {}", self.queue_sel);
+                    return;
                 }
+                self.device.with_queue(self.queue_sel, &mut |queue| {
+                    match addr {
+                        ADDR_QUEUE_NUM           => {
+                            if value.is_power_of_two() && value <= 32768 {
+                                queue.num = value as u16
+                            } else {
+                                error!(target: "Mmio", "invalid queue size {}", value)
+                            }
+                        }
+                        ADDR_QUEUE_READY      => queue.ready = (value & 1) != 0,
+                        ADDR_QUEUE_DESC_LOW   => queue.desc_addr.set_lo(value),
+                        ADDR_QUEUE_DESC_HIGH  => queue.desc_addr.set_hi(value),
+                        ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr.set_lo(value),
+                        ADDR_QUEUE_AVAIL_HIGH => queue.avail_addr.set_hi(value),
+                        ADDR_QUEUE_USED_LOW   => queue.used_addr.set_lo(value),
+                        ADDR_QUEUE_USED_HIGH  => queue.used_addr.set_hi(value),
+                        _ => unsafe { std::hint::unreachable_unchecked() }
+                    }
+                });
             }
             ADDR_INTERRUPT_ACK       => (),
             ADDR_STATUS              =>

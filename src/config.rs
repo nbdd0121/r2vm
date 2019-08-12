@@ -21,12 +21,15 @@ pub struct Config {
     pub cmdline: String,
 
     /// Block devices
+    #[serde(default)]
     pub drive: Vec<DriveConfig>,
 
     /// Random devices
+    #[serde(default)]
     pub random: Vec<RandomConfig>,
 
     /// 9p file sharing
+    #[serde(default)]
     pub share: Vec<ShareConfig>,
 }
 

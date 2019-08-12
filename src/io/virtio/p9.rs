@@ -46,9 +46,8 @@ impl Device for P9 {
     fn get_status(&self) -> u32 { self.status }
     fn set_status(&mut self, status: u32) { self.status = status }
     fn config_space(&self) -> &[u8] { &self.config }
-    fn queues(&mut self) -> &mut [Queue] {
-        std::slice::from_mut(&mut self.queue)
-    }
+    fn num_queues(&self) -> usize { 1 }
+    fn with_queue(&mut self, _idx: usize, f: &mut FnMut(&mut Queue)) { f(&mut self.queue) }
     fn reset(&mut self) {
         self.status = 0;
         self.queue.reset();
