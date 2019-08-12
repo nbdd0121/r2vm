@@ -22,24 +22,20 @@ lazy_static! {
 }
 
 lazy_static! {
-    pub static ref VIRTIO_BLK: Mutex<Mmio> = {
+    pub static ref VIRTIO: Vec<Mutex<Mmio>> = {
         assert!(!crate::get_flags().user_only);
+        let mut vec = Vec::new();
+
         let file = std::fs::OpenOptions::new()
                                         .read(true)
                                         .open("rootfs.img")
                                         .unwrap();
         let file = crate::io::block::Shadow::new(file);
-        Mutex::new(Mmio::new(Box::new(Block::new(Box::new(file)))))
-    };
+        vec.push(Mutex::new(Mmio::new(Box::new(Block::new(Box::new(file))))));
+        vec.push(Mutex::new(Mmio::new(Box::new(Rng::new_seeded()))));
+        vec.push(Mutex::new(Mmio::new(Box::new(P9::new("share", std::path::Path::new("./share"))))));
 
-    pub static ref VIRTIO_RNG: Mutex<Mmio> = {
-        assert!(!crate::get_flags().user_only);
-        Mutex::new(Mmio::new(Box::new(Rng::new_seeded())))
-    };
-
-    pub static ref VIRTIO_9P: Mutex<Mmio> = {
-        assert!(!crate::get_flags().user_only);
-        Mutex::new(Mmio::new(Box::new(P9::new("share", std::path::Path::new("./share")))))
+        vec
     };
 }
 
@@ -61,9 +57,7 @@ pub fn init() {
         assert_ne!(result, libc::MAP_FAILED);
     }
     lazy_static::initialize(&PLIC);
-    lazy_static::initialize(&VIRTIO_BLK);
-    lazy_static::initialize(&VIRTIO_RNG);
-    lazy_static::initialize(&VIRTIO_9P);
+    lazy_static::initialize(&VIRTIO);
 }
 
 pub fn device_tree() -> fdt::Node {
@@ -123,12 +117,12 @@ pub fn device_tree() -> fdt::Node {
     plic.add_prop("interrupts-extended", vec.as_slice());
     plic.add_prop("phandle", core_count + 1);
 
-    for i in 0..3 {
+    for i in 0..VIRTIO.len() {
         let addr: u64 = 0x80000000 + (i as u64) * 0x1000;
         let virtio = soc.add_node(format!("virtio@{:x}", addr));
         virtio.add_prop("reg", &[addr, 0x1000][..]);
         virtio.add_prop("compatible", "virtio,mmio");
-        virtio.add_prop("interrupts-extended", &[core_count + 1, i+1][..]);
+        virtio.add_prop("interrupts-extended", &[core_count + 1, (i+1) as u32][..]);
     }
 
     let memory = root.add_node("memory@200000");
@@ -162,17 +156,15 @@ pub fn write_memory<T: Copy>(addr: u64, value: T) {
 
 pub fn phys_read(addr: u64, size: u32) -> u64 {
     if addr > unsafe { IO_BOUNDARY } {
-        let addr = (addr - 0x80000000) as usize;
-        if addr >= 0x100000 {
-            PLIC.read_sync(addr - 0x100000, size)
+        if addr >= 0x80100000 {
+            PLIC.read_sync((addr - 0x80100000) as usize, size)
         } else {
-            if addr >= 0x2000 {
-                VIRTIO_9P.read_sync(addr - 0x2000, size)
-            } else if addr >= 0x1000 {
-                VIRTIO_RNG.read_sync(addr - 4096, size)
-            } else {
-                VIRTIO_BLK.read_sync(addr, size)
+            let idx = ((addr - 0x80000000) >> 12) as usize;
+            if idx > VIRTIO.len() {
+                error!("out-of-bound I/O memory read 0x{:x}", addr);
+                return 0;
             }
+            VIRTIO[idx].read_sync((addr & 4095) as usize, size)
         }
     } else {
         match size {
@@ -187,17 +179,15 @@ pub fn phys_read(addr: u64, size: u32) -> u64 {
 
 pub fn phys_write(addr: u64, value: u64, size: u32) {
     if addr > unsafe { IO_BOUNDARY } {
-        let addr = (addr - 0x80000000) as usize;
-        if addr >= 0x100000 {
-            PLIC.write_sync(addr - 0x100000, value, size)
+        if addr >= 0x80100000 {
+            PLIC.write_sync((addr - 0x80100000) as usize, value, size)
         } else {
-            if addr >= 0x2000 {
-                VIRTIO_9P.write_sync(addr - 0x2000, value, size)
-            } else if addr >= 0x1000 {
-                VIRTIO_RNG.write_sync(addr - 4096, value, size)
-            } else {
-                VIRTIO_BLK.write_sync(addr, value, size)
+            let idx = ((addr - 0x80000000) >> 12) as usize;
+            if idx > VIRTIO.len() {
+                error!("out-of-bound I/O memory write 0x{:x} = 0x{:x}", addr, value);
+                return;
             }
+            VIRTIO[idx].write_sync((addr & 4095) as usize, value, size)
         }
     } else {
         match size {
