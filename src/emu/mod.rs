@@ -60,12 +60,12 @@ lazy_static! {
 
 /// This governs the boundary between RAM and I/O memory. If an address is strictly above this
 /// location, then it is considered I/O. For user-space applications, we consider all memory
-/// locations as RAM, so the default value here is `u64::max_value()`.
-static mut IO_BOUNDARY: u64 = u64::max_value();
+/// locations as RAM, so the default value here is `usize::max_value()`.
+static IO_BOUNDARY: crate::util::RoCell<usize> = crate::util::RoCell::new(usize::max_value());
 
 pub fn init() {
     unsafe {
-        IO_BOUNDARY = 0x7fffffff;
+        crate::util::RoCell::replace(&IO_BOUNDARY, 0x7fffffff);
 
         let result = libc::mmap(
             0x80000000 as *mut libc::c_void, 0x80000000,
@@ -148,69 +148,58 @@ pub fn device_tree() -> fdt::Node {
     root
 }
 
-// TODO: Remove these 4 functions
-
-unsafe fn read_memory_unsafe<T: Copy>(addr: u64) -> T {
-    let ptr = addr as usize as *const T;
-    std::ptr::read_volatile(ptr)
+// TODO: Remove these 2 functions
+pub fn read_memory<T: Copy>(addr: usize) -> T {
+    assert!(addr <= *IO_BOUNDARY);
+    unsafe { std::ptr::read(addr as *const T) }
 }
 
-unsafe fn write_memory_unsafe<T: Copy>(addr: u64, value: T) {
-    let ptr = addr as usize as *mut T;
-    std::ptr::write_volatile(ptr, value)
+pub fn write_memory<T: Copy>(addr: usize, value: T) {
+    assert!(addr <= *IO_BOUNDARY);
+    unsafe { std::ptr::write_volatile(addr as *mut T, value) }
 }
 
-pub fn read_memory<T: Copy>(addr: u64) -> T {
-    assert!(addr <= unsafe { IO_BOUNDARY });
-    unsafe { read_memory_unsafe(addr) }
-}
-
-pub fn write_memory<T: Copy>(addr: u64, value: T) {
-    assert!(addr <= unsafe { IO_BOUNDARY });
-    unsafe { write_memory_unsafe(addr, value) }
-}
-
-pub fn phys_read(addr: u64, size: u32) -> u64 {
-    if addr > unsafe { IO_BOUNDARY } {
+pub fn phys_read(addr: usize, size: u32) -> u64 {
+    if addr > *IO_BOUNDARY {
         if addr >= 0x80100000 {
-            PLIC.read_sync((addr - 0x80100000) as usize, size)
+            PLIC.read_sync(addr - 0x80100000, size)
         } else {
-            let idx = ((addr - 0x80000000) >> 12) as usize;
+            let idx = (addr - 0x80000000) >> 12;
             if idx > VIRTIO.len() {
                 error!("out-of-bound I/O memory read 0x{:x}", addr);
                 return 0;
             }
-            VIRTIO[idx].read_sync((addr & 4095) as usize, size)
+            VIRTIO[idx].read_sync(addr & 4095, size)
         }
     } else {
         match size {
-            1 => unsafe { read_memory_unsafe::<u8>(addr) as u64 },
-            2 => unsafe { read_memory_unsafe::<u16>(addr) as u64 },
-            4 => unsafe { read_memory_unsafe::<u32>(addr) as u64 },
-            8 => unsafe { read_memory_unsafe::<u64>(addr) },
+            1 => unsafe { std::ptr::read_volatile(addr as *const u8) as u64 },
+            2 => unsafe { std::ptr::read_volatile(addr as *const u16) as u64 },
+            4 => unsafe { std::ptr::read_volatile(addr as *const u32) as u64 },
+            8 => unsafe { std::ptr::read_volatile(addr as *const u64) },
             _ => unreachable!(),
         }
     }
 }
 
-pub fn phys_write(addr: u64, value: u64, size: u32) {
-    if addr > unsafe { IO_BOUNDARY } {
+pub fn phys_write(addr: usize, value: u64, size: u32) {
+    if addr > *IO_BOUNDARY {
         if addr >= 0x80100000 {
-            PLIC.write_sync((addr - 0x80100000) as usize, value, size)
+            PLIC.write_sync(addr - 0x80100000, value, size)
         } else {
-            let idx = ((addr - 0x80000000) >> 12) as usize;
+            let idx = (addr - 0x80000000) >> 12;
             if idx > VIRTIO.len() {
                 error!("out-of-bound I/O memory write 0x{:x} = 0x{:x}", addr, value);
                 return;
             }
-            VIRTIO[idx].write_sync((addr & 4095) as usize, value, size)
+            VIRTIO[idx].write_sync(addr & 4095, value, size)
         }
     } else {
         match size {
-            1 => unsafe { write_memory_unsafe(addr, value as u8) },
-            2 => unsafe { write_memory_unsafe(addr, value as u16) },
-            4 => unsafe { write_memory_unsafe(addr, value as u32) },
-            8 => unsafe { write_memory_unsafe(addr, value) },
+            1 => unsafe { std::ptr::write_volatile(addr as *mut _, value as u8) },
+            2 => unsafe { std::ptr::write_volatile(addr as *mut _, value as u16) },
+            4 => unsafe { std::ptr::write_volatile(addr as *mut _, value as u32) },
+            8 => unsafe { std::ptr::write_volatile(addr as *mut _, value) },
             _ => unreachable!(),
         }
     }

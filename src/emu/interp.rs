@@ -349,7 +349,7 @@ fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, Tr
     // MMU off
     if (ctx.satp >> 60) == 0 { return Ok(addr) }
 
-    let pte = walk_page(ctx.satp, addr >> 12, |addr| crate::emu::read_memory(addr));
+    let pte = walk_page(ctx.satp, addr >> 12, |addr| crate::emu::read_memory(addr as usize));
     match check_permission(pte, access, ctx.prv as u8, ctx.sstatus) {
         Ok(_) => Ok(pte >> 10 << 12 | addr & 4095),
         Err(_) => Err(match access {
@@ -594,7 +594,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             0
         }
         4 => {
-            let mask: u64 = crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap());
+            let mask: u64 = crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize);
             for i in 0..crate::core_count() {
                 if mask & (1 << i) == 0 { continue }
                 crate::shared_context(i).assert(2);
@@ -605,7 +605,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
-                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap())
+                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize)
             };
             for i in 0..crate::core_count() {
                 if mask & (1 << i) == 0 { continue }
@@ -617,7 +617,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
-                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap())
+                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize)
             };
             global_sfence(mask, None, if arg2 == 4096 { Some(arg1 >> 12) } else { None });
             0
@@ -626,7 +626,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
-                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap())
+                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize)
             };
             global_sfence(mask, Some(arg3 as u16), if arg2 == 4096 { Some(arg1 >> 12) } else { None });
             0
@@ -1608,14 +1608,14 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> unsafe extern 
     compiler.begin(phys_pc);
 
     loop {
-        let bits = crate::emu::read_memory::<u16>(phys_pc_end);
+        let bits = crate::emu::read_memory::<u16>(phys_pc_end as usize);
         let (mut op, c, bits) = if bits & 3 == 3 {
             // The instruction will cross page boundary.
             if phys_pc_end & 4095 == 4094 {
                 compiler.end_cross(bits);
                 break
             }
-            let hi_bits = crate::emu::read_memory::<u16>(phys_pc_end + 2);
+            let hi_bits = crate::emu::read_memory::<u16>((phys_pc_end + 2) as usize);
             let bits = (hi_bits as u32) << 16 | bits as u32;
             let op = riscv::decode::decode(bits);
             if crate::get_flags().disassemble {
