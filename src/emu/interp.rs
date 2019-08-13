@@ -524,13 +524,21 @@ impl ICache {
 lazy_static! {
     static ref ICACHE: Vec<spin::Mutex<ICache>> = {
         let core_count = crate::core_count();
-        let ptr = unsafe { libc::mmap(0x7ffec0000000 as *mut _, (HEAP_SIZE * core_count) as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
+        let size = HEAP_SIZE * core_count;
+        let ptr = unsafe { libc::mmap(0x7ffec0000000 as *mut _, size as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
         assert_eq!(ptr, 0x7ffec0000000 as *mut _);
         let ptr = ptr as usize;
         let mut vec = Vec::with_capacity(core_count);
         for i in 0..core_count {
             vec.push(spin::Mutex::new(ICache::new(ptr + HEAP_SIZE * i)));
         }
+
+        if crate::get_flags().perf {
+            use std::io::Write;
+            let mut perf_map = std::fs::File::create(format!("/tmp/perf-{}.map", std::process::id())).unwrap();
+            writeln!(perf_map, "{:x} {:x} (dbt code)", ptr, size).unwrap();
+        }
+
         vec
     };
 }

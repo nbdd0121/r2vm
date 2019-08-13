@@ -17,6 +17,7 @@ Options:
                         call to helper function instead.
   --strace              Log system calls.
   --disassemble         Log decoded instructions.
+  --perf                Generate /tmp/perf-<PID>.map for perf tool.
   --lockstep            Use lockstep non-threaded mode for execution.
   --sysroot             Change the sysroot to a non-default value.
   --help                Display this help message.
@@ -33,6 +34,9 @@ pub struct Flags {
     // If we are only emulating userspace code
     user_only: bool,
 
+    /// If perf map should be generated
+    perf: bool,
+
     // Whether threaded mode should be used
     thread: std::sync::atomic::AtomicBool,
 }
@@ -41,6 +45,7 @@ static mut FLAGS: Flags = Flags {
     no_direct_memory_access: true,
     disassemble: false,
     user_only: false,
+    perf: false,
     thread: std::sync::atomic::AtomicBool::new(true),
 };
 
@@ -123,6 +128,7 @@ pub fn main() {
             "--disassemble" => unsafe {
                 FLAGS.disassemble = true;
             }
+            "--perf" => unsafe { FLAGS.perf = true },
             "--lockstep" => unsafe {
                 FLAGS.thread.store(false, std::sync::atomic::Ordering::Relaxed);
             }
