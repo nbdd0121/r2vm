@@ -11,15 +11,33 @@ pub struct Slirp {
 }
 
 struct Inner {
-    slirp: slirp::context::Context<Handler>,
+    slirp: Option<slirp::context::Context<Handler>>,
     stop: bool,
 }
 
-struct Handler(Sender<Vec<u8>>);
+struct Handler(Sender<Vec<u8>>, Arc<Mutex<Inner>>);
+
+struct Timer {
+    inner: Arc<Mutex<Inner>>,
+    func: Box<dyn FnMut()>,
+    time: u64,
+}
+
+unsafe impl Send for Timer {}
+
+impl Timer {
+    fn check(&mut self) {
+        if crate::EVENT_LOOP.time() >= self.time {
+            let _guard = self.inner.lock().unwrap();
+            (self.func)();
+            self.time = u64::max_value()
+        }
+    }
+}
 
 #[allow(unused_variables)]
 impl slirp::context::Handler for Handler {
-    type Timer = ();
+    type Timer = Arc<Mutex<Timer>>;
 
     fn clock_get_ns(&mut self) -> i64 {
         crate::EVENT_LOOP.time() as i64 * 1000
@@ -39,20 +57,27 @@ impl slirp::context::Handler for Handler {
         error!(target: "slirp", "{}", msg);
     }
 
-    fn notify(&mut self) {
-        unimplemented!()
-    }
+    fn notify(&mut self) {}
 
     fn timer_new(&mut self, func: Box<dyn FnMut()>) -> Box<Self::Timer> {
-        unimplemented!()
+        Box::new(Arc::new(Mutex::new(Timer {
+            inner: self.1.clone(),
+            func,
+            time: u64::max_value(),
+        })))
     }
 
     fn timer_mod(&mut self, timer: &mut Box<Self::Timer>, expire_time: i64) {
-        unimplemented!()
+        // Compute the new expiration time
+        let time = crate::EVENT_LOOP.time() + (expire_time * 1000) as u64;
+        let mut inner = timer.lock().unwrap();
+        inner.time = time;
+        let timer_clone = timer.clone();
+        crate::EVENT_LOOP.queue_time(time, Box::new(move || timer_clone.lock().unwrap().check()));
     }
 
     fn timer_free(&mut self, timer: Box<Self::Timer>) {
-        unimplemented!()
+        timer.lock().unwrap().time = u64::max_value();
     }
 }
 
@@ -64,7 +89,7 @@ fn poll_loop(slirp: Arc<Mutex<Inner>>) {
 
         let mut vec = Vec::new();
         let mut timeout = i32::max_value() as u32;
-        guard.slirp.pollfds_fill(&mut timeout, |fd, events| {
+        guard.slirp.as_mut().unwrap().pollfds_fill(&mut timeout, |fd, events| {
             let mut poll = 0;
             if events.has_in() { poll |= libc::POLLIN; }
             if events.has_out() { poll |= libc::POLLOUT; }
@@ -83,7 +108,7 @@ fn poll_loop(slirp: Arc<Mutex<Inner>>) {
         let err = unsafe { libc::poll(vec.as_mut_ptr(), vec.len() as _, timeout as _) };
         guard = slirp.lock().unwrap();
 
-        guard.slirp.pollfds_poll(err == -1, |idx| {
+        guard.slirp.as_mut().unwrap().pollfds_poll(err == -1, |idx| {
             let revents = vec[idx as usize].revents;
             use slirp::context::PollEvents;
             let mut ret = PollEvents::empty();
@@ -109,11 +134,9 @@ impl Slirp {
             domainname: None,
         };
         let (tx, rx) = bounded(2);
-        let slirp = slirp::context::Context::new(&slirp_opt, Handler(tx));
-        let inner = Arc::new(Mutex::new(Inner {
-            slirp,
-            stop: false,
-        }));
+        let inner = Arc::new(Mutex::new(Inner { slirp: None, stop: false }));
+        let slirp = slirp::context::Context::new(&slirp_opt, Handler(tx, inner.clone()));
+        inner.lock().unwrap().slirp = Some(slirp);
         let clone = inner.clone();
         std::thread::spawn(move || poll_loop(clone));
         Self {
@@ -131,7 +154,7 @@ impl Drop for Slirp {
 
 impl super::Network for Slirp {
     fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.lock().unwrap().slirp.input(buf);
+        self.inner.lock().unwrap().slirp.as_mut().unwrap().input(buf);
         Ok(buf.len())
     }
 
