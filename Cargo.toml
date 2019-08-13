@@ -24,6 +24,7 @@ toml = "0.5"
 libslirp-sys = { version = "4.0", optional = true }
 libslirp = { path = "lib/libslirp-rs", optional = true }
 crossbeam-channel = { version = "0.3", optional = true }
+eui48 = "0.4"
 softfp = { path = "lib/softfp" }
 p9 = { path = "lib/p9" }
 x86 = { path = "lib/x86" }

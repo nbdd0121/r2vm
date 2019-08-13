@@ -4,6 +4,11 @@ use crate::io::virtio::{Mmio, Block, Rng, P9};
 use spin::Mutex;
 use lazy_static::lazy_static;
 
+#[cfg(feature = "slirp")]
+use crate::io::virtio::Network;
+#[cfg(feature = "slirp")]
+use crate::io::network::Slirp;
+
 pub mod interp;
 mod abi;
 mod event;
@@ -21,6 +26,18 @@ lazy_static! {
         Mutex::new(Plic::new(crate::core_count()))
     };
 }
+
+#[cfg(feature = "slirp")]
+fn init_network(vec: &mut Vec<Mutex<Mmio>>) {
+    for config in crate::CONFIG.network.iter() {
+        let mac = eui48::MacAddress::parse_str(&config.mac).expect("unexpected mac address").to_array();
+        let irq = (vec.len() + 1) as u32;
+        vec.push(Mutex::new(Mmio::new(Box::new(Network::new(irq, Slirp::new(), mac)))));
+    }
+}
+
+#[cfg(not(feature = "slirp"))]
+fn init_network(_vec: &mut Vec<Mutex<Mmio>>) {}
 
 lazy_static! {
     pub static ref VIRTIO: Vec<Mutex<Mmio>> = {
@@ -54,6 +71,8 @@ lazy_static! {
             let dev = Box::new(P9::new((vec.len() + 1) as u32, &config.tag, &config.path));
             vec.push(Mutex::new(Mmio::new(dev)));
         }
+
+        init_network(&mut vec);
 
         vec
     };

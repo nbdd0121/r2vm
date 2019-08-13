@@ -31,6 +31,10 @@ pub struct Config {
     /// 9p file sharing
     #[serde(default)]
     pub share: Vec<ShareConfig>,
+
+    /// Network adapters
+    #[serde(default)]
+    pub network: Vec<NetworkConfig>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -68,4 +72,15 @@ pub struct ShareConfig {
 
     /// Path to the shared directory
     pub path: PathBuf,
+}
+
+fn default_mac() -> String {
+    "02:00:00:00:00:01".to_owned()
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NetworkConfig {
+    /// MAC address. For convience, we first parse it as string.
+    #[serde(default = "default_mac")]
+    pub mac: String,
 }
