@@ -102,7 +102,7 @@ pub fn main() {
 
     // Ignore interpreter name
     let mut item = args.next();
-    let interp_name = item.unwrap();
+    let interp_name = item.expect("program name should not be absent");
 
     let mut sysroot = String::from("/opt/riscv/sysroot");
 
@@ -142,33 +142,42 @@ pub fn main() {
         item = args.next();
     }
 
-    if item.is_none() {
+    let program_name = item.unwrap_or_else(|| {
         eprintln!(usage_string!(), interp_name);
         std::process::exit(1);
-    }
-
-    let program_name = item.unwrap();
+    });
 
     unsafe {
         RoCell::init(&emu::syscall::EXEC_PATH, CString::new(program_name.as_str()).unwrap());
         RoCell::init(&emu::syscall::SYSROOT, sysroot.into());
     }
 
-    let mut loader = emu::loader::Loader::new(program_name.as_ref()).unwrap();
+    let mut loader = emu::loader::Loader::new(program_name.as_ref()).unwrap_or_else(|err| {
+        eprintln!("{}: cannot load {}: {}", interp_name, program_name, err);
+        std::process::exit(1);
+    });
+
     // We accept two types of input. The file can either be a user-space ELF file,
     // or it can be a config file.
-    if loader.validate_elf().is_ok() {
-        if loader.guess_kernel() {
-            panic!("For full-system emulation, please use a config file")
+    if loader.is_elf() {
+        if let Err(msg) = loader.validate_elf() {
+            eprintln!("{}: {}", interp_name, msg);
+            std::process::exit(1);
         }
         unsafe { FLAGS.user_only = true }
     } else {
         // Full-system emulation is needed. Originally we uses kernel path as "program name"
         // directly, but as full-system emulation requires many peripheral devices as well,
         // we decided to only accept config files.
-        let config: config::Config = toml::from_slice(loader.as_slice()).expect("Invalid config file");
+        let config: config::Config = toml::from_slice(loader.as_slice()).unwrap_or_else(|err| {
+            eprintln!("{}: invalid config file: {}", interp_name, err);
+            std::process::exit(1);
+        });
         unsafe { RoCell::init(&CONFIG, config) };
-        loader = emu::loader::Loader::new(&CONFIG.kernel).unwrap();
+        loader = emu::loader::Loader::new(&CONFIG.kernel).unwrap_or_else(|err| {
+            eprintln!("{}: cannot load {}: {}", interp_name, CONFIG.kernel.to_string_lossy(), err);
+            std::process::exit(1);
+        });
     }
 
     // Create fibers for all threads

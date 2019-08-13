@@ -73,13 +73,19 @@ impl Loader {
         })
     }
 
-    pub fn validate_elf(&self) -> Result<(), &'static str> {
-        let header = unsafe { &*(self.memory as *const libc::Elf64_Ehdr) };
+    pub fn is_elf(&self) -> bool {
+        let header = self.ehdr();
 
         // Check the ELF magic numbers
         if &header.e_ident[0..4] != "\x7FELF".as_bytes() {
-            return Err("the program to be loaded is not elf.");
+            return false
         }
+
+        true
+    }
+
+    pub fn validate_elf(&self) -> Result<(), &'static str> {
+        let header = self.ehdr();
 
         // We can only proceed with executable or dynamic binary.
         if header.e_type != ET_EXEC && header.e_type != ET_DYN {
@@ -91,13 +97,13 @@ impl Loader {
             return Err("the binary is not for RISC-V.");
         }
 
-        Ok(())
-    }
-
-    /// Guest if the elf file is a user-space program or a kernel.
-    pub fn guess_kernel(&self) -> bool {
+        // Make sure we are not loading a kernel - kernel must be specified using config files.
         // We use a very simple heuristics here: user-space programs usually isn't located that high.
-        (self.ehdr().e_entry as i64) < 0
+        if (header.e_entry as i64) < 0 {
+            return Err("config must be used for full-system emulation");
+        }
+
+        Ok(())
     }
 
     fn find_interpreter(&self) -> Option<&str> {
@@ -422,12 +428,11 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>) {
             panic!("mmap failed while loading");
         }
 
-        let size = match file.validate_elf() {
-            Ok(_) => file.load_kernel(0x200000),
-            Err(_) => {
-                file.load_bin(0x200000);
-                file.file_size
-            }
+        let size = if file.is_elf() {
+            file.load_kernel(0x200000)
+        } else {
+            file.load_bin(0x200000);
+            file.file_size
         };
 
         let device_tree = fdt::encode(&crate::emu::device_tree());
