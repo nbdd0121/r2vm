@@ -15,9 +15,11 @@ helper_trap:
     shr ebx, 16
     movsx rax, bx
     add [rbp + 0x108], rax
-    call trap
+
     # Pop out trapping PC
     add rsp, 8
+
+    call trap
     ret
 
 # RSI -> vaddr
@@ -40,26 +42,20 @@ helper_write_misalign:
 .global helper_step
 helper_step:
     mov rdi, rbp
+    sub rsp, 8
     call riscv_step
+    add rsp, 8
     test al, al
     jnz helper_trap
-    ret
-
-.global helper_translate_cache_miss
-.extern translate_cache_miss
-helper_translate_cache_miss:
-    mov rdi, rbp
-    call translate_cache_miss
-    test al, al
-    jnz helper_trap
-    mov rsi, rdx
     ret
 
 .global helper_icache_miss
 .extern insn_translate_cache_miss
 helper_icache_miss:
     mov rdi, rbp
+    sub rsp, 8
     call insn_translate_cache_miss
+    add rsp, 8
     test al, al
     jnz helper_trap
     mov rsi, rdx
@@ -77,7 +73,9 @@ helper_icache_cross_miss:
     mov rdx, [rsp]
     movsx rax, dword ptr [rdx + 1]
     lea rdx, [rdx+rax+5]
+    sub rsp, 8
     call icache_cross_miss
+    add rsp, 8
     ret
 
 .global helper_icache_wrong
@@ -86,7 +84,9 @@ helper_icache_wrong:
     mov rdi, rbp
     # Load return address into RSI
     mov rsi, [rsp]
+    sub rsp, 8
     call find_block_and_patch
+    add rsp, 8
     ret
 
 
@@ -96,7 +96,9 @@ helper_icache_patch2:
     mov rdi, rbp
     # Load return address into RSI
     mov rsi, [rsp]
+    sub rsp, 8
     call find_block_and_patch2
+    add rsp, 8
     sub qword ptr [rsp], 5
     ret
 
@@ -104,16 +106,14 @@ helper_icache_patch2:
 .extern check_interrupt
 helper_check_interrupt:
     mov rdi, rbp
-    sub rsp, 8
     call check_interrupt
     test al, al
     jnz 1f
-    add rsp, 8
     ret
 1:
     # If check_interrupt returns Err(()), it indicates that we would like to shutdown.
     # We therefore need to return from fiber_interp_run.
-    add rsp, 24
+    add rsp, 8
     ret
 
 .global helper_san_fail
@@ -126,6 +126,6 @@ fiber_interp_run:
     mov rdi, rbp
     sub rsp, 8
     call find_block
-    call rax
     add rsp, 8
+    call rax
     jmp fiber_interp_run

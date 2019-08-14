@@ -37,9 +37,10 @@ fn memory_of_pc() -> Memory {
 extern "C" {
     fn fiber_yield_raw();
     fn helper_step();
+    fn helper_trap();
     fn helper_read_misalign();
     fn helper_write_misalign();
-    fn helper_translate_cache_miss();
+    fn translate_cache_miss();
     fn helper_icache_miss();
     fn helper_icache_cross_miss();
     fn helper_icache_wrong();
@@ -493,12 +494,17 @@ impl<'a> DbtCompiler<'a> {
         let label_miss = self.label();
         self.patch(jcc_miss, label_miss);
 
+        self.emit(Mov(Reg(Register::RDI), OpReg(Register::RBP)));
         self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
-        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-        self.emit_helper_call(helper_translate_cache_miss);
+        self.emit_helper_call(translate_cache_miss);
+        self.emit(Mov(Reg(Register::RSI), OpReg(Register::RDX)));
+        self.emit(Test(Reg(Register::AL), OpReg(Register::AL)));
 
-        let jmp_fin = self.emit_jmp_long();
-        self.patch(jmp_fin, label_fin);
+        let jcc_fin = self.emit_jcc_long(ConditionCode::Equal);
+        self.patch(jcc_fin, label_fin);
+
+        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
+        self.emit_helper_call(helper_trap);
     }
 
     //
@@ -572,12 +578,17 @@ impl<'a> DbtCompiler<'a> {
         let label_miss = self.label();
         self.patch(jcc_miss, label_miss);
 
+        self.emit(Mov(Reg(Register::RDI), OpReg(Register::RBP)));
         self.emit(Mov(Reg(Register::EDX), Imm(1)));
-        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-        self.emit_helper_call(helper_translate_cache_miss);
+        self.emit_helper_call(translate_cache_miss);
+        self.emit(Mov(Reg(Register::RSI), OpReg(Register::RDX)));
+        self.emit(Test(Reg(Register::AL), OpReg(Register::AL)));
 
-        let jmp_fin = self.emit_jmp_long();
-        self.patch(jmp_fin, label_fin);
+        let jcc_fin = self.emit_jcc_long(ConditionCode::Equal);
+        self.patch(jcc_fin, label_fin);
+
+        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
+        self.emit_helper_call(helper_trap);
     }
 
     //
