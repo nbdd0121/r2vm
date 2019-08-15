@@ -14,14 +14,23 @@ use std::convert::TryFrom;
 
 const PAGE_CROSS_RESERVATION: usize = 256;
 
+macro_rules! rbp_offset_of {
+    ($e:ident) => {
+        offset_of!(Context, $e) as i32
+    };
+    (shared.$e:ident) => {
+        offset_of!(Context, shared) + offset_of!(SharedContext, $e)
+    };
+}
+
 macro_rules! memory_of {
     ($e:ident) => {
         Register::RBP + offset_of!(Context, $e) as i32
     };
-    (shared.$e:ident) => {
+    (shared.$e:ident) => {{
         let offset = offset_of!(Context, shared) + offset_of!(SharedContext, $e);
         Register::RBP + offset as i32
-    };
+    }};
 }
 
 #[inline]
@@ -96,8 +105,13 @@ impl Drop for PlaceHolder {
 }
 
 enum SlowPath {
-    Load(u32, Option<PlaceHolder>, PlaceHolder, Label),
-    Store(u32, Option<PlaceHolder>, PlaceHolder, Label),
+    DCache {
+        ebx: u32,
+        write: bool,
+        jcc_misalign: Option<PlaceHolder>,
+        jcc_miss: PlaceHolder,
+        label_fin: Label
+    },
     /// Slow path for a icache access miss
     ICache(u32, PlaceHolder, Label),
     Trap(u32, PlaceHolder),
@@ -465,18 +479,15 @@ impl<'a> DbtCompiler<'a> {
         self.emit_helper_call(helper_trap);
     }
 
-    // #region Base Opcode = LOAD
+    // #region Base Opcode = LOAD, STORE
 
-    /// Shared routine for generating load code. Note that this routine does not perform the
-    /// actual load - it merely computes the address, translate to physical and leave it at RSI
-    fn emit_load(&mut self, rs1: u8, imm: i32, size: Size) {
-        self.minstret += 1;
-        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, line);
-
-        // RSI = addr
-        self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
-        if imm != 0 { self.emit(Add(Reg(Register::RSI), Imm(imm as i64))); }
-
+    /// Attempt to translate RSI into physical address using D-Cache.
+    /// This function will also check alignment.
+    ///
+    /// # Register Specification
+    /// Destroy all volatile registers
+    fn dcache_access(&mut self, size: Size, write: bool) {
+        // XXX: In direct mode, self-modifying code be wrong!!!
         if cfg!(feature = "direct") && crate::get_flags().user_only { return }
 
         // Check for alignment
@@ -484,6 +495,8 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Test(Reg(Register::ESI), Imm(size.bytes() as i64 - 1)));
             Some(self.emit_jcc_long(ConditionCode::NotEqual))
         } else { None };
+
+        let offset = rbp_offset_of!(shared.line);
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
@@ -494,10 +507,16 @@ impl<'a> DbtCompiler<'a> {
         self.emit(And(Reg(Register::EAX), Imm(1023)));
         self.emit(Shl(Reg(Register::EAX), Imm(4)));
 
-        // RDX = ctx.line[(idx & 1023)].tag >> 1
-        self.emit(Mov(Reg(Register::RDX), OpMem(Register::RBP + Register::RAX + offset as i32)));
-        self.emit(Shr(Reg(Register::RDX), Imm(1)));
-        self.emit(Cmp(Reg(Register::RDX), OpReg(Register::RCX)));
+        if write {
+            // RCX = idx << 1
+            self.emit(Add(Reg(Register::RCX), OpReg(Register::RCX)));
+            self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
+        } else {
+            // RDX = ctx.line[(idx & 1023)].tag >> 1
+            self.emit(Mov(Reg(Register::RDX), OpMem(Register::RBP + Register::RAX + offset as i32)));
+            self.emit(Shr(Reg(Register::RDX), Imm(1)));
+            self.emit(Cmp(Reg(Register::RDX), OpReg(Register::RCX)));
+        }
         let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
 
         // RSI = ctx.line[(idx & 1023)].paddr ^ addr
@@ -505,23 +524,30 @@ impl<'a> DbtCompiler<'a> {
         let label_fin = self.label();
 
         let ebx = self.get_ebx();
-        self.slow_path.push(SlowPath::Load(ebx, jcc_misalign, jcc_miss, label_fin));
+        self.slow_path.push(SlowPath::DCache { ebx, write, jcc_misalign, jcc_miss, label_fin });
     }
 
-    fn emit_load_slow(&mut self, ebx: u32, jcc_misalign: Option<PlaceHolder>, jcc_miss: PlaceHolder, label_fin: Label) {
+    fn dcache_access_slow(
+        &mut self, ebx: u32, write: bool,
+        jcc_misalign: Option<PlaceHolder>, jcc_miss: PlaceHolder, label_fin: Label
+    ) {
         if let Some(jcc_misalign) = jcc_misalign {
             let label_misalign = self.label();
             self.patch(jcc_misalign, label_misalign);
 
             self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-            self.emit_helper_jmp(helper_read_misalign);
+            self.emit_helper_jmp(if write { helper_write_misalign } else { helper_read_misalign });
         }
 
         let label_miss = self.label();
         self.patch(jcc_miss, label_miss);
 
         self.emit(Mov(Reg(Register::RDI), OpReg(Register::RBP)));
-        self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
+        if write {
+            self.emit(Mov(Reg(Register::EDX), Imm(1)));
+        } else {
+            self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
+        }
         self.emit_helper_call(translate_cache_miss);
         self.emit(Mov(Reg(Register::RSI), OpReg(Register::RDX)));
         self.emit(Test(Reg(Register::AL), OpReg(Register::AL)));
@@ -533,49 +559,26 @@ impl<'a> DbtCompiler<'a> {
         self.emit_helper_call(helper_trap);
     }
 
-    //
-    // #endregion
-
-    // #region Base Opcode = STORE
-    //
-
-    fn emit_store(&mut self, rs1: u8, rs2: u8, imm: i32, size: Size) {
+    /// Shared routine for generating load code. Note that this routine does not perform the
+    /// actual load - it merely computes the address, translate to physical and leave it at RSI
+    fn emit_load(&mut self, rs1: u8, imm: i32, size: Size) {
         self.minstret += 1;
-        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, line);
 
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
         if imm != 0 { self.emit(Add(Reg(Register::RSI), Imm(imm as i64))); }
 
-        // XXX: In direct mode, self-modifying code be wrong!!!
-        if cfg!(not(feature = "direct")) || !crate::get_flags().user_only {
-            // Check for alignment
-            let jcc_misalign = if size != Size::Byte {
-                self.emit(Test(Reg(Register::ESI), Imm(size.bytes() as i64 - 1)));
-                Some(self.emit_jcc_long(ConditionCode::NotEqual))
-            } else { None };
+        self.dcache_access(size, false);
+    }
 
-            // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
-            self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-            self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
+    fn emit_store(&mut self, rs1: u8, rs2: u8, imm: i32, size: Size) {
+        self.minstret += 1;
 
-            // EAX = (idx & 1023) * 16
-            self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
-            self.emit(And(Reg(Register::EAX), Imm(1023)));
-            self.emit(Shl(Reg(Register::EAX), Imm(4)));
+        // RSI = addr
+        self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_register(rs1))));
+        if imm != 0 { self.emit(Add(Reg(Register::RSI), Imm(imm as i64))); }
 
-            // RCX = idx << 1
-            self.emit(Add(Reg(Register::RCX), OpReg(Register::RCX)));
-            self.emit(Cmp(Reg(Register::RCX), OpMem(Register::RBP + Register::RAX + offset as i32)));
-            let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
-
-            // RSI = ctx.line[(idx & 1023)].paddr ^ addr
-            self.emit(Xor(Reg(Register::RSI), OpMem(Register::RBP + Register::RAX + (offset + 8) as i32)));
-            let label_fin = self.label();
-
-            let ebx = self.get_ebx();
-            self.slow_path.push(SlowPath::Store(ebx, jcc_misalign, jcc_miss, label_fin));
-        }
+        self.dcache_access(size, true);
 
         let reg = match size {
             Size::Byte => Register::DL,
@@ -590,31 +593,6 @@ impl<'a> DbtCompiler<'a> {
 
         self.emit(Mov(Reg(reg), OpMem(smem)));
         self.emit(Mov(Mem(mem), OpReg(reg)));
-    }
-
-    fn emit_store_slow(&mut self, ebx: u32, jcc_misalign: Option<PlaceHolder>, jcc_miss: PlaceHolder, label_fin: Label) {
-        if let Some(jcc_misalign) = jcc_misalign {
-            let label_misalign = self.label();
-            self.patch(jcc_misalign, label_misalign);
-
-            self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-            self.emit_helper_jmp(helper_write_misalign);
-        }
-
-        let label_miss = self.label();
-        self.patch(jcc_miss, label_miss);
-
-        self.emit(Mov(Reg(Register::RDI), OpReg(Register::RBP)));
-        self.emit(Mov(Reg(Register::EDX), Imm(1)));
-        self.emit_helper_call(translate_cache_miss);
-        self.emit(Mov(Reg(Register::RSI), OpReg(Register::RDX)));
-        self.emit(Test(Reg(Register::AL), OpReg(Register::AL)));
-
-        let jcc_fin = self.emit_jcc_long(ConditionCode::Equal);
-        self.patch(jcc_fin, label_fin);
-
-        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-        self.emit_helper_call(helper_trap);
     }
 
     //
@@ -1600,11 +1578,8 @@ impl<'a> DbtCompiler<'a> {
         // Generate slow path
         for slow in std::mem::replace(&mut self.slow_path, Vec::new()) {
             match slow {
-                SlowPath::Load(ebx, jcc_misalign, jcc_miss, label_fin) => {
-                    self.emit_load_slow(ebx, jcc_misalign, jcc_miss, label_fin);
-                }
-                SlowPath::Store(ebx, jcc_misalign, jcc_miss, label_fin) => {
-                    self.emit_store_slow(ebx, jcc_misalign, jcc_miss, label_fin);
+                SlowPath::DCache { ebx, write, jcc_misalign, jcc_miss, label_fin } => {
+                    self.dcache_access_slow(ebx, write, jcc_misalign, jcc_miss, label_fin)
                 }
                 SlowPath::ICache(ebx, jcc_miss, label_fin) => {
                     self.emit_icache_slow(ebx, jcc_miss, label_fin);
