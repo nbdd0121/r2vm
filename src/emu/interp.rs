@@ -215,6 +215,7 @@ impl Context {
 /// * The current privilege level has enough permission to access the CSR. CSR is nicely partition
 ///   into regions, so privilege check can be easily done.
 /// * U-mode code does not access floating point CSRs with FS == Off.
+#[no_mangle]
 fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
     Ok(match csr {
         Csr::Fflags => {
@@ -261,6 +262,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
 
 /// This function does not check privilege level, so it must be checked ahead of time.
 /// This function also does not check for readonly CSRs, which is handled by decoder.
+#[no_mangle]
 fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
     match csr {
         Csr::Fflags => {

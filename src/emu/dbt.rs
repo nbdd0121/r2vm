@@ -34,7 +34,14 @@ fn memory_of_pc() -> Memory {
     (Register::RBP + offset_of!(Context, pc) as i32).qword()
 }
 
+#[inline]
+fn loc_of_register(reg: u8) -> x86::Location {
+    memory_of_register(reg).into()
+}
+
 extern "C" {
+    fn read_csr();
+    fn write_csr();
     fn fiber_yield_raw();
     fn helper_step();
     fn helper_trap();
@@ -93,6 +100,7 @@ enum SlowPath {
     Store(u32, Option<PlaceHolder>, PlaceHolder, Label),
     /// Slow path for a icache access miss
     ICache(u32, PlaceHolder, Label),
+    Trap(u32, PlaceHolder),
 }
 
 impl<'a> DbtCompiler<'a> {
@@ -183,6 +191,16 @@ impl<'a> DbtCompiler<'a> {
 
     // #region Helper functions
     //
+
+    /// Load a RISC-V register from memory to machine register
+    fn load_to_reg(&mut self, reg: Register, rs: u8) {
+        if rs == 0 {
+            let reg = reg.resize(Size::Dword);
+            self.emit(Xor(reg.into(), reg.into()));
+            return
+        }
+        self.emit(Mov(reg.into(), loc_of_register(rs).into()));
+    }
 
     fn load_to_rax(&mut self, rs: u8) {
         if rs == 0 {
@@ -437,6 +455,14 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Cmp(Mem(Register::RBP + offset as i32), Imm(0)));
         let jcc_helper = self.emit_jcc_long(ConditionCode::NotEqual);
         self.patch_absolute(jcc_helper, helper_check_interrupt as usize);
+    }
+
+    fn emit_trap(&mut self, ebx: u32, jcc_trap: PlaceHolder) {
+        let label_trap = self.label();
+        self.patch(jcc_trap, label_trap);
+
+        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
+        self.emit_helper_call(helper_trap);
     }
 
     // #region Base Opcode = LOAD
@@ -1249,6 +1275,34 @@ impl<'a> DbtCompiler<'a> {
     //
     // #endregion
 
+    // #region SYSTEM
+    //
+
+    /// Emit sequences for reading CSR into RDX
+    fn emit_read_csr(&mut self, csr: riscv::Csr) {
+        self.emit(Mov(Reg(Register::RDI), OpReg(Register::RBP)));
+        self.emit(Mov(Reg(Register::ESI), Imm(csr.0 as i64)));
+        self.emit_helper_call(read_csr);
+    }
+
+    /// Emit sequences for writing CSR from RDX
+    fn emit_write_csr(&mut self, csr: riscv::Csr) {
+        self.emit(Mov(Reg(Register::RDI), OpReg(Register::RBP)));
+        self.emit(Mov(Reg(Register::ESI), Imm(csr.0 as i64)));
+        self.emit_helper_call(write_csr);
+    }
+
+    /// Check AL, trap if AL is not zero
+    fn emit_trap_check(&mut self) {
+        self.emit(Test(Reg(Register::AL), OpReg(Register::AL)));
+        let trap = self.emit_jcc_long(ConditionCode::NotEqual);
+        let ebx = self.get_ebx();
+        self.slow_path.push(SlowPath::Trap(ebx, trap));
+    }
+
+    //
+    // #endregion
+
     fn emit_op(&mut self, op: &Op) {
         match *op {
             Op::Illegal => self.emit_step_call(op),
@@ -1350,6 +1404,26 @@ impl<'a> DbtCompiler<'a> {
             /* JAL */
             Op::Jal { rd, imm } => self.emit_jal(rd, imm),
             /* SYSTEM */
+            Op::Csrrw { rd: 0, rs1, csr } => {
+                self.load_to_reg(Register::RDX, rs1);
+                self.emit_write_csr(csr);
+                self.emit_trap_check();
+            }
+            Op::Csrrwi { rd: 0, imm, csr } => {
+                self.emit(Mov(Reg(Register::RDX), Imm(imm as i64)));
+                self.emit_write_csr(csr);
+                self.emit_trap_check();
+            }
+            Op::Csrrs { rd, rs1: 0, csr } |
+            Op::Csrrc { rd, rs1: 0, csr } |
+            Op::Csrrsi { rd, imm: 0, csr } |
+            Op::Csrrci { rd, imm: 0, csr } => {
+                self.emit_read_csr(csr);
+                self.emit_trap_check();
+                if rd != 0 {
+                    self.emit(Mov(loc_of_register(rd), OpReg(Register::RDX)));
+                }
+            }
             Op::Ecall |
             Op::Ebreak |
             Op::Csrrw {..} |
@@ -1535,6 +1609,7 @@ impl<'a> DbtCompiler<'a> {
                 SlowPath::ICache(ebx, jcc_miss, label_fin) => {
                     self.emit_icache_slow(ebx, jcc_miss, label_fin);
                 }
+                SlowPath::Trap(ebx, jcc_trap) => self.emit_trap(ebx, jcc_trap),
             }
         }
 
