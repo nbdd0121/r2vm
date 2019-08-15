@@ -180,6 +180,13 @@ pub fn main() {
             std::process::exit(1);
         });
         unsafe { RoCell::init(&CONFIG, config) };
+
+        // Currently due to our icache implementation, we cannot efficiently support >32 cores
+        if CONFIG.core > 32 {
+            eprintln!("{}: at most 32 cores allowed", interp_name);
+            std::process::exit(1);
+        }
+
         loader = emu::loader::Loader::new(&CONFIG.kernel).unwrap_or_else(|err| {
             eprintln!("{}: cannot load {}: {}", interp_name, CONFIG.kernel.to_string_lossy(), err);
             std::process::exit(1);

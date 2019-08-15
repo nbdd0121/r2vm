@@ -457,7 +457,7 @@ use std::collections::BTreeMap;
 /// Things may be a lot more complicated if we start to implement basic block chaining for extra
 /// speedup. In that case we probably need some pseudo-IPI stuff to make sure nobody is executing
 /// flushed or overwritten basic blocks.
-const HEAP_SIZE: usize = 1024 * 1024 * 128;
+const HEAP_SIZE: usize = 1024 * 1024 * 32;
 
 struct ICache {
     s_map: BTreeMap<u64, unsafe extern "C" fn()>,
@@ -496,6 +496,7 @@ impl ICache {
         if rollover {
             self.s_map.clear();
             self.u_map.clear();
+            debug!("icache {:x} rollover", self.heap_start);
         }
 
         std::slice::from_raw_parts_mut((self.heap_offset + self.heap_start) as *mut u8, size)
