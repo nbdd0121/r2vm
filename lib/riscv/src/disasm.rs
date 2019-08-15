@@ -9,7 +9,7 @@ pub fn register_name(reg: u8) -> &'static str {
     REG_NAMES[reg as usize]
 }
 
-use super::op::{Op};
+use super::op::{Op, Ordering};
 
 pub fn mnemonic(op: &Op) -> &'static str {
     match *op {
@@ -192,7 +192,48 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         eprint!("{:04x}    ", bits & 0xFFFF);
     }
 
-    eprint!("        {:-7} ", mnemonic);
+    eprint!("        ");
+
+    let mut len = mnemonic.len();
+    eprint!("{}", mnemonic);
+
+    match inst {
+        Op::LrW { aqrl, .. } |
+        Op::LrD { aqrl, .. } |
+        Op::ScW { aqrl, .. } |
+        Op::ScD { aqrl, .. } |
+        Op::AmoswapW { aqrl, .. } |
+        Op::AmoswapD { aqrl, .. } |
+        Op::AmoaddW { aqrl, .. } |
+        Op::AmoaddD { aqrl, .. } |
+        Op::AmoxorW { aqrl, .. } |
+        Op::AmoxorD { aqrl, .. } |
+        Op::AmoandW { aqrl, .. } |
+        Op::AmoandD { aqrl, .. } |
+        Op::AmoorW { aqrl, .. } |
+        Op::AmoorD { aqrl, .. } |
+        Op::AmominW { aqrl, .. } |
+        Op::AmominD { aqrl, .. } |
+        Op::AmomaxW { aqrl, .. } |
+        Op::AmomaxD { aqrl, .. } |
+        Op::AmominuW { aqrl, .. } |
+        Op::AmominuD { aqrl, .. } |
+        Op::AmomaxuW { aqrl, .. } |
+        Op::AmomaxuD { aqrl, .. } => {
+            let str = match aqrl {
+                Ordering::Relaxed => "",
+                Ordering::Acquire => ".aq",
+                Ordering::Release => ".rl",
+                Ordering::SeqCst => ".aqrl",
+            };
+            len += str.len();
+            eprint!("{}", str);
+        }
+        _ => (),
+    };
+
+    // Pad to 8-byte align. At least pad 1 space.
+    eprint!("{:1$}", "", 8 - len % 8);
 
     match *inst {
         Op::Illegal => (),
@@ -304,29 +345,29 @@ pub fn print_instr(pc: u64, bits: u32, inst: &Op) {
         Op::Csrrci { rd, imm, csr } =>
             eprint!("{}, #{}, {}", register_name(rd), csr, imm),
         // TODO: For atomic instructions we may want to display their aq, rl arguments?
-        Op::LrW { rd, rs1 } |
-        Op::LrD { rd, rs1} =>
+        Op::LrW { rd, rs1, .. } |
+        Op::LrD { rd, rs1, .. } =>
             eprint!("{}, ({})", register_name(rd), register_name(rs1)),
-        Op::ScW { rd, rs1, rs2 } |
-        Op::ScD { rd, rs1, rs2 } |
-        Op::AmoswapW { rd, rs1, rs2 } |
-        Op::AmoswapD { rd, rs1, rs2 } |
-        Op::AmoaddW { rd, rs1, rs2 } |
-        Op::AmoaddD { rd, rs1, rs2 } |
-        Op::AmoxorW { rd, rs1, rs2 } |
-        Op::AmoxorD { rd, rs1, rs2 } |
-        Op::AmoandW { rd, rs1, rs2 } |
-        Op::AmoandD { rd, rs1, rs2 } |
-        Op::AmoorW { rd, rs1, rs2 } |
-        Op::AmoorD { rd, rs1, rs2 } |
-        Op::AmominW { rd, rs1, rs2 } |
-        Op::AmominD { rd, rs1, rs2 } |
-        Op::AmomaxW { rd, rs1, rs2 } |
-        Op::AmomaxD { rd, rs1, rs2 } |
-        Op::AmominuW { rd, rs1, rs2 } |
-        Op::AmominuD { rd, rs1, rs2 } |
-        Op::AmomaxuW { rd, rs1, rs2 } |
-        Op::AmomaxuD { rd, rs1, rs2 } =>
+        Op::ScW { rd, rs1, rs2, .. } |
+        Op::ScD { rd, rs1, rs2, .. } |
+        Op::AmoswapW { rd, rs1, rs2, .. } |
+        Op::AmoswapD { rd, rs1, rs2, .. } |
+        Op::AmoaddW { rd, rs1, rs2, .. } |
+        Op::AmoaddD { rd, rs1, rs2, .. } |
+        Op::AmoxorW { rd, rs1, rs2, .. } |
+        Op::AmoxorD { rd, rs1, rs2, .. } |
+        Op::AmoandW { rd, rs1, rs2, .. } |
+        Op::AmoandD { rd, rs1, rs2, .. } |
+        Op::AmoorW { rd, rs1, rs2, .. } |
+        Op::AmoorD { rd, rs1, rs2, .. } |
+        Op::AmominW { rd, rs1, rs2, .. } |
+        Op::AmominD { rd, rs1, rs2, .. } |
+        Op::AmomaxW { rd, rs1, rs2, .. } |
+        Op::AmomaxD { rd, rs1, rs2, .. } |
+        Op::AmominuW { rd, rs1, rs2, .. } |
+        Op::AmominuD { rd, rs1, rs2, .. } |
+        Op::AmomaxuW { rd, rs1, rs2, .. } |
+        Op::AmomaxuD { rd, rs1, rs2, .. } =>
             eprint!("{}, {}, ({})", register_name(rd), register_name(rs2), register_name(rs1)),
         // TODO: For floating point arguments we may want to display their r/m arguments?
         Op::Flw { frd, rs1, imm } |

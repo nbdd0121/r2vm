@@ -1,5 +1,26 @@
 use super::Csr;
 
+/// Ordering semantics for atomics.
+#[derive(Clone, Copy)]
+pub enum Ordering {
+    Relaxed = 0,
+    Release = 1,
+    Acquire = 2,
+    SeqCst  = 3,
+}
+
+use std::sync::atomic::Ordering as MemOrder;
+impl From<Ordering> for MemOrder {
+    fn from(ord: Ordering) -> Self {
+        match ord {
+            Ordering::Relaxed => MemOrder::Relaxed,
+            Ordering::Acquire => MemOrder::Acquire,
+            Ordering::Release => MemOrder::Release,
+            Ordering::SeqCst => MemOrder::SeqCst,
+        }
+    }
+}
+
 /// This includes all supported RISC-V ops.
 /// Ops are sorted in the following order
 /// * Canonical order of extension
@@ -113,28 +134,28 @@ pub enum Op {
 
     /* A extension */
     /* Base Opcode = AMO */
-    LrW { rd: u8, rs1: u8 },
-    LrD { rd: u8, rs1: u8 },
-    ScW { rd: u8, rs1: u8, rs2: u8 },
-    ScD { rd: u8, rs1: u8, rs2: u8 },
-    AmoswapW { rd: u8, rs1: u8, rs2: u8 },
-    AmoswapD { rd: u8, rs1: u8, rs2: u8 },
-    AmoaddW { rd: u8, rs1: u8, rs2: u8 },
-    AmoaddD { rd: u8, rs1: u8, rs2: u8 },
-    AmoxorW { rd: u8, rs1: u8, rs2: u8 },
-    AmoxorD { rd: u8, rs1: u8, rs2: u8 },
-    AmoandW { rd: u8, rs1: u8, rs2: u8 },
-    AmoandD { rd: u8, rs1: u8, rs2: u8 },
-    AmoorW { rd: u8, rs1: u8, rs2: u8 },
-    AmoorD { rd: u8, rs1: u8, rs2: u8 },
-    AmominW { rd: u8, rs1: u8, rs2: u8 },
-    AmominD { rd: u8, rs1: u8, rs2: u8 },
-    AmomaxW { rd: u8, rs1: u8, rs2: u8 },
-    AmomaxD { rd: u8, rs1: u8, rs2: u8 },
-    AmominuW { rd: u8, rs1: u8, rs2: u8 },
-    AmominuD { rd: u8, rs1: u8, rs2: u8 },
-    AmomaxuW { rd: u8, rs1: u8, rs2: u8 },
-    AmomaxuD { rd: u8, rs1: u8, rs2: u8 },
+    LrW { rd: u8, rs1: u8, aqrl: Ordering },
+    LrD { rd: u8, rs1: u8, aqrl: Ordering },
+    ScW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    ScD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoswapW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoswapD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoaddW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoaddD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoxorW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoxorD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoandW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoandD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoorW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmoorD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmominW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmominD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmomaxW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmomaxD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmominuW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmominuD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmomaxuW { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
+    AmomaxuD { rd: u8, rs1: u8, rs2: u8, aqrl: Ordering },
 
     /* F extension */
     /* Base Opcode = LOAD-FP */

@@ -1539,12 +1539,12 @@ impl<'a> DbtCompiler<'a> {
             Op::Remuw { rd, rs1, rs2 } => self.emit_divw(rd, rs1, rs2, true, true),
 
             /* A-extension */
-            Op::AmoswapW { rd, rs1, rs2 } => {
+            Op::AmoswapW { rd, rs1, rs2, .. } => {
                 self.amo_op_w(rd, rs1, rs2, |this| {
                     this.emit(Xchg(Reg(Register::EAX), Mem((Register::RSI + 0).dword())));
                 });
             }
-            Op::AmoswapD { rd, rs1, rs2 } => {
+            Op::AmoswapD { rd, rs1, rs2, .. } => {
                 self.amo_op_d(rd, rs1, rs2, |this| {
                     this.emit(Xchg(Reg(Register::RAX), Mem(Register::RSI + 0)));
                 });

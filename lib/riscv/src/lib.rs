@@ -7,4 +7,4 @@ pub mod decode;
 pub mod mmu;
 
 pub use csr::Csr;
-pub use op::Op;
+pub use op::{Op, Ordering};

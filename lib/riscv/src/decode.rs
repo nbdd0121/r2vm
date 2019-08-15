@@ -1,4 +1,4 @@
-use super::op::Op;
+use super::op::{Op, Ordering};
 
 // #region: decoding helpers for 32-bit instructions
 //
@@ -560,35 +560,41 @@ pub fn decode(bits: u32) -> Op {
             /* A-Extension */
             let func = funct7(bits) >> 2;
             // TODO: Encode this
-            let _aqrl = funct7(bits) & 3;
+            let aqrl = match funct7(bits) & 3 {
+                0 => Ordering::Relaxed,
+                1 => Ordering::Release,
+                2 => Ordering::Acquire,
+                3 => Ordering::SeqCst,
+                _ => unreachable!(),
+            };
             if function == 0b010 {
                 match func {
-                    0b00010 => if rs2 != 0 { Op::Illegal } else { Op::LrW { rd, rs1 } },
-                    0b00011 => Op::ScW { rd, rs1, rs2 },
-                    0b00001 => Op::AmoswapW { rd, rs1, rs2 },
-                    0b00000 => Op::AmoaddW { rd, rs1, rs2 },
-                    0b00100 => Op::AmoxorW { rd, rs1, rs2 },
-                    0b01100 => Op::AmoandW { rd, rs1, rs2 },
-                    0b01000 => Op::AmoorW { rd, rs1, rs2 },
-                    0b10000 => Op::AmominW { rd, rs1, rs2 },
-                    0b10100 => Op::AmomaxW { rd, rs1, rs2 },
-                    0b11000 => Op::AmominuW { rd, rs1, rs2 },
-                    0b11100 => Op::AmomaxuW { rd, rs1, rs2 },
+                    0b00010 => if rs2 != 0 { Op::Illegal } else { Op::LrW { rd, rs1, aqrl } },
+                    0b00011 => Op::ScW { rd, rs1, rs2, aqrl },
+                    0b00001 => Op::AmoswapW { rd, rs1, rs2, aqrl },
+                    0b00000 => Op::AmoaddW { rd, rs1, rs2, aqrl },
+                    0b00100 => Op::AmoxorW { rd, rs1, rs2, aqrl },
+                    0b01100 => Op::AmoandW { rd, rs1, rs2, aqrl },
+                    0b01000 => Op::AmoorW { rd, rs1, rs2, aqrl },
+                    0b10000 => Op::AmominW { rd, rs1, rs2, aqrl },
+                    0b10100 => Op::AmomaxW { rd, rs1, rs2, aqrl },
+                    0b11000 => Op::AmominuW { rd, rs1, rs2, aqrl },
+                    0b11100 => Op::AmomaxuW { rd, rs1, rs2, aqrl },
                     _ => Op::Illegal,
                 }
             } else if function == 0b011 {
                 match func {
-                    0b00010 => if rs2 != 0 { Op::Illegal } else { Op::LrD { rd, rs1 } },
-                    0b00011 => Op::ScD { rd, rs1, rs2 },
-                    0b00001 => Op::AmoswapD { rd, rs1, rs2 },
-                    0b00000 => Op::AmoaddD { rd, rs1, rs2 },
-                    0b00100 => Op::AmoxorD { rd, rs1, rs2 },
-                    0b01100 => Op::AmoandD { rd, rs1, rs2 },
-                    0b01000 => Op::AmoorD { rd, rs1, rs2 },
-                    0b10000 => Op::AmominD { rd, rs1, rs2 },
-                    0b10100 => Op::AmomaxD { rd, rs1, rs2 },
-                    0b11000 => Op::AmominuD { rd, rs1, rs2 },
-                    0b11100 => Op::AmomaxuD { rd, rs1, rs2 },
+                    0b00010 => if rs2 != 0 { Op::Illegal } else { Op::LrD { rd, rs1, aqrl } },
+                    0b00011 => Op::ScD { rd, rs1, rs2, aqrl },
+                    0b00001 => Op::AmoswapD { rd, rs1, rs2, aqrl },
+                    0b00000 => Op::AmoaddD { rd, rs1, rs2, aqrl },
+                    0b00100 => Op::AmoxorD { rd, rs1, rs2, aqrl },
+                    0b01100 => Op::AmoandD { rd, rs1, rs2, aqrl },
+                    0b01000 => Op::AmoorD { rd, rs1, rs2, aqrl },
+                    0b10000 => Op::AmominD { rd, rs1, rs2, aqrl },
+                    0b10100 => Op::AmomaxD { rd, rs1, rs2, aqrl },
+                    0b11000 => Op::AmominuD { rd, rs1, rs2, aqrl },
+                    0b11100 => Op::AmomaxuD { rd, rs1, rs2, aqrl },
                     _ => Op::Illegal,
                 }
             } else {

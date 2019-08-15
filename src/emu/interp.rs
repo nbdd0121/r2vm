@@ -1356,7 +1356,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
 
         /* A-extension */
-        Op::LrW { rd, rs1 } => {
+        Op::LrW { rd, rs1, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
@@ -1365,7 +1365,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             ctx.lr_addr = addr;
             ctx.lr_value = value;
         }
-        Op::LrD { rd, rs1 } => {
+        Op::LrD { rd, rs1, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
@@ -1374,7 +1374,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             ctx.lr_addr = addr;
             ctx.lr_value = value;
         }
-        Op::ScW { rd, rs1, rs2 } => {
+        Op::ScW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1389,7 +1389,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             };
             write_reg!(rd, result);
         }
-        Op::ScD { rd, rs1, rs2 } => {
+        Op::ScD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
@@ -1404,7 +1404,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             };
             write_reg!(rd, result)
         }
-        Op::AmoswapW { rd, rs1, rs2 } => {
+        Op::AmoswapW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1412,7 +1412,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.swap(src, MemOrder::SeqCst);
             write_32!(rd, current);
         }
-        Op::AmoswapD { rd, rs1, rs2 } => {
+        Op::AmoswapD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
@@ -1420,7 +1420,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.swap(src, MemOrder::SeqCst);
             write_reg!(rd, current);
         }
-        Op::AmoaddW { rd, rs1, rs2 } => {
+        Op::AmoaddW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1428,7 +1428,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_add(src, MemOrder::SeqCst);
             write_32!(rd, current);
         }
-        Op::AmoaddD { rd, rs1, rs2 } => {
+        Op::AmoaddD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
@@ -1436,7 +1436,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_add(src, MemOrder::SeqCst);
             write_reg!(rd, current);
         }
-        Op::AmoandW { rd, rs1, rs2 } => {
+        Op::AmoandW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1444,7 +1444,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_and(src, MemOrder::SeqCst);
             write_32!(rd, current);
         }
-        Op::AmoandD { rd, rs1, rs2 } => {
+        Op::AmoandD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
@@ -1452,7 +1452,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_and(src, MemOrder::SeqCst);
             write_reg!(rd, current);
         }
-        Op::AmoorW { rd, rs1, rs2 } => {
+        Op::AmoorW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1460,7 +1460,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_or(src, MemOrder::SeqCst);
             write_32!(rd, current);
         }
-        Op::AmoorD { rd, rs1, rs2 } => {
+        Op::AmoorD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
@@ -1468,7 +1468,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_or(src, MemOrder::SeqCst);
             write_reg!(rd, current);
         }
-        Op::AmoxorW { rd, rs1, rs2 } => {
+        Op::AmoxorW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1476,7 +1476,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_xor(src, MemOrder::SeqCst);
             write_32!(rd, current);
         }
-        Op::AmoxorD { rd, rs1, rs2 } => {
+        Op::AmoxorD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
@@ -1484,7 +1484,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_xor(src, MemOrder::SeqCst);
             write_reg!(rd, current);
         }
-        Op::AmominW { rd, rs1, rs2 } => {
+        Op::AmominW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1492,7 +1492,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_min_stable(src as i32, MemOrder::SeqCst);
             write_32!(rd, current as u32);
         }
-        Op::AmominD { rd, rs1, rs2 } => {
+        Op::AmominD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
@@ -1500,7 +1500,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_min_stable(src as i64, MemOrder::SeqCst);
             write_reg!(rd, current as u64);
         }
-        Op::AmomaxW { rd, rs1, rs2 } => {
+        Op::AmomaxW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1508,7 +1508,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_max_stable(src as i32, MemOrder::SeqCst);
             write_32!(rd, current as u32);
         }
-        Op::AmomaxD { rd, rs1, rs2 } => {
+        Op::AmomaxD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
@@ -1516,7 +1516,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_max_stable(src as i64, MemOrder::SeqCst);
             write_reg!(rd, current as u64);
         }
-        Op::AmominuW { rd, rs1, rs2 } => {
+        Op::AmominuW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1524,7 +1524,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_min_stable(src, MemOrder::SeqCst);
             write_32!(rd, current);
         }
-        Op::AmominuD { rd, rs1, rs2 } => {
+        Op::AmominuD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
@@ -1532,7 +1532,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_min_stable(src, MemOrder::SeqCst);
             write_reg!(rd, current);
         }
-        Op::AmomaxuW { rd, rs1, rs2 } => {
+        Op::AmomaxuW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 3 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2) as u32;
@@ -1540,7 +1540,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let current = ptr.fetch_max_stable(src, MemOrder::SeqCst);
             write_32!(rd, current);
         }
-        Op::AmomaxuD { rd, rs1, rs2 } => {
+        Op::AmomaxuD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
             if addr & 7 != 0 { trap!(5, addr) }
             let src = read_reg!(rs2);
