@@ -190,7 +190,7 @@ impl<'a> Decoder<'a> {
             0x02 | 0x0A | 0x12 | 0x1A | 0x22 | 0x2A | 0x32 | 0x3A |
             // These are all RAX short encoded ALU ops
             0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x34 | 0x3C |
-            0x80 | 0x84 | 0x88 | 0x8A |
+            0x80 | 0x84 | 0x86 | 0x88 | 0x8A |
             0xC0 | 0xC6 | 0xD0 | 0xD2 |
             0xF6 => {
                 opcode += 1;
@@ -280,6 +280,10 @@ impl<'a> Decoder<'a> {
             0x85 => {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Op::Test(operand, OpReg(reg))
+            }
+            0x87 => {
+                let (operand, reg) = self.modrm(rex, opsize);
+                Op::Xchg(Reg(reg), operand)
             }
             0x89 => {
                 let (operand, reg) = self.modrm(rex, opsize);

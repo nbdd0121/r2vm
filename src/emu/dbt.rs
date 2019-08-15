@@ -44,8 +44,10 @@ fn memory_of_pc() -> Memory {
 }
 
 #[inline]
-fn loc_of_register(reg: u8) -> x86::Location {
-    memory_of_register(reg).into()
+fn loc_of_register(reg: u8, size: Size) -> x86::Location {
+    let mut mem = memory_of_register(reg);
+    mem.size = size;
+    mem.into()
 }
 
 extern "C" {
@@ -207,13 +209,31 @@ impl<'a> DbtCompiler<'a> {
     //
 
     /// Load a RISC-V register from memory to machine register
-    fn load_to_reg(&mut self, reg: Register, rs: u8) {
+    fn load_reg(&mut self, reg: Register, rs: u8) {
         if rs == 0 {
             let reg = reg.resize(Size::Dword);
             self.emit(Xor(reg.into(), reg.into()));
             return
         }
-        self.emit(Mov(reg.into(), loc_of_register(rs).into()));
+        self.emit(Mov(reg.into(), loc_of_register(rs, reg.size()).into()));
+    }
+
+    /// Store a RISC-V register to memory from machine register
+    fn store_reg(&mut self, rd: u8, reg: Register) {
+        if rd == 0 { return }
+        let qreg = reg.resize(Size::Qword);
+        match reg.size() {
+            Size::Qword => (),
+            Size::Dword => {
+                if reg == Register::EAX {
+                    self.emit(Cdqe);
+                } else {
+                    self.emit(Movsx(qreg, reg.into()));
+                }
+            }
+            _ => unreachable!(),
+        }
+        self.emit(Mov(loc_of_register(rd, Size::Qword), qreg.into()));
     }
 
     fn load_to_rax(&mut self, rs: u8) {
@@ -225,6 +245,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn store_from_rax(&mut self, rd: u8) {
+        if rd == 0 { return }
         self.emit(Mov(Mem(memory_of_register(rd)), OpReg(Register::RAX)));
     }
 
@@ -1253,6 +1274,32 @@ impl<'a> DbtCompiler<'a> {
     //
     // #endregion
 
+    // #region A-extension
+    //
+
+    fn amo_op_w(&mut self, rd: u8, rs1: u8, rs2: u8, action: impl FnOnce(&mut Self)) {
+        self.minstret += 1;
+        self.load_reg(Register::RSI, rs1);
+        self.dcache_access(Size::Dword, true);
+        self.load_to_eax(rs2);
+        // Perform action on RSI, RAX and store to RAX
+        action(self);
+        self.store_reg(rd, Register::EAX);
+    }
+
+    fn amo_op_d(&mut self, rd: u8, rs1: u8, rs2: u8, action: impl FnOnce(&mut Self)) {
+        self.minstret += 1;
+        self.load_reg(Register::RSI, rs1);
+        self.dcache_access(Size::Qword, true);
+        self.load_to_rax(rs2);
+        // Perform action on RSI, RAX and store to RAX
+        action(self);
+        self.store_reg(rd, Register::RAX);
+    }
+
+    //
+    // #endregion
+
     // #region SYSTEM
     //
 
@@ -1383,7 +1430,7 @@ impl<'a> DbtCompiler<'a> {
             Op::Jal { rd, imm } => self.emit_jal(rd, imm),
             /* SYSTEM */
             Op::Csrrw { rd: 0, rs1, csr } => {
-                self.load_to_reg(Register::RDX, rs1);
+                self.load_reg(Register::RDX, rs1);
                 self.emit_write_csr(csr);
                 self.emit_trap_check();
             }
@@ -1399,7 +1446,7 @@ impl<'a> DbtCompiler<'a> {
                 self.emit_read_csr(csr);
                 self.emit_trap_check();
                 if rd != 0 {
-                    self.emit(Mov(loc_of_register(rd), OpReg(Register::RDX)));
+                    self.store_reg(rd, Register::RDX);
                 }
             }
             Op::Ecall |
@@ -1492,12 +1539,20 @@ impl<'a> DbtCompiler<'a> {
             Op::Remuw { rd, rs1, rs2 } => self.emit_divw(rd, rs1, rs2, true, true),
 
             /* A-extension */
+            Op::AmoswapW { rd, rs1, rs2 } => {
+                self.amo_op_w(rd, rs1, rs2, |this| {
+                    this.emit(Xchg(Reg(Register::EAX), Mem((Register::RSI + 0).dword())));
+                });
+            }
+            Op::AmoswapD { rd, rs1, rs2 } => {
+                self.amo_op_d(rd, rs1, rs2, |this| {
+                    this.emit(Xchg(Reg(Register::RAX), Mem(Register::RSI + 0)));
+                });
+            }
             Op::LrW {..} |
             Op::LrD {..} |
             Op::ScW {..} |
             Op::ScD {..} |
-            Op::AmoswapW {..} |
-            Op::AmoswapD {..} |
             Op::AmoaddW {..} |
             Op::AmoaddD {..} |
             Op::AmoandW {..} |
