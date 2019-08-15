@@ -690,6 +690,7 @@ impl<'a> Encoder<'a> {
                 self.emit_r_rm(op_size, &src, dst as u8, 0x0FAF);
             }
             Op::Jcc(target, cc) => self.emit_jcc(target, cc),
+            Op::Lock => self.emit_u8(0xF0),
             Op::Jmp(target) => self.emit_jmp(target),
             Op::Lea(dst, src) => self.emit_lea(dst, src),
             Op::Mfence => { self.emit_u8(0x0F); self.emit_u8(0xAE); self.emit_u8(0xF0); }
@@ -706,6 +707,11 @@ impl<'a> Encoder<'a> {
             Op::Ret(pop) => self.emit_ret(pop),
             Op::Setcc(dst, cc) => self.emit_setcc(dst, cc),
             Op::Test(dst, src) => self.emit_test(dst, src),
+            Op::Xadd(dst, src) => {
+                let op_size = dst.size();
+                assert_eq!(op_size, src.size());
+                self.emit_r_rm(op_size, &dst, src as u8, if op_size == Size::Byte { 0x0FC0 } else { 0x0FC1 });
+            }
             Op::Xchg(dst, src) => self.emit_xchg(dst, src),
         }
     }

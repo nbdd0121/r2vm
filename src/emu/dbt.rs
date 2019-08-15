@@ -1539,22 +1539,75 @@ impl<'a> DbtCompiler<'a> {
             Op::Remuw { rd, rs1, rs2 } => self.emit_divw(rd, rs1, rs2, true, true),
 
             /* A-extension */
-            Op::AmoswapW { rd, rs1, rs2, .. } => {
-                self.amo_op_w(rd, rs1, rs2, |this| {
-                    this.emit(Xchg(Reg(Register::EAX), Mem((Register::RSI + 0).dword())));
-                });
+            Op::LrW { rd, rs1, .. } => {
+                self.minstret += 1;
+                self.load_reg(Register::RSI, rs1);
+                self.emit(Mov(Reg(Register::RBX), OpReg(Register::RSI)));
+                self.dcache_access(Size::Dword, true);
+                self.emit(Movsx(Register::RAX, Mem((Register::RSI + 0).dword())));
+                self.store_reg(rd, Register::RAX);
+                self.emit(Mov(Mem(memory_of!(lr_addr)), OpReg(Register::RBX)));
+                self.emit(Mov(Mem(memory_of!(lr_value)), OpReg(Register::RAX)));
             }
-            Op::AmoswapD { rd, rs1, rs2, .. } => {
-                self.amo_op_d(rd, rs1, rs2, |this| {
-                    this.emit(Xchg(Reg(Register::RAX), Mem(Register::RSI + 0)));
-                });
+            Op::LrD { rd, rs1, .. } => {
+                self.minstret += 1;
+                self.load_reg(Register::RSI, rs1);
+                self.emit(Mov(Reg(Register::RBX), OpReg(Register::RSI)));
+                self.dcache_access(Size::Qword, true);
+                self.emit(Mov(Reg(Register::RAX), OpMem(Register::RSI + 0)));
+                self.store_reg(rd, Register::RAX);
+                self.emit(Mov(Mem(memory_of!(lr_addr)), OpReg(Register::RBX)));
+                self.emit(Mov(Mem(memory_of!(lr_value)), OpReg(Register::RAX)));
             }
-            Op::LrW {..} |
-            Op::LrD {..} |
+            Op::AmoswapW { rd, rs1, rs2, .. } => self.amo_op_w(rd, rs1, rs2, |this| {
+                this.emit(Xchg(Reg(Register::EAX), Mem((Register::RSI + 0).dword())));
+            }),
+            Op::AmoswapD { rd, rs1, rs2, .. } => self.amo_op_d(rd, rs1, rs2, |this| {
+                this.emit(Xchg(Reg(Register::RAX), Mem(Register::RSI + 0)));
+            }),
+            Op::AmoaddW { rd: 0, rs1, rs2, .. } => self.amo_op_w(0, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(Add(Mem((Register::RSI + 0).dword()), OpReg(Register::EAX)));
+            }),
+            Op::AmoaddW { rd, rs1, rs2, .. } => self.amo_op_w(rd, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(Xadd(Mem((Register::RSI + 0).dword()), Register::EAX));
+            }),
+            Op::AmoaddD { rd: 0, rs1, rs2, .. } => self.amo_op_d(0, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(Add(Mem(Register::RSI + 0), OpReg(Register::RAX)));
+            }),
+            Op::AmoaddD { rd, rs1, rs2, .. } => self.amo_op_d(rd, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(Xadd(Mem(Register::RSI + 0), Register::RAX));
+            }),
+            Op::AmoandW { rd: 0, rs1, rs2, .. } => self.amo_op_w(0, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(And(Mem((Register::RSI + 0).dword()), OpReg(Register::EAX)));
+            }),
+            Op::AmoandD { rd: 0, rs1, rs2, .. } => self.amo_op_d(0, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(And(Mem(Register::RSI + 0), OpReg(Register::RAX)));
+            }),
+            Op::AmoorW { rd: 0, rs1, rs2, .. } => self.amo_op_w(0, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(Or(Mem((Register::RSI + 0).dword()), OpReg(Register::EAX)));
+            }),
+            Op::AmoorD { rd: 0, rs1, rs2, .. } => self.amo_op_d(0, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(Or(Mem(Register::RSI + 0), OpReg(Register::RAX)));
+            }),
+            Op::AmoxorW { rd: 0, rs1, rs2, .. } => self.amo_op_w(0, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(Xor(Mem((Register::RSI + 0).dword()), OpReg(Register::EAX)));
+            }),
+            Op::AmoxorD { rd: 0, rs1, rs2, .. } => self.amo_op_d(0, rs1, rs2, |this| {
+                this.emit(Lock);
+                this.emit(Xor(Mem(Register::RSI + 0), OpReg(Register::RAX)));
+            }),
+
             Op::ScW {..} |
             Op::ScD {..} |
-            Op::AmoaddW {..} |
-            Op::AmoaddD {..} |
             Op::AmoandW {..} |
             Op::AmoandD {..} |
             Op::AmoorW {..} |

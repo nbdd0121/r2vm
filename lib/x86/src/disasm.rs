@@ -19,6 +19,7 @@ pub fn mnemonic(op: &Op) -> &'static str {
         Op::Imul2 {..} => "imul",
         Op::Jcc {..} => "jcc",
         Op::Jmp {..} => "jmp",
+        Op::Lock {..} => "lock",
         Op::Lea {..} => "lea",
         Op::Mfence {..} => "mfence",
         Op::Mov {..} => "mov",
@@ -40,6 +41,7 @@ pub fn mnemonic(op: &Op) -> &'static str {
         Op::Shr {..} => "shr",
         Op::Sub {..} => "sub",
         Op::Test {..} => "test",
+        Op::Xadd {..} => "xadd",
         Op::Xchg {..} => "xchg",
         Op::Xor {..} => "xor",
     }
@@ -77,6 +79,7 @@ pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
         Op::Cdqe |
         Op::Cdq |
         Op::Cqo |
+        Op::Lock |
         Op::Mfence => (),
         Op::Nop => (),
         Op::Adc(dst, src) |
@@ -129,6 +132,7 @@ pub fn print_instr(pc: u64, code: &[u8], inst: &Op) {
         Op::Movsx(dst, src) |
         Op::Movzx(dst, src) => eprint!("{}, {}", dst, src),
         &Op::Ret(pop) => if pop != 0 { eprint!("{}", pop) }
+        Op::Xadd(dst, src) => eprint!("{}, {}", dst, src),
         Op::Xchg(dst, src) => eprint!("{}, {}", dst, src),
     }
     eprintln!();

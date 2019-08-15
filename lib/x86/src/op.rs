@@ -437,6 +437,8 @@ pub enum Op {
     Jcc(i32, ConditionCode),
     Jmp(Operand),
     Lea(Register, Memory),
+    /// Technically this should be a prefix, but we have it as an op for simplicity
+    Lock,
     Mfence,
     Mov(Location, Operand),
     /// mov instruction with absolute address as src or dst
@@ -459,6 +461,7 @@ pub enum Op {
     Shr(Location, Operand),
     Sub(Location, Operand),
     Test(Location, Operand),
+    Xadd(Location, Register),
     Xchg(Location, Location),
     Xor(Location, Operand),
 }

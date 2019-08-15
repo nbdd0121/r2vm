@@ -192,7 +192,8 @@ impl<'a> Decoder<'a> {
             0x04 | 0x0C | 0x14 | 0x1C | 0x24 | 0x2C | 0x34 | 0x3C |
             0x80 | 0x84 | 0x86 | 0x88 | 0x8A |
             0xC0 | 0xC6 | 0xD0 | 0xD2 |
-            0xF6 => {
+            0xF6 |
+            0x0FC0 => {
                 opcode += 1;
                 opsize = Size::Byte;
             }
@@ -244,6 +245,10 @@ impl<'a> Decoder<'a> {
             0x0FBF => {
                 let (src, dst) = self.modrm(rex, opsize);
                 Op::Movsx(dst, src.resize(Size::Word))
+            }
+            0x0FC1 => {
+                 let (dst, src) = self.modrm(rex, opsize);
+                Op::Xadd(dst, src)
             }
             // These are all INST r/m, r ALU ops
             0x01 | 0x09 | 0x11 | 0x19 | 0x21 | 0x29 | 0x31 | 0x39 => {
@@ -331,6 +336,7 @@ impl<'a> Decoder<'a> {
             0xE8 => Op::Call(Imm(self.dword() as i32 as i64)),
             0xE9 => Op::Jmp(Imm(self.dword() as i32 as i64)),
             0xEB => Op::Jmp(Imm(self.byte() as i8 as i64)),
+            0xF0 => Op::Lock,
             0xF7 => {
                 let (operand, reg) = self.modrm(rex, opsize);
                 match reg as u8 & 7 {
