@@ -171,7 +171,7 @@ unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &
 
 /// Handle SIGINT to gracefully exit when hitting Ctrl+C in userspace-only simulation mode.
 unsafe extern "C" fn handle_int(_: libc::c_int, _: &mut libc::siginfo_t, _: &mut libc::ucontext_t) {
-    crate::print_stats_and_exit(2);
+    crate::shutdown(crate::ExitReason::Exit(2));
 }
 
 pub fn init() {

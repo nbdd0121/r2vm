@@ -41,12 +41,12 @@ pub fn console_init() {
                 std::io::stdin().read_exact(std::slice::from_mut(&mut buffer)).unwrap();
                 match buffer {
                     b't' => {
-                        crate::set_threaded(!crate::threaded());
+                        crate::shutdown(crate::ExitReason::SetThreaded(!crate::threaded()));
                         continue
                     }
                     b'x' => {
                         println!("Terminated");
-                        crate::print_stats_and_exit(0);
+                        crate::shutdown(crate::ExitReason::Exit(0));
                     }
                     b'c' => {
                         unsafe { libc::raise(libc::SIGTRAP); }

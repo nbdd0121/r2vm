@@ -631,7 +631,10 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             global_sfence(mask, Some(arg3 as u16), if arg2 == 4096 { Some(arg1 >> 12) } else { None });
             0
         }
-        8 => crate::print_stats_and_exit(0),
+        8 => {
+            crate::shutdown(crate::ExitReason::Exit(0));
+            0
+        }
         _ => {
             panic!("unknown sbi call {}", nr);
         }

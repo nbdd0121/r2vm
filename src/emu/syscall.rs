@@ -559,13 +559,15 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             if *STRACE {
                 eprintln!("exit({}) = ?", arg0);
             }
-            crate::print_stats_and_exit(arg0 as i32)
+            crate::shutdown(crate::ExitReason::Exit(arg0 as i32));
+            0
         }
         abi::SYS_exit_group => {
             if *STRACE {
                 eprintln!("exit_group({}) = ?", arg0);
             }
-            crate::print_stats_and_exit(arg0 as i32)
+            crate::shutdown(crate::ExitReason::Exit(arg0 as i32));
+            0
         }
         abi::SYS_uname => {
             let ret = return_errno(libc::uname(arg0 as _) as _);

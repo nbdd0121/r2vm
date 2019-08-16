@@ -38,7 +38,7 @@ pub struct Flags {
     perf: bool,
 
     // Whether threaded mode should be used
-    thread: std::sync::atomic::AtomicBool,
+    thread: bool,
 }
 
 static mut FLAGS: Flags = Flags {
@@ -46,14 +46,13 @@ static mut FLAGS: Flags = Flags {
     disassemble: false,
     user_only: false,
     perf: false,
-    thread: std::sync::atomic::AtomicBool::new(true),
+    thread: true,
 };
 
 pub fn get_flags() -> &'static Flags {
     unsafe { &FLAGS }
 }
 
-pub static mut CONTEXTS: &'static mut [*mut emu::interp::Context] = &mut [];
 static SHARED_CONTEXTS: RoCell<Vec<&'static emu::interp::SharedContext>> = unsafe { RoCell::new_uninit() };
 
 pub fn shared_context(id: usize) -> &'static emu::interp::SharedContext {
@@ -73,23 +72,30 @@ pub fn event_loop() -> &'static emu::EventLoop {
 }
 
 pub fn threaded() -> bool {
-    get_flags().thread.load(std::sync::atomic::Ordering::Relaxed)
+    get_flags().thread
 }
 
-/// Update the current threading mode
-pub fn set_threaded(mode: bool) {
-    // First shutdown event loop as it is prone to influence of this flag
+use lazy_static::lazy_static;
+lazy_static! {
+    static ref EXIT_REASON: std::sync::Mutex<Option<ExitReason>> = Default::default();
+}
+
+/// Reason for exiting executors
+enum ExitReason {
+    SetThreaded(bool),
+    Exit(i32),
+}
+
+fn shutdown(reason: ExitReason) {
+    // Shutdown event loop as soon as possible
     event_loop().shutdown();
 
-    // Actually set the flag
-    get_flags().thread.store(mode, std::sync::atomic::Ordering::Relaxed);
+    *EXIT_REASON.lock().unwrap() = Some(reason);
 
     // Shutdown all execution threads
     for i in 0..core_count() {
         shared_context(i).shutdown();
     }
-
-    // The control is now handed to main, which will restart all of them.
 }
 
 static CONFIG: RoCell<config::Config> = unsafe { RoCell::new_uninit() };
@@ -129,9 +135,7 @@ pub fn main() {
                 FLAGS.disassemble = true;
             }
             "--perf" => unsafe { FLAGS.perf = true },
-            "--lockstep" => unsafe {
-                FLAGS.thread.store(false, std::sync::atomic::Ordering::Relaxed);
-            }
+            "--lockstep" => unsafe { FLAGS.thread = false },
             "--help" => {
                 eprintln!(usage_string!(), interp_name);
                 std::process::exit(0);
@@ -196,6 +200,7 @@ pub fn main() {
     // Create fibers for all threads
     let mut fibers = Vec::new();
     let mut contexts = Vec::new();
+    let mut shared_contexts = Vec::new();
 
     let num_cores = if get_flags().user_only { 1 } else { CONFIG.core };
 
@@ -236,14 +241,12 @@ pub fn main() {
         let fiber = fiber::Fiber::new();
         let ptr = fiber.data_pointer();
         unsafe { *ptr = newctx }
-        contexts.push(ptr);
+        contexts.push(unsafe {&mut *ptr});
+        shared_contexts.push(unsafe {&(*ptr).shared});
         fibers.push(fiber);
     }
 
-    unsafe {
-        CONTEXTS = Box::leak(contexts.into_boxed_slice());
-        RoCell::init(&SHARED_CONTEXTS, CONTEXTS.iter().map(|x| &(**x).shared).collect());
-    }
+    unsafe { RoCell::init(&SHARED_CONTEXTS, shared_contexts) };
 
     // These should only be initialised for full-system emulation
     if !get_flags().user_only {
@@ -252,7 +255,7 @@ pub fn main() {
     }
 
     // Load the program
-    unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args)) };
+    unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args), &mut contexts) };
     std::mem::drop(loader);
 
     loop {
@@ -283,6 +286,17 @@ pub fn main() {
             fibers = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
         }
 
+        match EXIT_REASON.lock().unwrap().as_ref().unwrap() {
+            &ExitReason::SetThreaded(threaded) => {
+                unsafe { FLAGS.thread = threaded; }
+                info!("switching to mode threaded={}", threaded);
+            }
+            &ExitReason::Exit(code) => {
+                print_stats(&mut contexts);
+                std::process::exit(code);
+            }
+        }
+
         // Remove old translation cache
         emu::interp::icache_reset();
 
@@ -293,14 +307,11 @@ pub fn main() {
     }
 }
 
-pub fn print_stats_and_exit(code: i32) -> ! {
-    unsafe {
-        println!("TIME = {:?}", crate::util::cpu_time());
-        println!("CYCLE = {:x}", crate::event_loop().cycle());
-        for i in 0..crate::CONTEXTS.len() {
-            let ctx = &*crate::CONTEXTS[i];
-            println!("Hart {}: INSTRET = {:x}, MINSTRET = {:x}", i, ctx.instret, ctx.minstret);
-        }
+fn print_stats(ctxs: &[&mut emu::interp::Context]) {
+    println!("TIME = {:?}", util::cpu_time());
+    println!("CYCLE = {:x}", event_loop().cycle());
+    for i in 0..ctxs.len() {
+        let ctx = &ctxs[i];
+        println!("Hart {}: INSTRET = {:x}, MINSTRET = {:x}", i, ctx.instret, ctx.minstret);
     }
-    std::process::exit(code)
 }

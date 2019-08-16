@@ -4,6 +4,7 @@ use std::os::unix::io::{IntoRawFd, AsRawFd, FromRawFd};
 use std::ffi::CStr;
 use rand::RngCore;
 use super::abi;
+use super::interp::Context;
 
 const PF_R    : u32 = 0x4;
 const PF_W    : u32 = 0x2;
@@ -323,7 +324,7 @@ impl Loader {
     }
 }
 
-pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>) {
+pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>, ctxs: &mut [&mut Context]) {
     if crate::get_flags().user_only {
         // Set sp to be the highest possible address.
         let mut sp: u64 = 0x7fff0000;
@@ -410,7 +411,7 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>) {
         // set argc
         push(&mut sp, arg_pointers.len() as _);
 
-        let ctx = &mut *crate::CONTEXTS[0];
+        let ctx = &mut ctxs[0];
         ctx.pc = start;
         // sp
         ctx.registers[2] = sp;
@@ -439,10 +440,9 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>) {
         let target = std::slice::from_raw_parts_mut((0x200000 + size) as *mut u8, device_tree.len());
         target.copy_from_slice(&device_tree[..]);
 
-        for i in 0..crate::CONTEXTS.len() {
-            let ctx = &mut *crate::CONTEXTS[i];
+        for ctx in ctxs {
             // a0 is the current hartid
-            ctx.registers[10] = i as u64;
+            ctx.registers[10] = ctx.hartid;
             // a1 should be the device tree
             ctx.registers[11] = 0x200000 + size;
             ctx.pc = 0x200000;
