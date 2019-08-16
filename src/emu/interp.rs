@@ -71,6 +71,12 @@ pub struct SharedContext {
     pub line: [CacheLine; 1024],
     pub i_line: [CacheLine; 1024],
 
+    /// Floating point rounding mode. This will be used by softfp's get_rounding_mode callback.
+    /// As instructions can specify their own rounding mode, this is not the same as frm register.
+    pub rm: AtomicU32,
+    /// Floating point exceptions.
+    pub fflags: AtomicU32,
+
     /// Mutex for supporting WFI in threaded execution mode. In threaded execution mode, when WFI
     /// is executed we want to wait until an alarm is available. Ideally we protect alarm with a
     /// mutex and then we can use Condvar and other OS thread primitives. However as `alarm` is
@@ -104,6 +110,8 @@ impl SharedContext {
                 }
                 arr
             },
+            rm: AtomicU32::new(0),
+            fflags: AtomicU32::new(0),
             wfi_mutex: Box::new(Mutex::new(())),
             wfi_condvar: Box::new(Condvar::new()),
         }
@@ -196,7 +204,7 @@ pub struct Context {
 
     // Floating point states
     pub fp_registers: [u64; 32],
-    pub fcsr: u64,
+    pub frm: u32,
 
     // For load reservation
     pub lr_addr: u64,
@@ -248,15 +256,15 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
     Ok(match csr {
         Csr::Fflags => {
             ctx.test_and_set_fs()?;
-            ctx.fcsr & 0b11111
+            ctx.shared.fflags.load(MemOrder::Relaxed) as u64
         }
         Csr::Frm => {
             ctx.test_and_set_fs()?;
-            (ctx.fcsr >> 5) & 0b111
+            ctx.frm as u64
         }
         Csr::Fcsr => {
             ctx.test_and_set_fs()?;
-            ctx.fcsr
+            ((ctx.frm << 5) | ctx.shared.fflags.load(MemOrder::Relaxed)) as u64
         }
         Csr::Cycle => crate::event_loop().cycle(),
         Csr::Time => crate::event_loop().time(),
@@ -295,15 +303,16 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
     match csr {
         Csr::Fflags => {
             ctx.test_and_set_fs()?;
-            ctx.fcsr = (ctx.fcsr &! 0b11111) | (value & 0b11111);
+            ctx.shared.fflags.store((value & 0b11111) as u32, MemOrder::Relaxed)
         }
         Csr::Frm => {
             ctx.test_and_set_fs()?;
-            ctx.fcsr = (ctx.fcsr &! (0b111 << 5)) | ((value & 0b111) << 5);
+            ctx.frm = (value & 0b111) as u32;
         }
         Csr::Fcsr => {
             ctx.test_and_set_fs()?;
-            ctx.fcsr = value & 0xff;
+            ctx.shared.fflags.store((value & 0b11111) as u32, MemOrder::Relaxed);
+            ctx.frm = ((value >> 5) & 0b111) as u32;
         }
         Csr::Instret => ctx.instret = value,
         Csr::Sstatus => {
@@ -669,6 +678,28 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
     }
 }
 
+// #region softfp init
+//
+
+fn get_rounding_mode() -> softfp::RoundingMode {
+    let ctx = unsafe { &(*crate::fiber::Fiber::scratchpad::<Context>()).shared };
+    ctx.rm.load(MemOrder::Relaxed).try_into().unwrap()
+}
+
+fn set_exception_flags(flags: softfp::ExceptionFlags) {
+    let ctx = unsafe { &(*crate::fiber::Fiber::scratchpad::<Context>()).shared };
+    ctx.fflags.fetch_or(flags.bits(), MemOrder::Relaxed);
+}
+
+/// Initialise softfp environemnt
+pub fn init_fp() {
+    softfp::register_get_rounding_mode(get_rounding_mode);
+    softfp::register_set_exception_flag(set_exception_flags);
+}
+
+//
+// #endregion
+
 /// Perform a single step of instruction.
 /// This function does not check privilege level, so it must be checked ahead of time.
 fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
@@ -735,23 +766,16 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     macro_rules! set_rm {
         ($rm: expr) => {{
             ctx.test_and_set_fs()?;
-            let rm = if $rm == 0b111 { (ctx.fcsr >> 5) as u32 } else { $rm as u32 };
-            let mode = match rm.try_into() {
-                Ok(v) => v,
-                Err(_) => trap!(2, 0),
-            };
-            softfp::set_rounding_mode(mode);
+            let rm = if $rm == 0b111 { ctx.frm } else { $rm as u32 };
+            if rm >= 5 { trap!(2, 0) };
+            ctx.shared.rm.store(rm, MemOrder::Relaxed);
         }}
     }
     macro_rules! clear_flags {
-        () => {
-            softfp::clear_exception_flag()
-        };
+        () => {};
     }
     macro_rules! update_flags {
-        () => {
-            ctx.fcsr |= softfp::get_exception_flag() as u64;
-        };
+        () => {};
     }
     macro_rules! trap {
         ($cause: expr, $tval: expr) => {{

@@ -107,6 +107,7 @@ extern {
 pub fn main() {
     // Top priority: set up page fault handlers so safe_memory features will work.
     emu::signal::init();
+    emu::interp::init_fp();
     pretty_env_logger::init();
 
     let mut args = std::env::args();
@@ -215,7 +216,7 @@ pub fn main() {
             shared: emu::interp::SharedContext::new(),
             registers: [0xCCCCCCCCCCCCCCCC; 32],
             fp_registers: [0xFFFFFFFFFFFFFFFF; 32],
-            fcsr: 0,
+            frm: 0,
             instret: 0,
             lr_addr: 0,
             lr_value: 0,
