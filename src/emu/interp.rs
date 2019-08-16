@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicI32, AtomicU32, AtomicI64, AtomicU64};
 use std::sync::atomic::Ordering as MemOrder;
 use crate::util::AtomicExt;
 use lazy_static::lazy_static;
+use std::sync::{Mutex, Condvar};
 
 /// A cache line. `{CacheLine}` is composed of atomic variables because we sometimes need cross-
 /// thread invalidation. Note that usually paddr isn't touched, but by keeping tag and paddr
@@ -50,10 +51,10 @@ pub struct SharedContext {
     ///   By doing so, it wouldn't need to check interrupts later.
     /// * Timer interrupts are treated a little bit differently. To avoid to deal with atomicity
     ///   issues related to `mtimecmp`, we make `mtimecmp` local to the hart. Instead, when we
-    ///   think there might be a new timer interrupt, we set a bit in `new_interrupts`.
+    ///   think there might be a new timer interrupt, we set a bit in `alarm`.
     ///   The hart will check and set `sip` if there is indeed a timer interrupt.
     /// * Shutdown notice.
-    pub new_interrupts: AtomicU64,
+    pub alarm: AtomicU64,
 
     /// Interrupts currently pending. SIP is a very special register when doing simulation,
     /// because it could be updated from outside a running hart.
@@ -69,6 +70,16 @@ pub struct SharedContext {
     /// Upon privilege-level switch or address space switch all entries here should be cleared.
     pub line: [CacheLine; 1024],
     pub i_line: [CacheLine; 1024],
+
+    /// Mutex for supporting WFI in threaded execution mode. In threaded execution mode, when WFI
+    /// is executed we want to wait until an alarm is available. Ideally we protect alarm with a
+    /// mutex and then we can use Condvar and other OS thread primitives. However as `alarm` is
+    /// also used in assembly, we cannot put it in the Mutex. Therefore this mutex has content ()
+    /// and thus is only used when paired with the Condvar. Box are used for C-layout compat.
+    pub wfi_mutex: Box<Mutex<()>>,
+
+    /// Condvar for supporting WFI. Used in pair with the mutex.
+    pub wfi_condvar: Box<Condvar>,
 }
 
 impl SharedContext {
@@ -78,7 +89,7 @@ impl SharedContext {
 
         SharedContext {
             sip: AtomicU64::new(0),
-            new_interrupts: AtomicU64::new(0),
+            alarm: AtomicU64::new(0),
             line: unsafe {
                 let mut arr: [CacheLine; 1024] = std::mem::uninitialized();
                 for item in arr.iter_mut() {
@@ -93,6 +104,8 @@ impl SharedContext {
                 }
                 arr
             },
+            wfi_mutex: Box::new(Mutex::new(())),
+            wfi_condvar: Box::new(Condvar::new()),
         }
     }
 
@@ -108,14 +121,29 @@ impl SharedContext {
         self.sip.fetch_and(!mask, MemOrder::Relaxed);
     }
 
+    /// Trigger alarms. Will also wake up WFI.
+    pub fn fire_alarm(&self, mask: u64) {
+        // Necessary to order with wait_alarm
+        let _guard = self.wfi_mutex.lock().unwrap();
+        self.alarm.fetch_or(mask, MemOrder::Relaxed);
+        self.wfi_condvar.notify_one();
+    }
+
+    /// Perform a WFI operation. Return after an alarm is fired.
+    pub fn wait_alarm(&self) {
+        let guard = self.wfi_mutex.lock().unwrap();
+        if self.alarm.load(MemOrder::Relaxed) != 0 { return }
+        let _ = self.wfi_condvar.wait(guard).unwrap();
+    }
+
     /// Inform the hart that there might be a pending interrupt, but without actually touching
     /// `sip`. This should be called, e.g. if SIE or SSTATUS is modified.
     pub fn alert(&self) {
-        self.new_interrupts.fetch_or(1, MemOrder::Release);
+        self.fire_alarm(1);
     }
 
     pub fn shutdown(&self) {
-        self.new_interrupts.fetch_or(2, MemOrder::Release);
+        self.fire_alarm(2);
     }
 
     pub fn clear_local_cache(&self) {
@@ -1579,7 +1607,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             // Set SPP to U
             ctx.sstatus &=! 0x100;
         }
-        Op::Wfi => (),
+        Op::Wfi => {
+            if crate::threaded() { ctx.shared.wait_alarm() }
+        }
         Op::SfenceVma { rs1, rs2 } => {
             let asid = if rs2 == 0 { None } else { Some(read_reg!(rs2) as u16) };
             let vpn = if rs1 == 0 { None } else { Some(read_reg!(rs1) >> 12) };
@@ -1738,7 +1768,7 @@ fn find_block_and_patch2(ctx: &mut Context, ret: usize) {
 /// Check if an enabled interrupt is pending, and take it if so.
 /// If `{Err}` is returned, the running fiber will exit.
 pub fn check_interrupt(ctx: &mut Context) -> Result<(), ()> {
-    let alarm = ctx.shared.new_interrupts.swap(0, MemOrder::Acquire);
+    let alarm = ctx.shared.alarm.swap(0, MemOrder::Acquire);
 
     if alarm & 2 != 0 {
         return Err(())

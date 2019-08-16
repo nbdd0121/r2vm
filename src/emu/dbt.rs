@@ -486,7 +486,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_interrupt_check(&mut self) {
-        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, new_interrupts);
+        let offset = rbp_offset_of!(shared.alarm);
         self.emit(Cmp(Mem(Register::RBP + offset as i32), Imm(0)));
         let jcc_helper = self.emit_jcc_long(ConditionCode::NotEqual);
         self.patch_absolute(jcc_helper, helper_check_interrupt as usize);
@@ -1625,7 +1625,9 @@ impl<'a> DbtCompiler<'a> {
 
             /* Privileged */
             Op::Sret => self.emit_step_call(op),
-            Op::Wfi => (),
+            Op::Wfi => {
+                if crate::threaded() { self.emit_step_call(op) }
+            }
             Op::SfenceVma {..} => self.emit_step_call(op),
         }
     }

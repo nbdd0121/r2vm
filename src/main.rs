@@ -240,7 +240,7 @@ pub fn main() {
 
         let fiber = fiber::Fiber::new();
         let ptr = fiber.data_pointer();
-        unsafe { *ptr = newctx }
+        unsafe { std::ptr::write(ptr, newctx); }
         contexts.push(unsafe {&mut *ptr});
         shared_contexts.push(unsafe {&(*ptr).shared});
         fibers.push(fiber);
