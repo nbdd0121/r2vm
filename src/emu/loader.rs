@@ -420,22 +420,22 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>, ctxs: &m
         ctx.prv = 0;
     } else {
         let size = if file.is_elf() {
-            file.load_kernel(0x200000)
+            file.load_kernel(0x40000000)
         } else {
-            file.load_bin(0x200000);
+            file.load_bin(0x40000000);
             file.file_size
         };
 
         let device_tree = fdt::encode(&crate::emu::device_tree());
-        let target = std::slice::from_raw_parts_mut((0x200000 + size) as *mut u8, device_tree.len());
+        let target = std::slice::from_raw_parts_mut((0x40000000 + size) as *mut u8, device_tree.len());
         target.copy_from_slice(&device_tree[..]);
 
         for ctx in ctxs {
             // a0 is the current hartid
             ctx.registers[10] = ctx.hartid;
             // a1 should be the device tree
-            ctx.registers[11] = 0x200000 + size;
-            ctx.pc = 0x200000;
+            ctx.registers[11] = 0x40000000 + size;
+            ctx.pc = 0x40000000;
             ctx.prv = 1;
         }
     }

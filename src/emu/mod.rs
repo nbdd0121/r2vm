@@ -78,18 +78,26 @@ lazy_static! {
     };
 }
 
-/// This governs the boundary between RAM and I/O memory. If an address is strictly above this
+/// This governs the boundary between RAM and I/O memory. If an address is strictly below this
 /// location, then it is considered I/O. For user-space applications, we consider all memory
-/// locations as RAM, so the default value here is `usize::max_value()`.
-static IO_BOUNDARY: crate::util::RoCell<usize> = crate::util::RoCell::new(usize::max_value());
+/// locations as RAM, so the default value here is 0.
+static IO_BOUNDARY: crate::util::RoCell<usize> = crate::util::RoCell::new(0);
 
 pub fn init() {
     unsafe {
-        crate::util::RoCell::replace(&IO_BOUNDARY, 0x7fffffff);
+        // The memory map looks like this:
+        // 0 MiB - 2 MiB (reserved for null)
+        // 2 MiB - 6 MiB PLIC
+        // 6 MiB -       VIRTIO
+        // 1 GiB -       main memory
+        crate::util::RoCell::replace(&IO_BOUNDARY, 0x40000000);
 
-        // First allocate physical memory region, without making them accessing
+        let phys_size = crate::CONFIG.memory * 1024 * 1024;
+        let phys_limit = 0x40000000 + phys_size;
+
+        // First allocate physical memory region, without making them accessible
         let result = libc::mmap(
-            0x200000 as _, 0x1_0000_0000 - 0x200000,
+            0x200000 as _, (phys_limit - 0x200000) as _,
             libc::PROT_NONE,
             libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
             -1, 0
@@ -100,7 +108,7 @@ pub fn init() {
 
         // Allocate wanted memory
         let result = libc::mprotect(
-            0x200000 as _, (crate::CONFIG.memory * 1024 * 1024) as _,
+            0x40000000 as _, phys_size as _,
             libc::PROT_READ | libc::PROT_WRITE
         );
         if result != 0 {
@@ -156,7 +164,7 @@ pub fn device_tree() -> fdt::Node {
     plic.add_prop("interrupt-controller", ());
     plic.add_prop("compatible", "sifive,plic-1.0.0");
     plic.add_prop("riscv,ndev", 31u32);
-    plic.add_prop("reg", &[0x80100000u64, 0x400000][..]);
+    plic.add_prop("reg", &[0x200000u64, 0x400000][..]);
     let mut vec: Vec<u32> = Vec::with_capacity(8);
     for i in 0..core_count {
         vec.push(i + 1);
@@ -166,15 +174,15 @@ pub fn device_tree() -> fdt::Node {
     plic.add_prop("phandle", core_count + 1);
 
     for i in 0..VIRTIO.len() {
-        let addr: u64 = 0x80000000 + (i as u64) * 0x1000;
+        let addr: u64 = 0x600000 + (i as u64) * 0x1000;
         let virtio = soc.add_node(format!("virtio@{:x}", addr));
         virtio.add_prop("reg", &[addr, 0x1000][..]);
         virtio.add_prop("compatible", "virtio,mmio");
         virtio.add_prop("interrupts-extended", &[core_count + 1, (i+1) as u32][..]);
     }
 
-    let memory = root.add_node("memory@200000");
-    memory.add_prop("reg", &[0x200000, (crate::CONFIG.memory * 1024 * 1024) as u64][..]);
+    let memory = root.add_node("memory@0x40000000");
+    memory.add_prop("reg", &[0x40000000, (crate::CONFIG.memory * 1024 * 1024) as u64][..]);
     memory.add_prop("device_type", "memory");
 
     root
@@ -182,21 +190,21 @@ pub fn device_tree() -> fdt::Node {
 
 // TODO: Remove these 2 functions
 pub fn read_memory<T: Copy>(addr: usize) -> T {
-    assert!(addr <= *IO_BOUNDARY);
+    assert!(addr >= *IO_BOUNDARY);
     unsafe { std::ptr::read(addr as *const T) }
 }
 
 pub fn write_memory<T: Copy>(addr: usize, value: T) {
-    assert!(addr <= *IO_BOUNDARY);
+    assert!(addr >= *IO_BOUNDARY);
     unsafe { std::ptr::write_volatile(addr as *mut T, value) }
 }
 
 pub fn phys_read(addr: usize, size: u32) -> u64 {
-    if addr > *IO_BOUNDARY {
-        if addr >= 0x80100000 {
-            PLIC.read_sync(addr - 0x80100000, size)
+    if addr < *IO_BOUNDARY {
+        if addr < 0x600000 {
+            PLIC.read_sync(addr - 0x200000, size)
         } else {
-            let idx = (addr - 0x80000000) >> 12;
+            let idx = (addr - 0x600000) >> 12;
             if idx > VIRTIO.len() {
                 error!("out-of-bound I/O memory read 0x{:x}", addr);
                 return 0;
@@ -215,11 +223,11 @@ pub fn phys_read(addr: usize, size: u32) -> u64 {
 }
 
 pub fn phys_write(addr: usize, value: u64, size: u32) {
-    if addr > *IO_BOUNDARY {
-        if addr >= 0x80100000 {
-            PLIC.write_sync(addr - 0x80100000, value, size)
+    if addr < *IO_BOUNDARY {
+        if addr < 0x600000 {
+            PLIC.write_sync(addr - 0x200000, value, size)
         } else {
-            let idx = (addr - 0x80000000) >> 12;
+            let idx = (addr - 0x600000) >> 12;
             if idx > VIRTIO.len() {
                 error!("out-of-bound I/O memory write 0x{:x} = 0x{:x}", addr, value);
                 return;

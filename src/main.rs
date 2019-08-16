@@ -191,12 +191,6 @@ pub fn main() {
             std::process::exit(1);
         }
 
-        // Our current memory layout restrict memory size to 2046MiB
-        if CONFIG.memory > 2046 {
-            eprintln!("{}: at most 2046MiB allowed", interp_name);
-            std::process::exit(1);
-        }
-
         loader = emu::loader::Loader::new(&CONFIG.kernel).unwrap_or_else(|err| {
             eprintln!("{}: cannot load {}: {}", interp_name, CONFIG.kernel.to_string_lossy(), err);
             std::process::exit(1);
