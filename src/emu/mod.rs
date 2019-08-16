@@ -87,13 +87,25 @@ pub fn init() {
     unsafe {
         crate::util::RoCell::replace(&IO_BOUNDARY, 0x7fffffff);
 
+        // First allocate physical memory region, without making them accessing
         let result = libc::mmap(
-            0x80000000 as *mut libc::c_void, 0x80000000,
+            0x200000 as _, 0x1_0000_0000 - 0x200000,
             libc::PROT_NONE,
             libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
             -1, 0
         );
-        assert_ne!(result, libc::MAP_FAILED);
+        if result == libc::MAP_FAILED {
+            panic!("mmap failed while initing");
+        }
+
+        // Allocate wanted memory
+        let result = libc::mprotect(
+            0x200000 as _, (crate::CONFIG.memory * 1024 * 1024) as _,
+            libc::PROT_READ | libc::PROT_WRITE
+        );
+        if result != 0 {
+            panic!("mmap failed while initing");
+        }
     }
     lazy_static::initialize(&PLIC);
     lazy_static::initialize(&VIRTIO);
@@ -162,7 +174,7 @@ pub fn device_tree() -> fdt::Node {
     }
 
     let memory = root.add_node("memory@200000");
-    memory.add_prop("reg", &[0x200000, 0x3FE00000u64][..]);
+    memory.add_prop("reg", &[0x200000, (crate::CONFIG.memory * 1024 * 1024) as u64][..]);
     memory.add_prop("device_type", "memory");
 
     root

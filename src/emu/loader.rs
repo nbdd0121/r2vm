@@ -419,16 +419,6 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>, ctxs: &m
         ctx.registers[10] = 0;
         ctx.prv = 0;
     } else {
-        // Allocate a 1G memory for physical address, starting at 0x200000.
-        let map = libc::mmap(
-            0x200000 as _,
-            0x40000000 - 0x200000,
-            libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED, -1, 0
-        );
-        if map == libc::MAP_FAILED {
-            panic!("mmap failed while loading");
-        }
-
         let size = if file.is_elf() {
             file.load_kernel(0x200000)
         } else {
