@@ -18,6 +18,7 @@ impl Op {
             Op::Cdq {..} => "cdq",
             Op::Cqo {..} => "cqo",
             Op::Div {..} => "div",
+            Op::Hlt {..} => "hlt",
             Op::Idiv {..} => "idiv",
             Op::Imul1 {..} => "imul",
             Op::Imul2 {..} => "imul",
@@ -66,6 +67,7 @@ impl Op {
             Op::Cdqe |
             Op::Cdq |
             Op::Cqo |
+            Op::Hlt |
             Op::Lock |
             Op::Mfence => (),
             Op::Nop => (),

@@ -431,6 +431,7 @@ pub enum Op {
     Cdq,
     Cqo,
     Div(Location),
+    Hlt,
     Idiv(Location),
     Imul1(Location),
     Imul2(Register, Location),

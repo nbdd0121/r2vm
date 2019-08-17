@@ -337,6 +337,7 @@ impl<'a> Decoder<'a> {
             0xE9 => Op::Jmp(Imm(self.dword() as i32 as i64)),
             0xEB => Op::Jmp(Imm(self.byte() as i8 as i64)),
             0xF0 => Op::Lock,
+            0xF4 => Op::Hlt,
             0xF7 => {
                 let (operand, reg) = self.modrm(rex, opsize);
                 match reg as u8 & 7 {

@@ -678,6 +678,7 @@ impl<'a> Encoder<'a> {
             Op::Cdq => self.emit_u8(0x99),
             Op::Cqo => { self.emit_u8(0x48); self.emit_u8(0x99) }
             Op::Div(src) => self.emit_rm(src, 0xF6, 6),
+            Op::Hlt => self.emit_u8(0xf4),
             Op::Idiv(src) => self.emit_rm(src, 0xF6, 7),
             Op::Imul1(src) => {
                 let op_size = src.size();
