@@ -5,7 +5,3 @@ authors = ["Gary Guo <gary@garyguo.net>"]
 edition = "2018"
 
 [dependencies]
-
-[features]
-default = [ "std" ]
-std = []

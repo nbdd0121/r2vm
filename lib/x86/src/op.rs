@@ -387,7 +387,7 @@ impl TryFrom<u8> for ConditionCode {
     }
 }
 
-impl std::ops::Not for ConditionCode {
+impl core::ops::Not for ConditionCode {
     type Output = Self;
     fn not(self) -> Self {
         unsafe { core::mem::transmute(self as u8 ^ 1) }

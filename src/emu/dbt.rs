@@ -1711,7 +1711,7 @@ impl<'a> DbtCompiler<'a> {
                     pc_next += 1;
                     ret
                 });
-                x86::disasm::print_instr((pc_offset + pc) as u64, &self.buffer[pc..pc_next], &op);
+                eprintln!("{}", op.pretty_print((pc_offset + pc) as u64, &self.buffer[pc..pc_next]));
                 pc = pc_next;
             }
         }
