@@ -41,12 +41,12 @@ extern "C" {
     fn read_csr();
     fn write_csr();
     fn fiber_yield_raw();
-    fn helper_step();
+    fn riscv_step();
     fn helper_trap();
     fn helper_read_misalign();
     fn helper_write_misalign();
     fn translate_cache_miss();
-    fn helper_icache_miss();
+    fn insn_translate_cache_miss();
     fn helper_icache_cross_miss();
     fn helper_icache_wrong();
     fn helper_icache_patch2();
@@ -301,12 +301,16 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_step_call(&mut self, op: &Op) {
+        self.emit(Mov(Reg(Register::RDI), OpReg(Register::RBP)));
         // We currently assume that the instruction that we step through are exactly 8 bytes.
-        let op: u64 = unsafe { std::mem::transmute(*op) };
-        self.emit(Mov(Reg(Register::RSI), Imm(op as i64)));
+        let op: i64 = unsafe { std::mem::transmute(*op) };
+        self.emit(Mov(Reg(Register::RSI), Imm(op)));
+        self.emit_helper_call(riscv_step);
+        self.emit(Test(Reg(Register::AL), OpReg(Register::AL)));
+        let jcc_trap = self.emit_jcc_long(ConditionCode::NotEqual);
+
         let ebx = self.get_ebx();
-        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-        self.emit_helper_call(helper_step);
+        self.slow_path.push(SlowPath::Trap(ebx, jcc_trap));
     }
 
     //
@@ -445,11 +449,15 @@ impl<'a> DbtCompiler<'a> {
         let label_miss = self.label();
         self.patch(jcc_miss, label_miss);
 
-        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-        self.emit_helper_call(helper_icache_miss);
+        self.emit(Mov(Reg(Register::RDI), OpReg(Register::RBP)));
+        self.emit_helper_call(insn_translate_cache_miss);
+        self.emit(Mov(Reg(Register::RSI), OpReg(Register::RDX)));
+        self.emit(Test(Reg(Register::AL), OpReg(Register::AL)));
+        let jcc_fin = self.emit_jcc_long(ConditionCode::Equal);
+        self.patch(jcc_fin, label_fin);
 
-        let jmp_fin = self.emit_jmp_long();
-        self.patch(jmp_fin, label_fin);
+        self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
+        self.emit_helper_jmp(helper_trap);
     }
 
     fn emit_chain_tail(&mut self) {
@@ -488,7 +496,7 @@ impl<'a> DbtCompiler<'a> {
         self.patch(jcc_trap, label_trap);
 
         self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-        self.emit_helper_call(helper_trap);
+        self.emit_helper_jmp(helper_trap);
     }
 
     // #region Base Opcode = LOAD, STORE
@@ -568,7 +576,7 @@ impl<'a> DbtCompiler<'a> {
         self.patch(jcc_fin, label_fin);
 
         self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-        self.emit_helper_call(helper_trap);
+        self.emit_helper_jmp(helper_trap);
     }
 
     /// Shared routine for generating load code. Note that this routine does not perform the

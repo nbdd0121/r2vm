@@ -16,9 +16,6 @@ helper_trap:
     movsx rax, bx
     add [rbp + 0x108], rax
 
-    # Pop out trapping PC
-    add rsp, 8
-
     call trap
     ret
 
@@ -28,7 +25,7 @@ helper_read_misalign:
     # Set scause and stval
     mov qword ptr [rbp + 32 * 8 + 16], 4
     mov [rbp + 32 * 8 + 24], rsi
-    call helper_trap
+    jmp helper_trap
 
 # RSI -> vaddr
 .global helper_write_misalign
@@ -36,30 +33,7 @@ helper_write_misalign:
     # Set scause and stval
     mov qword ptr [rbp + 32 * 8 + 16], 5
     mov [rbp + 32 * 8 + 24], rsi
-    call helper_trap
-
-.extern riscv_step
-.global helper_step
-helper_step:
-    mov rdi, rbp
-    sub rsp, 8
-    call riscv_step
-    add rsp, 8
-    test al, al
-    jnz helper_trap
-    ret
-
-.global helper_icache_miss
-.extern insn_translate_cache_miss
-helper_icache_miss:
-    mov rdi, rbp
-    sub rsp, 8
-    call insn_translate_cache_miss
-    add rsp, 8
-    test al, al
-    jnz helper_trap
-    mov rsi, rdx
-    ret
+    jmp helper_trap
 
 .global helper_icache_cross_miss
 .extern icache_cross_miss
@@ -73,10 +47,7 @@ helper_icache_cross_miss:
     mov rdx, [rsp]
     movsx rax, dword ptr [rdx + 1]
     lea rdx, [rdx+rax+5]
-    sub rsp, 8
-    call icache_cross_miss
-    add rsp, 8
-    ret
+    jmp icache_cross_miss
 
 .global helper_icache_wrong
 .extern find_block_and_patch
@@ -84,10 +55,7 @@ helper_icache_wrong:
     mov rdi, rbp
     # Load return address into RSI
     mov rsi, [rsp]
-    sub rsp, 8
-    call find_block_and_patch
-    add rsp, 8
-    ret
+    jmp find_block_and_patch
 
 
 .global helper_icache_patch2
@@ -96,11 +64,8 @@ helper_icache_patch2:
     mov rdi, rbp
     # Load return address into RSI
     mov rsi, [rsp]
-    sub rsp, 8
-    call find_block_and_patch2
-    add rsp, 8
     sub qword ptr [rsp], 5
-    ret
+    jmp find_block_and_patch2
 
 .global helper_check_interrupt
 .extern check_interrupt
