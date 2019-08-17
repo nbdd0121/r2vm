@@ -99,7 +99,7 @@ impl IoMemory for Plic {
         }
         (match addr {
             // Interrupt priority
-            ADDR_PRIORITY_START ... ADDR_PRIORITY_END => {
+            ADDR_PRIORITY_START ..= ADDR_PRIORITY_END => {
                 let irq = (addr - ADDR_PRIORITY_START) / 4;
                 // Out of bound read
                 if irq == 0 || irq >= 32 {
@@ -111,7 +111,7 @@ impl IoMemory for Plic {
                 value as u32
             }
             // Pending bits
-            ADDR_PENDING_START ... ADDR_PENDING_END => {
+            ADDR_PENDING_START ..= ADDR_PENDING_END => {
                 let irq = (addr - ADDR_PENDING_START) * 8;
                 // Out of bound read
                 if irq >= 32 {
@@ -123,7 +123,7 @@ impl IoMemory for Plic {
                 value
             }
             // Interrupt enable bits
-            ADDR_ENABLE_START ... 0x1FFFFF => {
+            ADDR_ENABLE_START ..= 0x1FFFFF => {
                 let ctx = (addr - ADDR_ENABLE_START) / ADDR_ENABLE_SIZE;
                 let irq = (addr & (ADDR_ENABLE_SIZE - 1)) * 8;
                 // Out of bound write
@@ -179,7 +179,7 @@ impl IoMemory for Plic {
 
         match addr {
             // Interrupt priority
-            ADDR_PRIORITY_START ... ADDR_PRIORITY_END => {
+            ADDR_PRIORITY_START ..= ADDR_PRIORITY_END => {
                 let irq = (addr - ADDR_PRIORITY_START) / 4;
                 // Out of bound write
                 if irq == 0 || irq >= 32 {
@@ -190,12 +190,12 @@ impl IoMemory for Plic {
                 trace!(target: "PLIC", "set interrupt priority of {} to {}", irq, value & 7);
             }
             // Pending bits are not writable
-            ADDR_PENDING_START ... ADDR_PENDING_END => {
+            ADDR_PENDING_START ..= ADDR_PENDING_END => {
                 error!(target: "PLIC", "illegal write to interrupt pending 0x{:x} = 0x{:x}", addr, value);
                 return;
             },
             // Interrupt enable bits
-            ADDR_ENABLE_START ... 0x1FFFFF => {
+            ADDR_ENABLE_START ..= 0x1FFFFF => {
                 let ctx = (addr - ADDR_ENABLE_START) / ADDR_ENABLE_SIZE;
                 let irq = (addr & (ADDR_ENABLE_SIZE - 1)) * 8;
                 // Out of bound write

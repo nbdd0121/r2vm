@@ -46,7 +46,7 @@ pub trait Device {
     fn num_queues(&self) -> usize;
 
     /// Operate on a queue associated with the device
-    fn with_queue(&mut self, idx: usize, f: &mut FnMut(&mut Queue));
+    fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue));
 
     /// Reset a device
     fn reset(&mut self);

@@ -41,7 +41,7 @@ impl Device for Rng {
     fn set_status(&mut self, status: u32) { self.status = status }
     fn config_space(&self) -> &[u8] { &[] }
     fn num_queues(&self) -> usize { 1 }
-    fn with_queue(&mut self, _idx: usize, f: &mut FnMut(&mut Queue)) { f(&mut self.queue) }
+    fn with_queue(&mut self, _idx: usize, f: &mut dyn FnMut(&mut Queue)) { f(&mut self.queue) }
     fn reset(&mut self) {
         self.status = 0;
         self.queue.reset();

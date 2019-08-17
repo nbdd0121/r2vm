@@ -717,7 +717,7 @@ impl<'a> Encoder<'a> {
     }
 }
 
-pub fn encode(op: Op, emitter: &mut FnMut(u8)) {
+pub fn encode(op: Op, emitter: &mut dyn FnMut(u8)) {
     let mut encoder = Encoder { emitter };
     encoder.encode(op);
 }

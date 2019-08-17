@@ -102,7 +102,7 @@ impl Device for Network {
     fn set_status(&mut self, status: u32) { self.status = status }
     fn config_space(&self) -> &[u8] { &self.mac }
     fn num_queues(&self) -> usize { 2 } 
-    fn with_queue(&mut self, idx: usize, f: &mut FnMut(&mut Queue)) {
+    fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue)) {
         if idx == 0 {
             f(&mut self.rx.lock().unwrap())
         } else {

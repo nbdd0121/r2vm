@@ -32,7 +32,7 @@ pub trait IoMemorySync: Sync {
     fn write_sync(&self, addr: usize, value: u64, size: u32);
 }
 
-impl IoMemory for IoMemorySync {
+impl IoMemory for dyn IoMemorySync {
     fn read(&mut self, addr: usize, size: u32) -> u64 { self.read_sync(addr, size) }
     fn write(&mut self, addr: usize, value: u64, size: u32) { self.write_sync(addr, value, size) }
 }

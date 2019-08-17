@@ -364,7 +364,7 @@ impl<'a> Decoder<'a> {
     }
 }
 
-pub fn decode(iter: &mut FnMut()->u8) -> Op {
+pub fn decode(iter: &mut dyn FnMut()->u8) -> Op {
     let mut decoder = Decoder { iter };
     decoder.op()
 }

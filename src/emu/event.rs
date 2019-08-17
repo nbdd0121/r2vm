@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 struct Entry {
     time: u64,
-    handler: Box<FnOnce() + Send>,
+    handler: Box<dyn FnOnce() + Send>,
 }
 
 // #region Ordering relation for Entry
@@ -106,7 +106,7 @@ impl EventLoop {
 
     /// Add a new event to the event loop for triggering. If it happens in the past it will be
     /// dequeued and triggered as soon as `cycle` increments for the next time.
-    pub fn queue(&self, cycle: u64, handler: Box<FnOnce() + Send>) {
+    pub fn queue(&self, cycle: u64, handler: Box<dyn FnOnce() + Send>) {
         let mut guard = self.events.lock().unwrap();
         guard.push(Entry {
             time: cycle,
@@ -132,7 +132,7 @@ impl EventLoop {
         self.cycle() / 100
     }
 
-    pub fn queue_time(&self, time: u64, handler: Box<FnOnce() + Send>) {
+    pub fn queue_time(&self, time: u64, handler: Box<dyn FnOnce() + Send>) {
         self.queue(time * 100, handler);
     }
 

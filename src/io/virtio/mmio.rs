@@ -93,7 +93,7 @@ impl IoMemory for Mmio {
                     32768
                 }
             }
-            ADDR_QUEUE_NUM | ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW ... ADDR_QUEUE_USED_HIGH => {
+            ADDR_QUEUE_NUM | ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW ..= ADDR_QUEUE_USED_HIGH => {
                 if self.queue_sel >= self.device.num_queues() {
                     error!(target: "Mmio", "attempting to access unavailable queue {}", self.queue_sel);
                     return 0;
@@ -174,7 +174,7 @@ impl IoMemory for Mmio {
                 }
                 self.device.notify(self.queue_sel);
             }
-            ADDR_QUEUE_NUM ... ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW ... ADDR_QUEUE_USED_HIGH => {
+            ADDR_QUEUE_NUM ..= ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW ..= ADDR_QUEUE_USED_HIGH => {
                 if self.queue_sel >= self.device.num_queues() {
                     error!(target: "Mmio", "attempting to access unavailable queue {}", self.queue_sel);
                     return;
