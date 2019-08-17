@@ -1,3 +1,4 @@
+//! MMU-related helper functions and constants.
 
 pub const PTE_V: u64 = 0x01;
 pub const PTE_R: u64 = 0x02;

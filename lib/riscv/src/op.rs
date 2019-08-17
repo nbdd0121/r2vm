@@ -9,7 +9,7 @@ pub enum Ordering {
     SeqCst  = 3,
 }
 
-use std::sync::atomic::Ordering as MemOrder;
+use core::sync::atomic::Ordering as MemOrder;
 impl From<Ordering> for MemOrder {
     fn from(ord: Ordering) -> Self {
         match ord {

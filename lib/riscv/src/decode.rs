@@ -871,13 +871,3 @@ pub fn decode(bits: u32) -> Op {
         _ => Op::Illegal,
     }
 }
-
-pub fn decode_iter(iter: &mut impl Iterator<Item=u16>) -> Option<(Op, bool)> {
-    let bits = iter.next()?;
-    if bits & 3 == 3 {
-        let hi_bits = iter.next()?;
-        Some((decode((hi_bits as u32) << 16 | bits as u32), false))
-    } else {
-        Some((decode_compressed(bits), true))
-    }
-}

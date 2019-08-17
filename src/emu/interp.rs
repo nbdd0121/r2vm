@@ -1674,16 +1674,16 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> unsafe extern 
             }
             let hi_bits = crate::emu::read_memory::<u16>((phys_pc_end + 2) as usize);
             let bits = (hi_bits as u32) << 16 | bits as u32;
-            let op = riscv::decode::decode(bits);
+            let op = riscv::decode(bits);
             if crate::get_flags().disassemble {
-                riscv::disasm::print_instr(phys_pc_end, bits, &op);
+                eprintln!("{}", op.pretty_print(phys_pc_end, bits));
             }
             phys_pc_end += 4;
             (op, false, bits)
         } else {
-            let op = riscv::decode::decode_compressed(bits);
+            let op = riscv::decode_compressed(bits);
             if crate::get_flags().disassemble {
-                riscv::disasm::print_instr(phys_pc_end, bits as u32, &op);
+                eprintln!("{}", op.pretty_print(phys_pc_end, bits as u32));
             }
             phys_pc_end += 2;
             (op, true, bits as u32)
@@ -1824,8 +1824,8 @@ pub fn trap(ctx: &mut Context) {
         for i in (2..32).step_by(2) {
             eprintln!(
                 "{:-3} = {:16x}  {:-3} = {:16x}",
-                riscv::disasm::REG_NAMES[i], ctx.registers[i],
-                riscv::disasm::REG_NAMES[i + 1], ctx.registers[i + 1]
+                riscv::register_name(i as u8), ctx.registers[i],
+                riscv::register_name(i as u8), ctx.registers[i + 1]
             );
         }
         std::process::exit(1);

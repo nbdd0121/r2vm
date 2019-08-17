@@ -1848,9 +1848,9 @@ impl<'a> DbtCompiler<'a> {
 
 #[no_mangle]
 fn icache_cross_miss(ctx: &mut Context, pc: u64, patch: usize, insn: u32) {
-    let mut op = riscv::decode::decode(insn);
+    let mut op = riscv::decode(insn);
     if crate::get_flags().disassemble {
-        riscv::disasm::print_instr(pc - 2, insn, &op);
+        eprintln!("{}", op.pretty_print(pc - 2, insn));
     }
 
     // We must not emit code for protected ops

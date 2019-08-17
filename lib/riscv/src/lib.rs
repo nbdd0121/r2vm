@@ -1,10 +1,12 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 
 mod csr;
 mod op;
-pub mod disasm;
-pub mod decode;
+mod disasm;
+mod decode;
 pub mod mmu;
 
 pub use csr::Csr;
 pub use op::{Op, Ordering};
+pub use decode::{decode, decode_compressed};
+pub use disasm::register_name;
