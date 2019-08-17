@@ -9,28 +9,15 @@
 use x86::{Op as X86Op, Op::*, Register, Memory, Size, ConditionCode};
 use x86::builder::*;
 use riscv::Op;
-use super::interp::{Context, SharedContext, CACHE_LINE_LOG2_SIZE};
+use super::interp::{Context, CACHE_LINE_LOG2_SIZE};
 use std::convert::TryFrom;
 
 const PAGE_CROSS_RESERVATION: usize = 256;
 
-macro_rules! rbp_offset_of {
-    ($e:ident) => {
-        offset_of!(Context, $e) as i32
-    };
-    (shared.$e:ident) => {
-        offset_of!(Context, shared) + offset_of!(SharedContext, $e)
-    };
-}
-
 macro_rules! memory_of {
-    ($e:ident) => {
-        Register::RBP + offset_of!(Context, $e) as i32
+    ( $($e:ident).* ) => {
+        Register::RBP + offset_of!(Context, $($e).*) as i32
     };
-    (shared.$e:ident) => {{
-        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, $e);
-        Register::RBP + offset as i32
-    }};
 }
 
 #[inline]
@@ -425,7 +412,7 @@ impl<'a> DbtCompiler<'a> {
 
         if cfg!(feature = "direct") && crate::get_flags().user_only { return }
 
-        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, i_line);
+        let offset = offset_of!(Context, shared.i_line);
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
@@ -486,7 +473,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_interrupt_check(&mut self) {
-        let offset = rbp_offset_of!(shared.alarm);
+        let offset = offset_of!(Context, shared.alarm);
         self.emit(Cmp(Mem(Register::RBP + offset as i32), Imm(0)));
         let jcc_helper = self.emit_jcc_long(ConditionCode::NotEqual);
         self.patch_absolute(jcc_helper, helper_check_interrupt as usize);
@@ -517,7 +504,7 @@ impl<'a> DbtCompiler<'a> {
             Some(self.emit_jcc_long(ConditionCode::NotEqual))
         } else { None };
 
-        let offset = rbp_offset_of!(shared.line);
+        let offset = offset_of!(Context, shared.line);
 
         // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));

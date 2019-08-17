@@ -7,8 +7,8 @@ pub use atomic_ext::AtomicExt;
 pub use ro_cell::RoCell;
 
 macro_rules! offset_of {
-    ($ty:ty, $field:ident) => {
-        unsafe { &(*(std::ptr::null() as *const $ty)).$field as *const _ as usize }
+    ($ty:ty, $($field:ident).*) => {
+        unsafe { &(*(std::ptr::null() as *const $ty)) $(.$field)* as *const _ as usize }
     }
 }
 
