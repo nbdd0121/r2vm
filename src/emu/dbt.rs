@@ -295,6 +295,11 @@ impl<'a> DbtCompiler<'a> {
         self.patch_absolute(placeholder, helper as usize);
     }
 
+    fn emit_helper_jcc(&mut self, cc: ConditionCode, helper: unsafe extern "C" fn()) {
+        let placeholder = self.emit_jcc_long(cc);
+        self.patch_absolute(placeholder, helper as usize);
+    }
+
     fn emit_step_call(&mut self, op: &Op) {
         // We currently assume that the instruction that we step through are exactly 8 bytes.
         let op: u64 = unsafe { std::mem::transmute(*op) };
@@ -475,8 +480,7 @@ impl<'a> DbtCompiler<'a> {
     fn emit_interrupt_check(&mut self) {
         let offset = offset_of!(Context, shared.alarm);
         self.emit(Cmp(Mem(Register::RBP + offset as i32), Imm(0)));
-        let jcc_helper = self.emit_jcc_long(ConditionCode::NotEqual);
-        self.patch_absolute(jcc_helper, helper_check_interrupt as usize);
+        self.emit_helper_jcc(ConditionCode::NotEqual, helper_check_interrupt);
     }
 
     fn emit_trap(&mut self, ebx: u32, jcc_trap: PlaceHolder) {
@@ -1632,8 +1636,7 @@ impl<'a> DbtCompiler<'a> {
                 let mem = Register::RSI - if compressed { 1 } else { 3 };
                 let mem = if compressed { mem.word() } else { mem.dword() };
                 self.emit(Cmp(Mem(mem), Imm(bits as i64)));
-                let jcc = self.emit_jcc_long(ConditionCode::NotEqual);
-                self.patch_absolute(jcc, helper_san_fail as usize);
+                self.emit_helper_jcc(ConditionCode::NotEqual, helper_san_fail);
             }
         } else {
             if (self.pc_cur - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE {
