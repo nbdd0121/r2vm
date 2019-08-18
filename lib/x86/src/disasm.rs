@@ -15,6 +15,7 @@ impl Op {
             Op::Cdqe {..} => "cdqe",
             Op::Cmovcc {..} => "cmovcc",
             Op::Cmp {..} => "cmp",
+            Op::Cmpxchg {..} => "cmpxchg",
             Op::Cdq {..} => "cdq",
             Op::Cqo {..} => "cqo",
             Op::Div {..} => "div",
@@ -127,6 +128,7 @@ impl Op {
             Op::Movsx(dst, src) |
             Op::Movzx(dst, src) => write!(fmt, "{}, {}", dst, src)?,
             &Op::Ret(pop) => if pop != 0 { write!(fmt, "{}", pop)? }
+            Op::Cmpxchg(dst, src) |
             Op::Xadd(dst, src) => write!(fmt, "{}, {}", dst, src)?,
             Op::Xchg(dst, src) => write!(fmt, "{}, {}", dst, src)?,
         }

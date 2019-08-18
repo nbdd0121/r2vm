@@ -193,7 +193,7 @@ impl<'a> Decoder<'a> {
             0x80 | 0x84 | 0x86 | 0x88 | 0x8A |
             0xC0 | 0xC6 | 0xD0 | 0xD2 |
             0xF6 |
-            0x0FC0 => {
+            0x0FB0 | 0x0FC0 => {
                 opcode += 1;
                 opsize = Size::Byte;
             }
@@ -229,6 +229,10 @@ impl<'a> Decoder<'a> {
             0x0FAF => {
                 let (src, dst) = self.modrm(rex, opsize);
                 Op::Imul2(dst, src)
+            }
+            0x0FB1 => {
+                 let (dst, src) = self.modrm(rex, opsize);
+                Op::Cmpxchg(dst, src)
             }
             0x0FB6 => {
                 let (src, dst) = self.modrm(rex, opsize);

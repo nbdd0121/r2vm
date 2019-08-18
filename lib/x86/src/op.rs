@@ -428,6 +428,7 @@ pub enum Op {
     Cdqe,
     Cmovcc(Register, Location, ConditionCode),
     Cmp(Location, Operand),
+    Cmpxchg(Location, Register),
     Cdq,
     Cqo,
     Div(Location),

@@ -676,6 +676,11 @@ impl<'a> Encoder<'a> {
                 self.emit_r_rm(op_size, &src, dst as u8, 0x0F40 + cc as u8 as u32);
             }
             Op::Cdq => self.emit_u8(0x99),
+            Op::Cmpxchg(dst, src) => {
+                let op_size = dst.size();
+                assert_eq!(op_size, src.size());
+                self.emit_r_rm(op_size, &dst, src as u8, if op_size == Size::Byte { 0x0FB0 } else { 0x0FB1 });
+            }
             Op::Cqo => { self.emit_u8(0x48); self.emit_u8(0x99) }
             Op::Div(src) => self.emit_rm(src, 0xF6, 6),
             Op::Hlt => self.emit_u8(0xf4),
