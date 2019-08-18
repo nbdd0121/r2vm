@@ -593,17 +593,9 @@ impl<'a> DbtCompiler<'a> {
 
         self.dcache_access(size, true);
 
-        let reg = match size {
-            Size::Byte => Register::DL,
-            Size::Word => Register::DX,
-            Size::Dword => Register::EDX,
-            Size::Qword => Register::RDX,
-        };
-        let mut mem = Register::RSI + 0;
-        mem.size = size;
-
+        let reg = Register::RDX.resize(size);
         self.emit(Mov(Reg(reg), loc_of_register(rs2).resize(size).into()));
-        self.emit(Mov(Mem(mem), OpReg(reg)));
+        self.emit(Mov((Register::RSI + 0).resize(size).into(), reg.into()));
     }
 
     //
@@ -1287,6 +1279,44 @@ impl<'a> DbtCompiler<'a> {
         self.store_reg(rd, Register::RAX);
     }
 
+    fn cmpxchg_w(&mut self, rd: u8, rs1: u8, rs2: u8, action: impl FnOnce(&mut Self)) {
+        self.minstret += 1;
+        self.load_reg(Register::RSI, rs1);
+        self.dcache_access(Size::Dword, true);
+        self.load_reg(Register::EDX, rs2);
+        let mem = Mem((Register::RSI + 0).dword());
+
+        self.emit(Mov(Register::EAX.into(), mem.into()));
+        let label_retry = self.label();
+        self.emit(Mov(Register::ECX.into(), Register::EAX.into()));
+        // Perform action on ECX, EDX and into ECX
+        action(self);
+        self.emit(Lock);
+        self.emit(Cmpxchg(mem, Register::ECX));
+        let jcc_retry = self.emit_jcc_short(ConditionCode::NotEqual);
+        self.patch(jcc_retry, label_retry);
+        self.store_reg(rd, Register::EAX);
+    }
+
+    fn cmpxchg_d(&mut self, rd: u8, rs1: u8, rs2: u8, action: impl FnOnce(&mut Self)) {
+        self.minstret += 1;
+        self.load_reg(Register::RSI, rs1);
+        self.dcache_access(Size::Qword, true);
+        self.load_reg(Register::RDX, rs2);
+        let mem = Mem(Register::RSI + 0);
+
+        self.emit(Mov(Register::RAX.into(), mem.into()));
+        let label_retry = self.label();
+        self.emit(Mov(Register::RCX.into(), Register::RAX.into()));
+        // Perform action on RCX, RDX and into RCX
+        action(self);
+        self.emit(Lock);
+        self.emit(Cmpxchg(mem, Register::RCX));
+        let jcc_retry = self.emit_jcc_short(ConditionCode::NotEqual);
+        self.patch(jcc_retry, label_retry);
+        self.store_reg(rd, Register::RAX);
+    }
+
     //
     // #endregion
 
@@ -1575,43 +1605,79 @@ impl<'a> DbtCompiler<'a> {
                 this.emit(Lock);
                 this.emit(And(Mem((Register::RSI + 0).dword()), OpReg(Register::EAX)));
             }),
+            Op::AmoandW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
+                this.emit(And(Register::ECX.into(), Register::EDX.into()));
+            }),
             Op::AmoandD { rd: 0, rs1, rs2, .. } => self.amo_op_d(0, rs1, rs2, |this| {
                 this.emit(Lock);
                 this.emit(And(Mem(Register::RSI + 0), OpReg(Register::RAX)));
+            }),
+            Op::AmoandD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
+                this.emit(And(Register::RCX.into(), Register::RDX.into()));
             }),
             Op::AmoorW { rd: 0, rs1, rs2, .. } => self.amo_op_w(0, rs1, rs2, |this| {
                 this.emit(Lock);
                 this.emit(Or(Mem((Register::RSI + 0).dword()), OpReg(Register::EAX)));
             }),
+            Op::AmoorW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
+                this.emit(Or(Register::ECX.into(), Register::EDX.into()));
+            }),
             Op::AmoorD { rd: 0, rs1, rs2, .. } => self.amo_op_d(0, rs1, rs2, |this| {
                 this.emit(Lock);
                 this.emit(Or(Mem(Register::RSI + 0), OpReg(Register::RAX)));
+            }),
+            Op::AmoorD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
+                this.emit(Or(Register::RCX.into(), Register::RDX.into()));
             }),
             Op::AmoxorW { rd: 0, rs1, rs2, .. } => self.amo_op_w(0, rs1, rs2, |this| {
                 this.emit(Lock);
                 this.emit(Xor(Mem((Register::RSI + 0).dword()), OpReg(Register::EAX)));
             }),
+            Op::AmoxorW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
+                this.emit(Xor(Register::ECX.into(), Register::EDX.into()));
+            }),
             Op::AmoxorD { rd: 0, rs1, rs2, .. } => self.amo_op_d(0, rs1, rs2, |this| {
                 this.emit(Lock);
                 this.emit(Xor(Mem(Register::RSI + 0), OpReg(Register::RAX)));
             }),
+            Op::AmoxorD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
+                this.emit(Xor(Register::RCX.into(), Register::RDX.into()));
+            }),
+            Op::AmominW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
+                this.emit(Cmp(Register::EDX.into(), Register::ECX.into()));
+                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Less));
+            }),
+            Op::AmominD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
+                this.emit(Cmp(Register::RDX.into(), Register::RCX.into()));
+                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Less));
+            }),
+            Op::AmomaxW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
+                this.emit(Cmp(Register::EDX.into(), Register::ECX.into()));
+                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Greater));
+            }),
+            Op::AmomaxD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
+                this.emit(Cmp(Register::RDX.into(), Register::RCX.into()));
+                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Greater));
+            }),
+            Op::AmominuW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
+                this.emit(Cmp(Register::EDX.into(), Register::ECX.into()));
+                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Below));
+            }),
+            Op::AmominuD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
+                this.emit(Cmp(Register::RDX.into(), Register::RCX.into()));
+                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Below));
+            }),
+            Op::AmomaxuW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
+                this.emit(Cmp(Register::EDX.into(), Register::ECX.into()));
+                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Above));
+            }),
+            Op::AmomaxuD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
+                this.emit(Cmp(Register::RDX.into(), Register::RCX.into()));
+                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Above));
+            }),
 
             Op::ScW {..} |
-            Op::ScD {..} |
-            Op::AmoandW {..} |
-            Op::AmoandD {..} |
-            Op::AmoorW {..} |
-            Op::AmoorD {..} |
-            Op::AmoxorW {..} |
-            Op::AmoxorD {..} |
-            Op::AmominW {..} |
-            Op::AmominD {..} |
-            Op::AmomaxW {..} |
-            Op::AmomaxD {..} |
-            Op::AmominuW {..} |
-            Op::AmominuD {..} |
-            Op::AmomaxuW {..} |
-            Op::AmomaxuD {..} => self.emit_step_call(op),
+            Op::ScD {..} => self.emit_step_call(op),
 
             /* Privileged */
             Op::Sret => self.emit_step_call(op),
