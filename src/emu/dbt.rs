@@ -1579,6 +1579,39 @@ impl<'a> DbtCompiler<'a> {
                 self.emit(Mov(Mem(memory_of!(lr_addr)), OpReg(Register::RBX)));
                 self.emit(Mov(Mem(memory_of!(lr_value)), OpReg(Register::RAX)));
             }
+            Op::ScW { rd, rs1, rs2, .. } => {
+                self.load_reg(Register::RSI, rs1);
+                // We check address match before checking alignment here. This is a little
+                // different from the interpreter, but doesn't make difference to SW.
+                self.emit(Cmp(Mem(memory_of!(lr_addr)), Register::RSI.into()));
+                let jcc_addr_mismatch = self.emit_jcc_short(ConditionCode::NotEqual);
+                // Note: We actually don't need all the slow path because if it isn't there, we
+                // would just fail. This can be optimised later if necessary.
+                self.dcache_access(Size::Dword, true);
+                self.emit(Mov(Register::EAX.into(), OpMem(memory_of!(lr_value).dword())));
+                self.load_reg(Register::EDX, rs2);
+                self.emit(Cmpxchg(Mem((Register::RSI + 0).dword()), Register::EDX));
+                let label = self.label();
+                self.patch(jcc_addr_mismatch, label);
+                // This can either be address mismatch's NE or cmpxchg's NE.
+                self.emit(Setcc(Register::CL.into(), ConditionCode::NotEqual));
+                self.emit(Movsx(Register::ECX, Register::CL.into()));
+                self.store_reg(rd, Register::RCX);
+            }
+            Op::ScD { rd, rs1, rs2, .. } => {
+                self.load_reg(Register::RSI, rs1);
+                self.emit(Cmp(Mem(memory_of!(lr_addr)), Register::RSI.into()));
+                let jcc_addr_mismatch = self.emit_jcc_short(ConditionCode::NotEqual);
+                self.dcache_access(Size::Qword, true);
+                self.emit(Mov(Register::RAX.into(), OpMem(memory_of!(lr_value))));
+                self.load_reg(Register::RDX, rs2);
+                self.emit(Cmpxchg(Mem(Register::RSI + 0), Register::RDX));
+                let label = self.label();
+                self.patch(jcc_addr_mismatch, label);
+                self.emit(Setcc(Register::CL.into(), ConditionCode::NotEqual));
+                self.emit(Movsx(Register::ECX, Register::CL.into()));
+                self.store_reg(rd, Register::RCX);
+            }
             Op::AmoswapW { rd, rs1, rs2, .. } => self.amo_op_w(rd, rs1, rs2, |this| {
                 this.emit(Xchg(Reg(Register::EAX), Mem((Register::RSI + 0).dword())));
             }),
@@ -1675,9 +1708,6 @@ impl<'a> DbtCompiler<'a> {
                 this.emit(Cmp(Register::RDX.into(), Register::RCX.into()));
                 this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Above));
             }),
-
-            Op::ScW {..} |
-            Op::ScD {..} => self.emit_step_call(op),
 
             /* Privileged */
             Op::Sret => self.emit_step_call(op),
