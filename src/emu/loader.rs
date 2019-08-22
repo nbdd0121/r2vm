@@ -371,7 +371,7 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>, ctxs: &m
         };
 
         // Random data
-        let mut rng = rand::rngs::OsRng::new().unwrap();
+        let mut rng = rand::rngs::OsRng;
         push(&mut sp, rng.next_u64());
         push(&mut sp, rng.next_u64());
         push(&mut sp, rng.next_u64());

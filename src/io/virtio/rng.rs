@@ -23,13 +23,13 @@ impl Rng {
 
     /// Create a virtio entropy source device, fulfilled by OS's entropy source.
     pub fn new_os(irq: u32) -> Rng {
-        Self::new(irq, Box::new(rand::rngs::OsRng::new().unwrap()))
+        Self::new(irq, Box::new(rand::rngs::OsRng))
     }
 
     /// Create a virtio entropy source device with a fixed seed.
     /// **This is not cryptographically secure!!!**
     pub fn new_seeded(irq: u32, seed: u64) -> Rng {
-        Self::new(irq, Box::new(rand::rngs::SmallRng::seed_from_u64(seed)))
+        Self::new(irq, Box::new(rand::rngs::StdRng::seed_from_u64(seed)))
     }
 }
 
