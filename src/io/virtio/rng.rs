@@ -1,6 +1,6 @@
 use super::{Device, DeviceId, Queue};
 use rand::SeedableRng;
-use std::io::Write;
+use std::io::Read;
 
 /// A virtio entropy source device.
 pub struct Rng {
@@ -48,11 +48,9 @@ impl Device for Rng {
     }
     fn notify(&mut self, _idx: usize) {
         while let Some(mut buffer) = self.queue.take() {
+            let rng: &mut dyn rand::RngCore = &mut self.rng;
             let mut writer = buffer.writer();
-            let mut io_buffer = Vec::with_capacity(writer.len());
-            unsafe { io_buffer.set_len(io_buffer.capacity()) };
-            self.rng.fill_bytes(&mut io_buffer);
-            writer.write_all(&io_buffer).unwrap();
+            std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();
             unsafe { self.queue.put(buffer); }
         }
 
