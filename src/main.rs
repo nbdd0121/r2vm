@@ -105,6 +105,9 @@ extern {
 }
 
 pub fn main() {
+    // Allow any one to ptrace us, mainly for debugging purpose
+    unsafe { libc::prctl(libc::PR_SET_PTRACER, (-1) as libc::c_long) };
+
     // Top priority: set up page fault handlers so safe_memory features will work.
     emu::signal::init();
     emu::interp::init_fp();
