@@ -8,16 +8,16 @@ all: codegen
 
 clean:
 
-codegen: target/debug/dbt
+codegen: target/debug/rvm
 	cp $< $@
 
-release: target/release/dbt
+release: target/release/rvm
 	cp $< $@
 
-target/debug/dbt: $(RUST_FILES)
+target/debug/rvm: $(RUST_FILES)
 	cargo build
 
-target/release/dbt: $(RUST_FILES)
+target/release/rvm: $(RUST_FILES)
 	cargo build --release
 
 register: codegen

@@ -1,5 +1,7 @@
-# riscv-dbt
+# rvm
 
-This is a dynamic binary translator for running unmodified RISC-V binaries on AMD64 Linux machine. It is written as the University of Cambridge Part II project, and leads to [my dissertation](https://garyguo.net/uploads/riscv-dbt.pdf).
+RVM is the **R**ust **VM** for **R**ISC-**V** **M**achines.
 
-This project has RV64GC interpretation support and can translate instructions in RV64IMC to native AMD64 code for fast execution. It performs the translation by utilising an graph intermediate representation. Theoretically the architecture of this project means this project can be easily extended to support emulation for multiple ISAs on multiple platforms. You can check my dissertation for more technical details.
+RVM uses dynamic binary translation to run RISC-V supervisor and userspace software on AMD64 Linux machines. It is initially based on the my similar C++ project `riscv-dbt`, which written as the University of Cambridge Part II project and leads to [my dissertation](https://garyguo.net/uploads/riscv-dbt.pdf).
+
+RVM aims to use the strength of Rust to build a fast and maintainable simulator and emulator for RISC-V machines.
