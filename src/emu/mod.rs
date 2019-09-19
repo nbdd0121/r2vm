@@ -1,7 +1,7 @@
 use crate::io::IoMemorySync;
 use crate::io::plic::Plic;
 use crate::io::virtio::{Mmio, Block, Rng, P9};
-use spin::Mutex;
+use parking_lot::Mutex;
 use lazy_static::lazy_static;
 
 #[cfg(feature = "slirp")]

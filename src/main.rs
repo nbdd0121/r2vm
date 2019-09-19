@@ -77,7 +77,7 @@ pub fn threaded() -> bool {
 
 use lazy_static::lazy_static;
 lazy_static! {
-    static ref EXIT_REASON: std::sync::Mutex<Option<ExitReason>> = Default::default();
+    static ref EXIT_REASON: parking_lot::Mutex<Option<ExitReason>> = Default::default();
 }
 
 /// Reason for exiting executors
@@ -90,7 +90,7 @@ fn shutdown(reason: ExitReason) {
     // Shutdown event loop as soon as possible
     event_loop().shutdown();
 
-    *EXIT_REASON.lock().unwrap() = Some(reason);
+    *EXIT_REASON.lock() = Some(reason);
 
     // Shutdown all execution threads
     for i in 0..core_count() {
@@ -290,7 +290,7 @@ pub fn main() {
             fibers = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
         }
 
-        match EXIT_REASON.lock().unwrap().as_ref().unwrap() {
+        match EXIT_REASON.lock().as_ref().unwrap() {
             &ExitReason::SetThreaded(threaded) => {
                 unsafe { FLAGS.thread = threaded; }
                 info!("switching to mode threaded={}", threaded);

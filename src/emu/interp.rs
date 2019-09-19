@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicI32, AtomicU32, AtomicI64, AtomicU64};
 use std::sync::atomic::Ordering as MemOrder;
 use crate::util::AtomicExt;
 use lazy_static::lazy_static;
-use std::sync::{Mutex, Condvar};
+use parking_lot::{Mutex, MutexGuard, Condvar};
 
 /// A cache line. `{CacheLine}` is composed of atomic variables because we sometimes need cross-
 /// thread invalidation. Note that usually paddr isn't touched, but by keeping tag and paddr
@@ -132,16 +132,16 @@ impl SharedContext {
     /// Trigger alarms. Will also wake up WFI.
     pub fn fire_alarm(&self, mask: u64) {
         // Necessary to order with wait_alarm
-        let _guard = self.wfi_mutex.lock().unwrap();
+        let _guard = self.wfi_mutex.lock();
         self.alarm.fetch_or(mask, MemOrder::Relaxed);
         self.wfi_condvar.notify_one();
     }
 
     /// Perform a WFI operation. Return after an alarm is fired.
     pub fn wait_alarm(&self) {
-        let guard = self.wfi_mutex.lock().unwrap();
+        let mut guard = self.wfi_mutex.lock();
         if self.alarm.load(MemOrder::Relaxed) != 0 { return }
-        let _ = self.wfi_condvar.wait(guard).unwrap();
+        self.wfi_condvar.wait(&mut guard);
     }
 
     /// Inform the hart that there might be a pending interrupt, but without actually touching
@@ -562,7 +562,7 @@ impl ICache {
 }
 
 lazy_static! {
-    static ref ICACHE: Vec<spin::Mutex<ICache>> = {
+    static ref ICACHE: Vec<Mutex<ICache>> = {
         let core_count = crate::core_count();
         let size = HEAP_SIZE * core_count;
         let ptr = unsafe { libc::mmap(0x7ffec0000000 as *mut _, size as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
@@ -570,7 +570,7 @@ lazy_static! {
         let ptr = ptr as usize;
         let mut vec = Vec::with_capacity(core_count);
         for i in 0..core_count {
-            vec.push(spin::Mutex::new(ICache::new(ptr + HEAP_SIZE * i)));
+            vec.push(Mutex::new(ICache::new(ptr + HEAP_SIZE * i)));
         }
 
         if crate::get_flags().perf {
@@ -583,11 +583,11 @@ lazy_static! {
     };
 }
 
-fn icache(hartid: u64) -> spin::MutexGuard<'static, ICache> {
+fn icache(hartid: u64) -> MutexGuard<'static, ICache> {
     ICACHE[hartid as usize].lock()
 }
 
-fn icaches() -> impl Iterator<Item = spin::MutexGuard<'static, ICache>> {
+fn icaches() -> impl Iterator<Item = MutexGuard<'static, ICache>> {
     ICACHE.iter().map(|x| x.lock())
 }
 

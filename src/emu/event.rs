@@ -1,12 +1,9 @@
 //! This module handles event-driven simulation
 
 use std::collections::BinaryHeap;
-use std::sync::Mutex;
-
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-
-use std::sync::Condvar;
 use std::time::{Duration, Instant};
+use parking_lot::{Mutex, MutexGuard, Condvar};
 
 struct Entry {
     time: u64,
@@ -75,7 +72,7 @@ impl EventLoop {
     pub fn shutdown(&self) {
         // Acquire the lock so nobody is modifying the data structures when we are touching some
         // time-sensitive data.
-        let guard = self.events.lock().unwrap();
+        let guard = self.events.lock();
         // As event loops can be restarted after shutdown, we need to synchonize non-threaded and
         // threaded counters.
         if crate::threaded() {
@@ -107,7 +104,7 @@ impl EventLoop {
     /// Add a new event to the event loop for triggering. If it happens in the past it will be
     /// dequeued and triggered as soon as `cycle` increments for the next time.
     pub fn queue(&self, cycle: u64, handler: Box<dyn FnOnce() + Send>) {
-        let mut guard = self.events.lock().unwrap();
+        let mut guard = self.events.lock();
         guard.push(Entry {
             time: cycle,
             handler,
@@ -116,7 +113,7 @@ impl EventLoop {
         if crate::threaded() {
             // If the event just queued is the next event, we need to wake the event loop up.
             if guard.peek().unwrap().time == cycle {
-                self.condvar.notify_one()
+                self.condvar.notify_one();
             }
         } else {
             // It's okay to be relaxed because guard's release op will order it.
@@ -137,7 +134,7 @@ impl EventLoop {
     }
 
     /// Handle all events at or before `cycle`, and return the cycle of next event if any.
-    fn handle_events(&self, guard: &mut std::sync::MutexGuard<BinaryHeap<Entry>>, cycle: u64) -> Option<u64> {
+    fn handle_events(&self, guard: &mut MutexGuard<BinaryHeap<Entry>>, cycle: u64) -> Option<u64> {
         loop {
             let time = match guard.peek() {
                 None => return None,
@@ -152,7 +149,7 @@ impl EventLoop {
     }
 
     pub fn event_loop(&self) {
-        let mut guard = self.events.lock().unwrap();
+        let mut guard = self.events.lock();
         loop {
             if self.shutdown.load(Ordering::Relaxed) {
                 self.shutdown.store(false, Ordering::Relaxed);
@@ -161,15 +158,19 @@ impl EventLoop {
             let cycle = self.cycle();
             let result = self.handle_events(&mut guard, cycle);
             if crate::threaded() {
-                guard = match result {
-                    None => self.condvar.wait(guard).unwrap(),
-                    Some(v) => self.condvar.wait_timeout(guard, Duration::from_micros(v - cycle)).unwrap().0,
+                match result {
+                    None => {
+                        self.condvar.wait(&mut guard);
+                    }
+                    Some(v) => {
+                        self.condvar.wait_for(&mut guard, Duration::from_micros(v - cycle));
+                    }
                 }
             } else {
                 self.next_event.store(result.unwrap_or(u64::max_value()), Ordering::Relaxed);
-                std::mem::drop(guard);
-                unsafe { event_loop_wait() }
-                guard = self.events.lock().unwrap();
+                MutexGuard::unlocked(&mut guard, || {
+                    unsafe { event_loop_wait() }
+                });
             }
         }
     }

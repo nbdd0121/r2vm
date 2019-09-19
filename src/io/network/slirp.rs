@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use libslirp as slirp;
 use std::os::unix::io::RawFd;
 
@@ -28,7 +28,7 @@ unsafe impl Send for Timer {}
 impl Timer {
     fn check(&mut self) {
         if crate::EVENT_LOOP.time() >= self.time {
-            let _guard = self.inner.lock().unwrap();
+            let _guard = self.inner.lock();
             (self.func)();
             self.time = u64::max_value()
         }
@@ -70,20 +70,20 @@ impl slirp::context::Handler for Handler {
     fn timer_mod(&mut self, timer: &mut Box<Self::Timer>, expire_time: i64) {
         // Compute the new expiration time
         let time = crate::EVENT_LOOP.time() + (expire_time * 1000) as u64;
-        let mut inner = timer.lock().unwrap();
+        let mut inner = timer.lock();
         inner.time = time;
         let timer_clone = timer.clone();
-        crate::EVENT_LOOP.queue_time(time, Box::new(move || timer_clone.lock().unwrap().check()));
+        crate::EVENT_LOOP.queue_time(time, Box::new(move || timer_clone.lock().check()));
     }
 
     fn timer_free(&mut self, timer: Box<Self::Timer>) {
-        timer.lock().unwrap().time = u64::max_value();
+        timer.lock().time = u64::max_value();
     }
 }
 
 // The main poll loop
 fn poll_loop(slirp: Arc<Mutex<Inner>>) {
-    let mut guard = slirp.lock().unwrap();
+    let mut guard = slirp.lock();
     loop {
         if guard.stop { return }
 
@@ -106,7 +106,7 @@ fn poll_loop(slirp: Arc<Mutex<Inner>>) {
 
         std::mem::drop(guard);
         let err = unsafe { libc::poll(vec.as_mut_ptr(), vec.len() as _, timeout as _) };
-        guard = slirp.lock().unwrap();
+        guard = slirp.lock();
 
         guard.slirp.as_mut().unwrap().pollfds_poll(err == -1, |idx| {
             let revents = vec[idx as usize].revents;
@@ -136,7 +136,7 @@ impl Slirp {
         let (tx, rx) = bounded(2);
         let inner = Arc::new(Mutex::new(Inner { slirp: None, stop: false }));
         let slirp = slirp::context::Context::new(&slirp_opt, Handler(tx, inner.clone()));
-        inner.lock().unwrap().slirp = Some(slirp);
+        inner.lock().slirp = Some(slirp);
         let clone = inner.clone();
         std::thread::spawn(move || poll_loop(clone));
         Self {
@@ -148,13 +148,13 @@ impl Slirp {
 
 impl Drop for Slirp {
     fn drop(&mut self) {
-        self.inner.lock().unwrap().stop = true;
+        self.inner.lock().stop = true;
     }
 }
 
 impl super::Network for Slirp {
     fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.lock().unwrap().slirp.as_mut().unwrap().input(buf);
+        self.inner.lock().slirp.as_mut().unwrap().input(buf);
         Ok(buf.len())
     }
 

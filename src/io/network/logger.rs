@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use byteorder::{LE, WriteBytesExt};
 use std::io::{Write, Result};
 use std::fs::File;
@@ -29,7 +30,7 @@ impl<T: Network> Logger<T> {
 
     fn log(&self, buf: &[u8]) -> Result<()> {
         let now = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
-        let mut file = self.file.lock().unwrap();
+        let mut file = self.file.lock();
         file.write_u32::<LE>(now.as_secs() as u32)?;
         file.write_u32::<LE>(now.subsec_micros())?;
         file.write_u32::<LE>(buf.len() as u32)?;

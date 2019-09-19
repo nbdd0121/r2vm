@@ -1,7 +1,7 @@
 use super::{Device, DeviceId, Queue};
 use std::io::{Read, Write, Seek, SeekFrom};
 use std::sync::Arc;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use crate::io::network::{Network as NetworkDevice};
 
 const VIRTIO_BLK_F_MAC: usize = 5;
@@ -28,7 +28,7 @@ pub struct Network {
 }
 
 fn send_packet(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
-    let mut queue = queue.lock().unwrap();
+    let mut queue = queue.lock();
     if let Some(mut buffer) = queue.take() {
         let mut writer = buffer.writer();
         let header: [u8; std::mem::size_of::<VirtioNetHeader>()] = {
@@ -104,14 +104,14 @@ impl Device for Network {
     fn num_queues(&self) -> usize { 2 } 
     fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue)) {
         if idx == 0 {
-            f(&mut self.rx.lock().unwrap())
+            f(&mut self.rx.lock())
         } else {
             f(&mut self.tx)
         }
     }
     fn reset(&mut self) {
         self.status = 0;
-        self.rx.lock().unwrap().reset();
+        self.rx.lock().reset();
         self.tx.reset();
     }
     fn notify(&mut self, idx: usize) {
