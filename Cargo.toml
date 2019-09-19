@@ -22,7 +22,6 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
 libslirp-sys = { version = "4.0", optional = true }
 libslirp = { path = "lib/libslirp-rs", optional = true }
-crossbeam-channel = { version = "0.3", optional = true }
 eui48 = "0.4"
 lock_api = "0.3"
 parking_lot = "0.9"
@@ -47,4 +46,4 @@ debug = true
 default = ["slirp"]
 direct = []
 sanitize = []
-slirp = ["libslirp-sys", "libslirp", "crossbeam-channel"]
+slirp = ["libslirp-sys", "libslirp"]

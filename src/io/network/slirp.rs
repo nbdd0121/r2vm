@@ -3,11 +3,11 @@ use parking_lot::Mutex;
 use libslirp as slirp;
 use std::os::unix::io::RawFd;
 
-use crossbeam_channel::{bounded, Sender, Receiver};
+use std::sync::mpsc::{sync_channel, SyncSender, Receiver};
 
 pub struct Slirp {
     inner: Arc<Mutex<Inner>>,
-    rx: Receiver<Vec<u8>>,
+    rx: Mutex<Receiver<Vec<u8>>>,
 }
 
 struct Inner {
@@ -15,7 +15,7 @@ struct Inner {
     stop: bool,
 }
 
-struct Handler(Sender<Vec<u8>>, Arc<Mutex<Inner>>);
+struct Handler(SyncSender<Vec<u8>>, Arc<Mutex<Inner>>);
 
 struct Timer {
     inner: Arc<Mutex<Inner>>,
@@ -133,7 +133,7 @@ impl Slirp {
             dns_suffixes: Vec::new(),
             domainname: None,
         };
-        let (tx, rx) = bounded(2);
+        let (tx, rx) = sync_channel(2);
         let inner = Arc::new(Mutex::new(Inner { slirp: None, stop: false }));
         let slirp = slirp::context::Context::new(&slirp_opt, Handler(tx, inner.clone()));
         inner.lock().slirp = Some(slirp);
@@ -141,7 +141,7 @@ impl Slirp {
         std::thread::spawn(move || poll_loop(clone));
         Self {
             inner,
-            rx,
+            rx: Mutex::new(rx),
         }
     }
 }
@@ -159,7 +159,7 @@ impl super::Network for Slirp {
     }
 
     fn recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let buffer = self.rx.recv().unwrap();
+        let buffer = self.rx.lock().recv().unwrap();
         let len = buffer.len().min(buf.len());
         buf[..len].copy_from_slice(&buffer[..len]);
         Ok(len)
