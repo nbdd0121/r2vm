@@ -165,7 +165,7 @@ pub fn device_tree() -> fdt::Node {
     plic.add_prop("compatible", "sifive,plic-1.0.0");
     plic.add_prop("riscv,ndev", 31u32);
     plic.add_prop("reg", &[0x200000u64, 0x400000][..]);
-    let mut vec: Vec<u32> = Vec::with_capacity(8);
+    let mut vec: Vec<u32> = Vec::with_capacity(core_count as usize * 2);
     for i in 0..core_count {
         vec.push(i + 1);
         vec.push(9);

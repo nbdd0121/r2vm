@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use parking_lot::Mutex;
 use byteorder::{LE, WriteBytesExt};
 use std::io::{Write, Result};
@@ -7,7 +6,7 @@ use std::fs::File;
 use super::Network;
 
 pub struct Logger<T: Network> {
-    file: Arc<Mutex<File>>,
+    file: Mutex<File>,
     network: T,
 }
 
@@ -23,7 +22,7 @@ impl<T: Network> Logger<T> {
         file.write_u32::<LE>(1).unwrap();
 
         Self {
-            file: Arc::new(Mutex::new(file)),
+            file: Mutex::new(file),
             network,
         }
     }

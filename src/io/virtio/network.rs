@@ -68,12 +68,10 @@ fn send_packet(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
 fn thread_run(iface: Arc<dyn NetworkDevice>, queue: Arc<Mutex<Queue>>, irq: u32) {
     // There's no stop mechanism, but we don't destroy devices anyway, so that's okay.
     std::thread::spawn(move || {
+        let mut buffer = [0; 2048];
         loop {
-            let mut buffer = Vec::with_capacity(2048);
-            unsafe { buffer.set_len(2048) };
             let len = iface.recv(&mut buffer).unwrap();
-            buffer.truncate(len);
-            send_packet(&queue, &buffer, irq);
+            send_packet(&queue, &buffer[..len], irq);
         }
     });
 }
