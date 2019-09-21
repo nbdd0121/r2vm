@@ -269,6 +269,16 @@ impl<'a> Decoder<'a> {
                 let imm = self.immediate(opsize.cap_to_dword());
                 Self::decode_alu(Reg(Self::register_of_size(0, opsize, rex)), Imm(imm), (opcode as u8) >> 3)
             }
+            0x50 ..= 0x57 => {
+                let reg_id = if rex & 0x1 != 0 { 8 } else { 0 } | opcode as u8 & 7;
+                let reg = Self::register_of_size(reg_id, if opsize == Size::Dword { Size::Qword } else { opsize }, rex);
+                Op::Push(reg.into())
+            }
+            0x58 ..= 0x5F => {
+                let reg_id = if rex & 0x1 != 0 { 8 } else { 0 } | opcode as u8 & 7;
+                let reg = Self::register_of_size(reg_id, if opsize == Size::Dword { Size::Qword } else { opsize }, rex);
+                Op::Pop(reg.into())
+            }
             0x63 => {
                 let (src, dst) = self.modrm(rex, opsize);
                 Op::Movsx(dst, src.resize(Size::Dword))
