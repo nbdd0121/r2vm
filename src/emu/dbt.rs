@@ -138,6 +138,7 @@ impl<'a> DbtCompiler<'a> {
         PlaceHolder::Dword(self.len)
     }
 
+    #[allow(dead_code)]
     fn emit_jmp_short(&mut self) -> PlaceHolder {
         self.emit(Jmp(Imm(0)));
         PlaceHolder::Byte(self.len)
@@ -1719,8 +1720,17 @@ impl<'a> DbtCompiler<'a> {
                 self.emit_helper_jcc(ConditionCode::NotEqual, helper_san_fail);
             }
         } else {
+            // This instruction will access a new cache line.
             if (self.pc_cur - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE {
-                self.emit_icache_access(self.pc_end - 1, false);
+                // We don't need to generate cache line access for the first instruction, as by
+                // jumping to this DBT-ed block:
+                // * find_block is called, which accesses the cache line already;
+                // * OR is the result of fall-through, which either does not leave the cache line
+                //   or relevant access is already generated;
+                // * OR entered via the speculation guard, which have accessed cache line already.
+                if self.pc_start != self.pc_cur {
+                    self.emit_icache_access(self.pc_end - 1, false);
+                }
             }
         }
 
