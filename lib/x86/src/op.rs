@@ -252,12 +252,14 @@ impl Location {
 }
 
 impl From<Register> for Location {
+    #[inline]
     fn from(reg: Register) -> Self {
         Location::Reg(reg)
     }
 }
 
 impl From<Memory> for Location {
+    #[inline]
     fn from(mem: Memory) -> Self {
         Location::Mem(mem)
     }
@@ -305,18 +307,21 @@ impl Operand {
 }
 
 impl From<Register> for Operand {
+    #[inline]
     fn from(reg: Register) -> Self {
         Operand::Reg(reg)
     }
 }
 
 impl From<Memory> for Operand {
+    #[inline]
     fn from(mem: Memory) -> Self {
         Operand::Mem(mem)
     }
 }
 
 impl From<Location> for Operand {
+    #[inline]
     fn from(loc: Location) -> Self {
         match loc {
             Location::Reg(it) => Operand::Reg(it),
