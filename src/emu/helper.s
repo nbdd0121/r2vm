@@ -57,15 +57,19 @@ helper_icache_wrong:
     mov rsi, [rsp]
     jmp find_block_and_patch
 
-
 .global helper_icache_patch2
-.extern find_block_and_patch2
 helper_icache_patch2:
+    # Load return address into RBX
+    pop rbx
     mov rdi, rbp
-    # Load return address into RSI
-    mov rsi, [rsp]
-    sub qword ptr [rsp], 5
-    jmp find_block_and_patch2
+    call find_block
+    # RBX contains the RIP past the call instruction
+    # So we RAX - RBX will be the offset needed to patch the offset.
+    mov rdx, rax
+    sub rdx, rbx
+    mov dword ptr [rbx - 5], 0xE9
+    mov [rbx - 4], edx
+    jmp rax
 
 .global helper_check_interrupt
 .extern check_interrupt
