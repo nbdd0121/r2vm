@@ -164,6 +164,12 @@ impl<'a> Encoder<'a> {
                         return;
                     }
 
+                    // [RIP + disp32]
+                    (Some(Register::RIP), None) => {
+                        self.emit_u8((reg_num << 3) | 0b101);
+                        self.emit_u32(it.displacement as u32);
+                    }
+
                     // [RSP/R12 + disp]. We need a SIB byte in this case
                     (Some(Register::RSP), None) |
                     (Some(Register::R12), None) => {

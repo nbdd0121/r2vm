@@ -85,9 +85,10 @@ impl<'a> Decoder<'a> {
             return (Location::Reg(operand), reg)
         }
 
-        if modb == 0b00 && rm == 0b100 {
+        if modb == 0b00 && rm == 0b101 {
             // rip-relative addressing not yet supported
-            unimplemented!()
+            let displacement = self.dword() as i32;
+            return (Location::Mem(Register::RIP + displacement), reg)
         }
 
         let mut mem = Memory {
@@ -311,6 +312,14 @@ impl<'a> Decoder<'a> {
             0x8B => {
                 let (operand, reg) = self.modrm(rex, opsize);
                 Op::Mov(reg.into(), operand.into())
+            }
+            0x8D => {
+                if let (Mem(operand), reg) = self.modrm(rex, opsize) {
+                    Op::Lea(reg, operand)
+                } else {
+                    // LEA with register src is illegal
+                    Op::Illegal
+                }
             }
             0x90 => Op::Nop,
             0x98 => match opsize {

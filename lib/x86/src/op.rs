@@ -106,6 +106,8 @@ pub enum Register {
     R15B = 15 | REG_GPB, R15W = 15 | REG_GPW, R15D = 15 | REG_GPD, R15 = 15 | REG_GPQ,
     // Special register that requires REX prefix to access.
     SPL = 4 | REG_GPB2, BPL = 5 | REG_GPB2, SIL = 6 | REG_GPB2, DIL = 7 | REG_GPB2,
+    // Special register that should only be used for base register of memory
+    RIP = 0x60,
 }
 
 impl Register {
@@ -144,7 +146,7 @@ impl Register {
     }
 }
 
-const REG_NAMES : [&str; 0x48] = [
+const REG_NAMES : [&str; 0x51] = [
     "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh",
     "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
     "ax", "cx", "dx", "bx", "sp", "bp", "si", "di",
@@ -153,11 +155,13 @@ const REG_NAMES : [&str; 0x48] = [
     "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
     "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
     "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
-    "(unknown)", "(unknown)", "(unknown)", "(unknown)", "spl", "bpl", "sil", "dil"
+    "", "", "", "", "spl", "bpl", "sil", "dil",
+    "", "", "", "", "", "", "", "",
+    "rip"
 ];
 
 fn register_name(reg_num: u8) -> &'static str {
-    if reg_num < 0x10 || reg_num >= 0x58 { return "(unknown)" }
+    if reg_num < 0x10 || reg_num >= 0x61 { return "(unknown)" }
     REG_NAMES[(reg_num - 0x10) as usize]
 }
 
