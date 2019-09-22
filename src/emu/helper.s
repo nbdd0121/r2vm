@@ -49,11 +49,6 @@ helper_icache_cross_miss:
     lea rdx, [rdx+rax+5]
     jmp icache_cross_miss
 
-.global helper_always_pred_miss
-helper_always_pred_miss:
-    pop rbx
-    jmp helper_pred_miss
-
 .global helper_patch_direct_jump
 .extern find_block
 helper_patch_direct_jump:
@@ -93,9 +88,8 @@ helper_pred_miss:
     call find_block
     # RBX contains the RIP past the call instruction
     # So we RAX - RBX will be the offset needed to patch the offset.
-    mov rcx, rax
-    sub rcx, rbx
-    mov [rbx - 4], ecx
+    sub rax, rbx
+    mov [rbx - 4], eax
     jmp rdx
 
 .global fiber_interp_run

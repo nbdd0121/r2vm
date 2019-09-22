@@ -41,7 +41,6 @@ extern "C" {
     fn translate_cache_miss();
     fn insn_translate_cache_miss();
     fn helper_icache_cross_miss();
-    fn helper_always_pred_miss();
     fn helper_patch_direct_jump();
     fn helper_check_interrupt();
     fn helper_san_fail();
@@ -461,7 +460,10 @@ impl<'a> DbtCompiler<'a> {
 
     fn emit_chain_tail(&mut self) {
         assert_eq!(self.get_ebx(), 0);
-        self.emit_helper_call(helper_always_pred_miss);
+        // Save the address to patch for misprediction
+        self.emit(Lea(Register::RBX, Register::RIP + 5));
+        // 5 bytes
+        self.emit_helper_jmp(helper_pred_miss);
     }
 
     fn emit_interrupt_check(&mut self) {
@@ -1760,7 +1762,6 @@ impl<'a> DbtCompiler<'a> {
         self.pc_cur = pc;
         self.pc_rel = pc;
 
-        self.emit(Pop(Register::RBX.into()));
         self.emit_icache_access(pc, true);
         if let Ok(pc32) = i32::try_from(pc as i64) {
             self.emit(Cmp(Register::RSI.into(), Imm(pc32 as i64)));

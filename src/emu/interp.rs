@@ -1721,9 +1721,6 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
     (code_fn, nonspec_fn)
 }
 
-extern "C" {
-    fn helper_always_pred_miss();
-}
 extern "C" fn no_op() {}
 
 #[no_mangle]
@@ -1733,7 +1730,7 @@ extern "C" fn find_block(ctx: &mut Context) -> (usize, usize) {
         Ok(pc) => pc,
         Err(_) => {
             trap(ctx);
-            return (helper_always_pred_miss as usize, no_op as usize);
+            return (no_op as usize, no_op as usize);
         }
     };
     let mut icache = icache(ctx.hartid);
