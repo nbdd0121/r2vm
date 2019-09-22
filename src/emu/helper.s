@@ -49,27 +49,25 @@ helper_icache_cross_miss:
     lea rdx, [rdx+rax+5]
     jmp icache_cross_miss
 
-.global helper_icache_wrong
-.extern find_block_and_patch
-helper_icache_wrong:
-    mov rdi, rbp
-    # Load return address into RSI
-    mov rsi, [rsp]
-    jmp find_block_and_patch
+.global helper_always_pred_miss
+helper_always_pred_miss:
+    pop rbx
+    jmp helper_pred_miss
 
 .global helper_icache_patch2
+.extern find_block
 helper_icache_patch2:
-    # Load return address into RBX
     pop rbx
     mov rdi, rbp
     call find_block
     # RBX contains the RIP past the call instruction
-    # So we RAX - RBX will be the offset needed to patch the offset.
-    mov rdx, rax
-    sub rdx, rbx
+    # So we RDX - RBX will be the offset needed to patch the offset.
+    # Note we use RDX as it is the nonspeculative entry point
+    mov rax, rdx
+    sub rax, rbx
     mov dword ptr [rbx - 5], 0xE9
-    mov [rbx - 4], edx
-    jmp rax
+    mov [rbx - 4], eax
+    jmp rdx
 
 .global helper_check_interrupt
 .extern check_interrupt
@@ -89,6 +87,22 @@ helper_check_interrupt:
 helper_san_fail:
     ud2
 
+.global helper_pred_miss
+helper_pred_miss:
+    # Sanity check: RBX should never be zero
+    test rbx, rbx
+    je helper_san_fail
+
+    mov rdi, rbp
+    call find_block
+    # RBX contains the RIP past the call instruction
+    # So we RAX - RBX will be the offset needed to patch the offset.
+    mov rdx, rax
+    sub rdx, rbx
+    mov [rbx - 4], edx
+    push rbx
+    jmp rax
+
 .extern find_block
 .global fiber_interp_run
 fiber_interp_run:
@@ -96,5 +110,5 @@ fiber_interp_run:
     sub rsp, 8
     call find_block
     add rsp, 8
-    call rax
+    call rdx
     jmp fiber_interp_run

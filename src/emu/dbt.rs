@@ -41,10 +41,11 @@ extern "C" {
     fn translate_cache_miss();
     fn insn_translate_cache_miss();
     fn helper_icache_cross_miss();
-    fn helper_icache_wrong();
+    fn helper_always_pred_miss();
     fn helper_icache_patch2();
     fn helper_check_interrupt();
     fn helper_san_fail();
+    fn helper_pred_miss();
 }
 
 pub struct DbtCompiler<'a> {
@@ -71,6 +72,9 @@ pub struct DbtCompiler<'a> {
 
     /// `ctx.instret`, relative to `instret` before entering the basic block.
     instret_rel: u32,
+
+    /// The offset past the speculative guard.
+    pub speculative_len: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -113,6 +117,7 @@ impl<'a> DbtCompiler<'a> {
             pc_rel: 0,
             instret: 0,
             instret_rel: 0,
+            speculative_len: 0,
         }
     }
 
@@ -455,27 +460,7 @@ impl<'a> DbtCompiler<'a> {
 
     fn emit_chain_tail(&mut self) {
         assert_eq!(self.get_ebx(), 0);
-        self.emit_icache_access(self.pc_rel, true);
-
-        // Check if the current block is the intended block to execute
-        self.emit(Mov(Reg(Register::RAX), Imm(0x100000000)));
-        // 3 bytes
-        self.emit(Cmp(Reg(Register::RAX), OpReg(Register::RSI)));
-        // 2 bytes
-        let jcc_wrong = self.emit_jcc_short(ConditionCode::NotEqual);
-        let label_wrong_ret = self.label();
-        // 5 bytes
-        self.emit(Jmp(Imm(0x7fffffff)));
-
-        // As this is the end of the function, we can emit slow path directly here without
-        // disturbing the control flow. This additionally make encoding shorter.
-
-        let label_wrong = self.label();
-        self.patch(jcc_wrong, label_wrong);
-        // 5 bytes
-        self.emit_helper_call(helper_icache_wrong);
-        let jmp_wrong_ret = self.emit_jmp_short();
-        self.patch(jmp_wrong_ret, label_wrong_ret);
+        self.emit_helper_call(helper_always_pred_miss);
     }
 
     fn emit_interrupt_check(&mut self) {
@@ -1764,6 +1749,18 @@ impl<'a> DbtCompiler<'a> {
         self.pc_start = pc;
         self.pc_cur = pc;
         self.pc_rel = pc;
+
+        self.emit(Pop(Register::RBX.into()));
+        self.emit_icache_access(pc, true);
+        if let Ok(pc32) = i32::try_from(pc as i64) {
+            self.emit(Cmp(Register::RSI.into(), Imm(pc32 as i64)));
+        } else {
+            self.emit(Mov(Register::RAX.into(), Imm(pc as i64)));
+            self.emit(Cmp(Register::RSI.into(), Register::RAX.into()));
+        }
+        self.emit_helper_jcc(ConditionCode::NotEqual, helper_pred_miss);
+
+        self.speculative_len = self.len;
     }
 
     /// Generate slow path.

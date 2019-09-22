@@ -373,12 +373,12 @@ pub fn icache_invalidate(start: usize, end: usize) {
         let keys: Vec<u64> = icache.s_map.range(start .. end).map(|(k,_)|*k).collect();
         for key in keys {
             let blk = icache.s_map.remove(&key).unwrap();
-            unsafe { *(blk as *mut u8) = 0xC3 }
+            unsafe { *(blk.1 as *mut u8) = 0xC3 }
         }
         let keys: Vec<u64> = icache.u_map.range(start .. end).map(|(k,_)|*k).collect();
         for key in keys {
             let blk = icache.u_map.remove(&key).unwrap();
-            unsafe { *(blk as *mut u8) = 0xC3 }
+            unsafe { *(blk.1 as *mut u8) = 0xC3 }
         }
     }
 }
@@ -497,8 +497,9 @@ use std::collections::BTreeMap;
 const HEAP_SIZE: usize = 1024 * 1024 * 32;
 
 struct ICache {
-    s_map: BTreeMap<u64, usize>,
-    u_map: BTreeMap<u64, usize>,
+    // The tuple stores (start, non-speculative start)
+    s_map: BTreeMap<u64, (usize, usize)>,
+    u_map: BTreeMap<u64, (usize, usize)>,
     heap_start: usize,
     heap_offset: usize,
 }
@@ -1649,9 +1650,7 @@ pub fn riscv_step(ctx: &mut Context, op: u64) -> Result<(), ()> {
     step(ctx, &op)
 }
 
-extern "C" fn no_op() {}
-
-fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> usize {
+fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize) {
     let mut phys_pc_end = phys_pc;
 
     if crate::get_flags().disassemble {
@@ -1709,25 +1708,32 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> usize {
     // Actually commit the space we allocated
     icache.alloc_size(compiler.len);
 
+    let spec_len = compiler.speculative_len;
     let code_fn = code.as_ptr() as usize;
+    let nonspec_fn = code_fn + spec_len;
     let map = if prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
-    map.insert(phys_pc, code_fn);
+    map.insert(phys_pc, (code_fn, nonspec_fn));
 
     for i in 0..crate::core_count() {
         crate::shared_context(i).protect_code(phys_pc &! 4095);
     }
 
-    code_fn
+    (code_fn, nonspec_fn)
 }
 
+extern "C" {
+    fn helper_always_pred_miss();
+}
+extern "C" fn no_op() {}
+
 #[no_mangle]
-fn find_block(ctx: &mut Context) -> usize {
+extern "C" fn find_block(ctx: &mut Context) -> (usize, usize) {
     let pc = ctx.pc;
     let phys_pc = match insn_translate(ctx, pc) {
         Ok(pc) => pc,
         Err(_) => {
             trap(ctx);
-            return no_op as usize
+            return (helper_always_pred_miss as usize, no_op as usize);
         }
     };
     let mut icache = icache(ctx.hartid);
@@ -1736,31 +1742,6 @@ fn find_block(ctx: &mut Context) -> usize {
         Some(v) => v,
         None => translate_code(&mut icache, ctx.prv, phys_pc),
     }
-}
-
-#[no_mangle]
-fn find_block_and_patch(ctx: &mut Context, ret: usize) {
-    let pc = ctx.pc;
-    let phys_pc = match insn_translate(ctx, pc) {
-        Ok(pc) => pc,
-        Err(_) => {
-            trap(ctx);
-            unreachable!();
-            // return no_op
-        }
-    };
-
-    // Access the cache for blocks
-    let mut icache = icache(ctx.hartid);
-    let map = if ctx.prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
-    let dbt_code = match map.get(&phys_pc).copied() {
-        Some(v) => v,
-        None => translate_code(&mut icache, ctx.prv, phys_pc),
-    };
-
-    unsafe { std::ptr::write_unaligned((ret - 23) as *mut u64, phys_pc) };
-    let jump_offset = (dbt_code as usize as isize - ret as isize + 5) as u32;
-    unsafe { std::ptr::write_unaligned((ret - 9) as *mut u32, jump_offset) };
 }
 
 #[no_mangle]
