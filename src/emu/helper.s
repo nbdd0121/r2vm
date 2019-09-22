@@ -63,10 +63,10 @@ helper_patch_direct_jump:
     # RBX contains the RIP past the call instruction
     # So we RDX - RBX will be the offset needed to patch the offset.
     # Note we use RDX as it is the nonspeculative entry point
-    mov rax, rdx
-    sub rax, rbx
+    mov rcx, rdx
+    sub rcx, rbx
     mov dword ptr [rbx - 5], 0xE9
-    mov [rbx - 4], eax
+    mov [rbx - 4], ecx
     jmp rdx
 
 .global helper_check_interrupt
@@ -93,11 +93,10 @@ helper_pred_miss:
     call find_block
     # RBX contains the RIP past the call instruction
     # So we RAX - RBX will be the offset needed to patch the offset.
-    mov rdx, rax
-    sub rdx, rbx
-    mov [rbx - 4], edx
-    push rbx
-    jmp rax
+    mov rcx, rax
+    sub rcx, rbx
+    mov [rbx - 4], ecx
+    jmp rdx
 
 .global fiber_interp_run
 fiber_interp_run:
