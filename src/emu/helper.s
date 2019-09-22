@@ -54,9 +54,9 @@ helper_always_pred_miss:
     pop rbx
     jmp helper_pred_miss
 
-.global helper_icache_patch2
+.global helper_patch_direct_jump
 .extern find_block
-helper_icache_patch2:
+helper_patch_direct_jump:
     pop rbx
     mov rdi, rbp
     call find_block
@@ -89,10 +89,6 @@ helper_san_fail:
 
 .global helper_pred_miss
 helper_pred_miss:
-    # Sanity check: RBX should never be zero
-    test rbx, rbx
-    je helper_san_fail
-
     mov rdi, rbp
     call find_block
     # RBX contains the RIP past the call instruction
@@ -103,7 +99,6 @@ helper_pred_miss:
     push rbx
     jmp rax
 
-.extern find_block
 .global fiber_interp_run
 fiber_interp_run:
     mov rdi, rbp

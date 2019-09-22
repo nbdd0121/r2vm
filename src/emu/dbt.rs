@@ -42,7 +42,7 @@ extern "C" {
     fn insn_translate_cache_miss();
     fn helper_icache_cross_miss();
     fn helper_always_pred_miss();
-    fn helper_icache_patch2();
+    fn helper_patch_direct_jump();
     fn helper_check_interrupt();
     fn helper_san_fail();
     fn helper_pred_miss();
@@ -370,7 +370,7 @@ impl<'a> DbtCompiler<'a> {
                 assert_eq!(self.get_ebx(), 0);
                 self.emit_icache_access(self.pc_rel, false);
             }
-            self.emit_helper_call(helper_icache_patch2);
+            self.emit_helper_call(helper_patch_direct_jump);
         } else {
             self.emit_chain_tail();
         }
@@ -1904,7 +1904,7 @@ impl<'a> DbtCompiler<'a> {
             // We want to have a direct jump to the target block.
             // We first generate a helper call, and within the call, we will decode the target block
             // and patch it.
-            self.emit_helper_call(helper_icache_patch2);
+            self.emit_helper_call(helper_patch_direct_jump);
         } else {
             self.emit_chain_tail();
         }
