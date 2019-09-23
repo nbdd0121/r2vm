@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use crate::io::IoMemorySync;
 use crate::io::plic::Plic;
 use crate::io::virtio::{Mmio, Block, Rng, P9, Console};
@@ -83,6 +85,38 @@ lazy_static! {
     };
 }
 
+lazy_static! {
+    static ref IO_MEMORY: BTreeMap<usize, (usize, &'static dyn IoMemorySync)> = {
+        let mut map: BTreeMap<_, (usize, _)> = BTreeMap::default();
+        let mut register_io_mem = |base: usize, size: usize, mem: &'static dyn IoMemorySync| {
+            if let Some((k, v)) = map.range(..(base + size)).next_back() {
+                let last_end = *k + v.0;
+                assert!(base >= last_end);
+            }
+            map.insert(base, (size, mem));
+        };
+        register_io_mem(0x200000, 0x400000, &*PLIC);
+        for i in 0..VIRTIO.len() {
+            register_io_mem(0x600000 + i * 4096, 4096, &VIRTIO[i]);
+        }
+        map
+    };
+}
+
+
+fn find_io_mem(ptr: usize) -> Option<(usize, &'static dyn IoMemorySync)> {
+    if let Some((k, v)) = IO_MEMORY.range(..=ptr).next_back() {
+        let last_end = *k + v.0;
+        if ptr >= last_end {
+            None
+        } else {
+            Some((*k, v.1))
+        }
+    } else {
+        None
+    }
+}
+
 /// This governs the boundary between RAM and I/O memory. If an address is strictly below this
 /// location, then it is considered I/O. For user-space applications, we consider all memory
 /// locations as RAM, so the default value here is 0.
@@ -122,6 +156,7 @@ pub fn init() {
     }
     lazy_static::initialize(&PLIC);
     lazy_static::initialize(&VIRTIO);
+    lazy_static::initialize(&IO_MEMORY);
 }
 
 pub fn device_tree() -> fdt::Node {
@@ -164,7 +199,7 @@ pub fn device_tree() -> fdt::Node {
     soc.add_prop("#address-cells", 2u32);
     soc.add_prop("#size-cells", 2u32);
 
-    let plic = soc.add_node("plic@80100000");
+    let plic = soc.add_node("plic@200000");
     plic.add_prop("#interrupt-cells", 1u32);
     plic.add_prop("interrupt-controller", ());
     plic.add_prop("compatible", "sifive,plic-1.0.0");
@@ -204,48 +239,23 @@ pub fn write_memory<T: Copy>(addr: usize, value: T) {
     unsafe { std::ptr::write_volatile(addr as *mut T, value) }
 }
 
-pub fn phys_read(addr: usize, size: u32) -> u64 {
-    if addr < *IO_BOUNDARY {
-        if addr < 0x600000 {
-            PLIC.read_sync(addr - 0x200000, size)
-        } else {
-            let idx = (addr - 0x600000) >> 12;
-            if idx > VIRTIO.len() {
-                error!("out-of-bound I/O memory read 0x{:x}", addr);
-                return 0;
-            }
-            VIRTIO[idx].read_sync(addr & 4095, size)
-        }
-    } else {
-        match size {
-            1 => unsafe { std::ptr::read_volatile(addr as *const u8) as u64 },
-            2 => unsafe { std::ptr::read_volatile(addr as *const u16) as u64 },
-            4 => unsafe { std::ptr::read_volatile(addr as *const u32) as u64 },
-            8 => unsafe { std::ptr::read_volatile(addr as *const u64) },
-            _ => unreachable!(),
+pub fn io_read(addr: usize, size: u32) -> u64 {
+    assert!(addr < *IO_BOUNDARY);
+    match find_io_mem(addr) {
+        Some((base, v)) => v.read_sync(addr - base, size),
+        None => {
+            error!("out-of-bound I/O memory read 0x{:x}", addr);
+            0
         }
     }
 }
 
-pub fn phys_write(addr: usize, value: u64, size: u32) {
-    if addr < *IO_BOUNDARY {
-        if addr < 0x600000 {
-            PLIC.write_sync(addr - 0x200000, value, size)
-        } else {
-            let idx = (addr - 0x600000) >> 12;
-            if idx > VIRTIO.len() {
-                error!("out-of-bound I/O memory write 0x{:x} = 0x{:x}", addr, value);
-                return;
-            }
-            VIRTIO[idx].write_sync(addr & 4095, value, size)
-        }
-    } else {
-        match size {
-            1 => unsafe { std::ptr::write_volatile(addr as *mut _, value as u8) },
-            2 => unsafe { std::ptr::write_volatile(addr as *mut _, value as u16) },
-            4 => unsafe { std::ptr::write_volatile(addr as *mut _, value as u32) },
-            8 => unsafe { std::ptr::write_volatile(addr as *mut _, value) },
-            _ => unreachable!(),
+pub fn io_write(addr: usize, value: u64, size: u32) {
+    assert!(addr < *IO_BOUNDARY);
+    match find_io_mem(addr) {
+        Some((base, v)) => return v.write_sync(addr - base, value, size),
+        None => {
+            error!("out-of-bound I/O memory write 0x{:x} = 0x{:x}", addr, value);
         }
     }
 }

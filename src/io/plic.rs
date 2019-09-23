@@ -132,7 +132,7 @@ impl IoMemory for Plic {
                     return 0;
                 }
                 let value = self.enable[ctx];
-                trace!(target: "PLIC", "{} read interrupt enable of {}-{} as {:b}", value, irq, irq + 31, value);
+                trace!(target: "PLIC", "{} read interrupt enable of {}-{} as {:b}", ctx, irq, irq + 31, value);
                 value
             }
             // Threshold and claim bits

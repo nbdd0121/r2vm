@@ -48,6 +48,18 @@ impl<'a> TryFrom<&'a PropValue> for &'a str {
     }
 }
 
+impl TryFrom<&[&str]> for PropValue {
+    type Error = PropConversionError;
+    fn try_from(value: &[&str]) -> Result<Self, Self::Error> {
+        let mut vec = Vec::new();
+        for v in value {
+            vec.extend_from_slice(v.as_bytes());
+            vec.push(0);
+        }
+        Ok(PropValue(vec.into_boxed_slice()))
+    }
+}
+
 // Cell
 impl TryFrom<u32> for PropValue {
     type Error = PropConversionError;
