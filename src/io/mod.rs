@@ -3,6 +3,7 @@ pub mod console;
 pub mod plic;
 pub mod block;
 pub mod network;
+pub mod rtc;
 
 /// IoMemory represents a region of physically continuous I/O memory.
 ///

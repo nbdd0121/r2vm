@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::io::IoMemorySync;
 use crate::io::plic::Plic;
 use crate::io::virtio::{Mmio, Block, Rng, P9, Console};
+use crate::io::rtc::Rtc;
 use parking_lot::Mutex;
 use lazy_static::lazy_static;
 
@@ -86,6 +87,13 @@ lazy_static! {
 }
 
 lazy_static! {
+    pub static ref RTC: Rtc = {
+        let irq_base = VIRTIO.len() as u32 + 1;
+        Rtc::new(irq_base, irq_base + 1)
+    };
+}
+
+lazy_static! {
     static ref IO_MEMORY: BTreeMap<usize, (usize, &'static dyn IoMemorySync)> = {
         let mut map: BTreeMap<_, (usize, _)> = BTreeMap::default();
         let mut register_io_mem = |base: usize, size: usize, mem: &'static dyn IoMemorySync| {
@@ -99,10 +107,10 @@ lazy_static! {
         for i in 0..VIRTIO.len() {
             register_io_mem(0x600000 + i * 4096, 4096, &VIRTIO[i]);
         }
+        register_io_mem(0x600000 + VIRTIO.len() * 4096, 4096, &*RTC);
         map
     };
 }
-
 
 fn find_io_mem(ptr: usize) -> Option<(usize, &'static dyn IoMemorySync)> {
     if let Some((k, v)) = IO_MEMORY.range(..=ptr).next_back() {
@@ -219,6 +227,17 @@ pub fn device_tree() -> fdt::Node {
         virtio.add_prop("reg", &[addr, 0x1000][..]);
         virtio.add_prop("compatible", "virtio,mmio");
         virtio.add_prop("interrupts-extended", &[core_count + 1, (i+1) as u32][..]);
+    }
+
+    {
+        let addr = 0x600000 + VIRTIO.len() as u64 * 0x1000;
+        let rtc = soc.add_node(format!("rtc@{:x}", addr));
+        rtc.add_prop("compatible", "xlnx,zynqmp-rtc");
+        rtc.add_prop("reg", &[addr, 0x100][..]);
+        rtc.add_prop("interrupt-parent", core_count + 1);
+        let irq_base = VIRTIO.len() as u32 + 1;
+        rtc.add_prop("interrupts", &[irq_base, irq_base + 1][..]);
+        rtc.add_prop("interrupt-names", &["alarm", "sec"][..]);
     }
 
     let memory = root.add_node("memory@0x40000000");

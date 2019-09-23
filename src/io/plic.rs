@@ -172,7 +172,7 @@ impl IoMemory for Plic {
     fn write(&mut self, addr: usize, value: u64, size: u32) {
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
-            error!(target: "PLIC", "illegal register write 0x{:x} = 0x{}", addr, value);
+            error!(target: "PLIC", "illegal register write 0x{:x} = 0x{:x}", addr, value);
             return;
         }
         let value = value as u32;
@@ -232,7 +232,7 @@ impl IoMemory for Plic {
                 }
             }
             _ => {
-                error!(target: "PLIC", "illegal register write 0x{:x} = 0x{}", addr, value);
+                error!(target: "PLIC", "illegal register write 0x{:x} = 0x{:x}", addr, value);
                 return;
             }
         }
