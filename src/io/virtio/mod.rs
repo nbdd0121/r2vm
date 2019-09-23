@@ -53,4 +53,7 @@ pub trait Device {
 
     /// Notify that a buffer has been queued
     fn notify(&mut self, idx: usize);
+
+    /// Notify the device that the queue is ready
+    fn queue_ready(&mut self, _idx: usize) {}
 }

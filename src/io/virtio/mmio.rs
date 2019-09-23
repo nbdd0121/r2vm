@@ -202,6 +202,10 @@ impl IoMemory for Mmio {
                         _ => unsafe { std::hint::unreachable_unchecked() }
                     }
                 });
+
+                if addr == ADDR_QUEUE_READY && value & 1 != 0 {
+                    self.device.queue_ready(self.queue_sel);
+                }
             }
             ADDR_INTERRUPT_ACK       => (),
             ADDR_STATUS              =>

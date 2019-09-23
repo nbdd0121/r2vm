@@ -80,7 +80,6 @@ impl Network {
     pub fn new(irq: u32, net: impl NetworkDevice + 'static, mac: [u8; 6]) -> Network {
         let queue = Arc::new(Mutex::new(Queue::new()));
         let net = Arc::new(net);
-        thread_run(net.clone(), queue.clone(), irq);
         Network {
             net,
             status: 0,
@@ -106,6 +105,7 @@ impl Device for Network {
         } else {
             f(&mut self.tx)
         }
+        // TODO: If thread is running, we should terminate it before return here
     }
     fn reset(&mut self) {
         self.status = 0;
@@ -139,5 +139,11 @@ impl Device for Network {
         }
 
         crate::emu::PLIC.lock().trigger(self.irq);
+    }
+
+    fn queue_ready(&mut self, idx: usize) {
+        if idx == 0 {
+            thread_run(self.net.clone(), self.rx.clone(), self.irq);
+        }
     }
 }
