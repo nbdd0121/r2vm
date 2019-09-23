@@ -90,7 +90,11 @@ impl IoMemory for Mmio {
                 if self.queue_sel >= self.device.num_queues() {
                     0
                 } else {
-                    32768
+                    let mut ret = 0;
+                    self.device.with_queue(self.queue_sel, &mut |queue| {
+                        ret = queue.num_max;
+                    });
+                    ret as u32
                 }
             }
             ADDR_QUEUE_NUM | ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW ..= ADDR_QUEUE_USED_HIGH => {
@@ -182,7 +186,7 @@ impl IoMemory for Mmio {
                 self.device.with_queue(self.queue_sel, &mut |queue| {
                     match addr {
                         ADDR_QUEUE_NUM           => {
-                            if value.is_power_of_two() && value <= 32768 {
+                            if value.is_power_of_two() && value <= queue.num_max as u32 {
                                 queue.num = value as u16
                             } else {
                                 error!(target: "Mmio", "invalid queue size {}", value)

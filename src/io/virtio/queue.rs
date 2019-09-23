@@ -18,6 +18,7 @@ struct VirtqDesc {
 pub struct Queue {
     pub ready: bool,
     pub num: u16,
+    pub num_max: u16,
     pub desc_addr: u64,
     pub avail_addr: u64,
     pub used_addr: u64,
@@ -26,9 +27,14 @@ pub struct Queue {
 
 impl Queue {
     pub const fn new() -> Queue {
+        Self::new_with_max(32768)
+    }
+
+    pub const fn new_with_max(max: u16) -> Queue {
         Queue {
             ready: false,
-            num: 32768,
+            num: max,
+            num_max: max,
             desc_addr: 0,
             avail_addr: 0,
             used_addr: 0,
