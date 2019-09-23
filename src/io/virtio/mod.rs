@@ -4,6 +4,7 @@ mod block;
 mod rng;
 mod p9;
 mod network;
+mod console;
 
 pub use queue::{Queue, Buffer, BufferReader, BufferWriter};
 pub use mmio::Mmio;
@@ -11,12 +12,14 @@ pub use block::Block;
 pub use rng::Rng;
 pub use self::p9::P9;
 pub use network::Network;
+pub use console::Console;
 
 #[derive(Clone, Copy)]
 pub enum DeviceId {
     Reserved = 0,
     Network = 1,
     Block = 2,
+    Console = 3,
     Entropy = 4,
     P9 = 9,
     #[doc(hidden)]

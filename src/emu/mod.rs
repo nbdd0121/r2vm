@@ -1,6 +1,6 @@
 use crate::io::IoMemorySync;
 use crate::io::plic::Plic;
-use crate::io::virtio::{Mmio, Block, Rng, P9};
+use crate::io::virtio::{Mmio, Block, Rng, P9, Console};
 use parking_lot::Mutex;
 use lazy_static::lazy_static;
 
@@ -73,6 +73,11 @@ lazy_static! {
         }
 
         init_network(&mut vec);
+
+        if crate::CONFIG.virtio_console {
+            let dev = Box::new(Console::new((vec.len() + 1) as u32));
+            vec.push(Mutex::new(Mmio::new(dev)));
+        }
 
         vec
     };

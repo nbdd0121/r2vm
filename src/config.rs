@@ -25,6 +25,11 @@ pub struct Config {
     #[serde(default = "default_cmdline")]
     pub cmdline: String,
 
+    /// Whether a virtio console device should be exposed. Note that under current implementation,
+    /// sbi_get_char will always produce -1 after virtio is initialised.
+    #[serde(rename = "virtio-console", default = "Default::default")]
+    pub virtio_console: bool,
+
     /// Block devices
     #[serde(default)]
     pub drive: Vec<DriveConfig>,
