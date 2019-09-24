@@ -6,6 +6,7 @@ use std::sync::atomic::Ordering as MemOrder;
 use crate::util::AtomicExt;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, MutexGuard, Condvar};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A cache line. `{CacheLine}` is composed of atomic variables because we sometimes need cross-
 /// thread invalidation. Note that usually paddr isn't touched, but by keeping tag and paddr
@@ -369,16 +370,30 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
 pub fn icache_invalidate(start: usize, end: usize) {
     let start = (start &! 4095) as u64;
     let end = ((end + 4095) &! 4095) as u64;
-    for mut icache in icaches() {
-        let keys: Vec<u64> = icache.s_map.range(start .. end).map(|(k,_)|*k).collect();
-        for key in keys {
-            let blk = icache.s_map.remove(&key).unwrap();
-            unsafe { *(blk.1 as *mut u8) = 0xC3 }
+
+    let mut prot = CODE_PROT.lock();
+
+    // Go through the CODE_PROT to see if we actually need invalidation
+    let mut need_inv = false;
+    for page in (start..end).step_by(4096) {
+        if prot.remove(&(page >> 12)) {
+            need_inv = true;
         }
-        let keys: Vec<u64> = icache.u_map.range(start .. end).map(|(k,_)|*k).collect();
-        for key in keys {
-            let blk = icache.u_map.remove(&key).unwrap();
-            unsafe { *(blk.1 as *mut u8) = 0xC3 }
+    }
+
+    if need_inv {
+        trace!(target: "CodeProt", "invalidate {:x} to {:x}", start, end);
+        for mut icache in icaches() {
+            let keys: Vec<u64> = icache.s_map.range(start .. end).map(|(k,_)|*k).collect();
+            for key in keys {
+                let blk = icache.s_map.remove(&key).unwrap();
+                unsafe { *(blk.1 as *mut u8) = 0xC3 }
+            }
+            let keys: Vec<u64> = icache.u_map.range(start .. end).map(|(k,_)|*k).collect();
+            for key in keys {
+                let blk = icache.u_map.remove(&key).unwrap();
+                unsafe { *(blk.1 as *mut u8) = 0xC3 }
+            }
         }
     }
 }
@@ -432,14 +447,10 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let out = translate(ctx, addr, if write { AccessType::Write} else { AccessType::Read })?;
     let line: &CacheLine = &ctx.shared.line[(idx & 1023) as usize];
-    let mut tag = idx << 1;
-    if write {
-        icache_invalidate(out as usize, out as usize + 1);
-    } else {
-        tag |= 1;
-    }
+    let tag = (idx << 1) | if write { 0 } else { 1 };
     line.tag.store(tag, MemOrder::Relaxed);
     line.paddr.store(out ^ addr, MemOrder::Relaxed);
+    if write { icache_invalidate(out as usize, out as usize + 1); }
     Ok(out)
 }
 
@@ -466,8 +477,6 @@ fn ptr_vaddr_x<T>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
     };
     Ok(unsafe { &mut *(paddr as *mut T) })
 }
-
-use std::collections::BTreeMap;
 
 /// DBT-ed instruction cache
 /// ========================
@@ -581,6 +590,28 @@ lazy_static! {
         }
 
         vec
+    };
+
+    /// To prevent needing to flush the entire translation cache when SFENCE.VMA/FENCE.I is
+    /// executed, we instead guarantee that the entries active in translation caches truthfully
+    /// represent the contents in RAM. i.e. we guarantee that whenever there is a write, the
+    /// relevant entries in code cache are invalidated.
+    ///
+    /// This field is to provide this guarantee. There are a few requirements for the correct
+    /// usage:
+    /// (1) A writable entry should only be inserted into D-Cache before CODE_PROT is unlocked.
+    /// (2) I-Cache invalidation must happen with CODE_PROT locked.
+    /// (3) Acquiring the lock of I-Cache must happen with CODE_PROT locked.
+    /// (4) When code needs to invalidate D-Cache entries due to a I-Cache entry insertion,
+    ///     CODE_PROT must be locked.
+    ///
+    /// (1) and (4) guarantee that when there is a new piece of code being translated, next memory
+    /// access to that location will always hit the slow path, because CODE_PROT serialises them.
+    /// (2) and (3) guarantee that after a write can be serialised with a concurrent code
+    /// translation, because it will prevent the case where a new block is translated in thread A
+    /// while we are in the process invalidating thread B.
+    static ref CODE_PROT: Mutex<BTreeSet<u64>> = {
+        Mutex::new(BTreeSet::default())
     };
 }
 
@@ -1714,10 +1745,6 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
     let map = if prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
     map.insert(phys_pc, (code_fn, nonspec_fn));
 
-    for i in 0..crate::core_count() {
-        crate::shared_context(i).protect_code(phys_pc &! 4095);
-    }
-
     (code_fn, nonspec_fn)
 }
 
@@ -1733,11 +1760,21 @@ extern "C" fn find_block(ctx: &mut Context) -> (usize, usize) {
             return (no_op as usize, no_op as usize);
         }
     };
+    let mut prot = CODE_PROT.lock();
     let mut icache = icache(ctx.hartid);
     let map = if ctx.prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
     match map.get(&phys_pc).copied() {
         Some(v) => v,
-        None => translate_code(&mut icache, ctx.prv, phys_pc),
+        None => {
+            if prot.insert(phys_pc >> 12) {
+                trace!(target: "CodeProt", "protecting {:x} to {:x}", phys_pc &! 4095, (phys_pc &! 4095) + 4096);
+                for i in 0..crate::core_count() {
+                    crate::shared_context(i).protect_code(phys_pc &! 4095);
+                }
+            }
+            std::mem::drop(prot);
+            translate_code(&mut icache, ctx.prv, phys_pc)
+        }
     }
 }
 
