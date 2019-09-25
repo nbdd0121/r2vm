@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::mpsc::Receiver;
 use parking_lot::Mutex;
 use lazy_static::lazy_static;
 
@@ -61,7 +61,10 @@ impl Console {
             let mut buffer = 0;
             loop {
                 // Just read a single character
-                std::io::stdin().read_exact(std::slice::from_mut(&mut buffer)).unwrap();
+                if std::io::stdin().read(std::slice::from_mut(&mut buffer)).unwrap() == 0 {
+                    // EOF. Very unlikely. In this case we will just exit
+                    return
+                }
 
                 // Ctrl + A hit, read another and do corresponding action
                 if buffer == 1 {
@@ -113,8 +116,7 @@ impl Console {
                     data[len] = key;
                     len += 1;
                 },
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => unreachable!(),
+                Err(_) => break,
             }
         }
         Ok(len)
@@ -126,7 +128,7 @@ impl Console {
             Ok(key) => {
                 data[0] = key;
             },
-            Err(_) => unreachable!(),
+            Err(_) => loop {},
         }
         Ok(self.try_recv(&mut data[1..])? + 1)
     }
@@ -142,6 +144,14 @@ impl Console {
     }
 
     pub fn on_size_change(&self, callback: Option<Box<dyn FnMut() + Send>>) {
+        if callback.is_some() {
+            WINCH.call_once(|| unsafe {
+                let mut act: libc::sigaction = std::mem::zeroed();
+                act.sa_sigaction = handle_winch as usize;
+                act.sa_flags = libc::SA_SIGINFO;
+                libc::sigaction(libc::SIGWINCH, &act, std::ptr::null_mut());
+            });
+        }
         *self.size_callback.lock() = callback;
     }
 }
@@ -151,15 +161,10 @@ unsafe extern "C" fn handle_winch(_: libc::c_int, _: &mut libc::siginfo_t, _: &m
     CONSOLE.size_callback.lock().as_mut().map(|x| x());
 }
 
+static WINCH: std::sync::Once = std::sync::Once::new();
+
 lazy_static! {
     pub static ref CONSOLE: Console = {
-        unsafe {
-            let mut act: libc::sigaction = std::mem::zeroed();
-            act.sa_sigaction = handle_winch as usize;
-            act.sa_flags = libc::SA_SIGINFO;
-            libc::sigaction(libc::SIGWINCH, &act, std::ptr::null_mut());
-        }
-
         Console::new()
     };
 }

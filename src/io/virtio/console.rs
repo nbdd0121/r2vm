@@ -17,6 +17,9 @@ pub struct Console {
     rx: Arc<Mutex<Queue>>,
     tx: Queue,
     irq: u32,
+    /// Whether sizing feature should be available. We allow it to be turned off because sometimes
+    /// STDIN is not tty.
+    resize: bool,
     // Keep config with whether it has changed
     config: Arc<Mutex<([u8; 4], bool)>>,
 }
@@ -55,30 +58,51 @@ impl Drop for Console {
 }
 
 impl Console {
-    pub fn new(irq: u32) -> Console {
+    pub fn new(irq: u32, mut resize: bool) -> Console {
         let queue = Arc::new(Mutex::new(Queue::new_with_max(128)));
-        let (col, row) = crate::io::console::CONSOLE.get_size().unwrap();
+        let (col, row) = if resize {
+            match crate::io::console::CONSOLE.get_size() {
+                Ok(v) => v,
+                Err(_) => {
+                    warn!(
+                        target: "VirtioConsole",
+                        "Cannot query the size of the console. If you are not working with tty, consider turn console.resize to false in the config to suppress this warning."
+                    );
+                    resize = false;
+                    (0, 0)
+                }
+            }
+        } else {
+            (0, 0)
+        };
+
         // Mark the config changed by default so the driver will poll
         // the size from the very beginning.
-        let config = Arc::new(Mutex::new((size_to_config(col, row), true)));
+        let config = Arc::new(Mutex::new((size_to_config(col, row), resize)));
 
-        let callback = {
-            let config = config.clone();
-            Box::new(move || {
-                let (col, row) = crate::io::console::CONSOLE.get_size().unwrap();
-                let mut guard = config.lock();
-                guard.0 = size_to_config(col, row);
-                guard.1 = true;
-                crate::emu::PLIC.lock().trigger(irq);
-            })
-        };
-        crate::io::console::CONSOLE.on_size_change(Some(callback));
+        if resize {
+            let callback = {
+                let config = config.clone();
+                Box::new(move || {
+                    let (col, row) = match crate::io::console::CONSOLE.get_size() {
+                        Err(_) => return,
+                        Ok(v) => v,
+                    };
+                    let mut guard = config.lock();
+                    guard.0 = size_to_config(col, row);
+                    guard.1 = true;
+                    crate::emu::PLIC.lock().trigger(irq);
+                })
+            };
+            crate::io::console::CONSOLE.on_size_change(Some(callback));
+        }
 
         Console {
             status: 0,
             rx: queue,
             tx: Queue::new(),
             irq,
+            resize,
             config,
         }
     }
@@ -86,7 +110,14 @@ impl Console {
 
 impl Device for Console {
     fn device_id(&self) -> DeviceId { DeviceId::Console }
-    fn device_feature(&self) -> u32 { 1 << VIRTIO_CONSOLE_F_SIZE }
+    fn device_feature(&self) -> u32 {
+        if self.resize {
+            1 << VIRTIO_CONSOLE_F_SIZE
+        } else {
+            0
+        }
+    }
+
     fn driver_feature(&mut self, _value: u32) {}
     fn get_status(&self) -> u32 { self.status }
     fn set_status(&mut self, status: u32) { self.status = status }

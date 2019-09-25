@@ -1,6 +1,8 @@
 use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
 
+fn return_true() -> bool { true }
+
 fn default_core() -> usize { 4 }
 fn default_memory() -> usize { 1024 }
 fn default_cmdline() -> String {
@@ -25,10 +27,12 @@ pub struct Config {
     #[serde(default = "default_cmdline")]
     pub cmdline: String,
 
-    /// Whether a virtio console device should be exposed. Note that under current implementation,
-    /// sbi_get_char will always produce -1 after virtio is initialised.
-    #[serde(rename = "virtio-console", default = "Default::default")]
-    pub virtio_console: bool,
+    #[serde(default)]
+    pub console: ConsoleConfig,
+
+    /// Whether a RTC device should be instantiated.
+    #[serde(default = "return_true")]
+    pub rtc: bool,
 
     /// Block devices
     #[serde(default)]
@@ -45,6 +49,27 @@ pub struct Config {
     /// Network adapters
     #[serde(default)]
     pub network: Vec<NetworkConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ConsoleConfig {
+    /// Whether a virtio console device should be exposed. Note that under current implementation,
+    /// sbi_get_char will always produce -1 after virtio is initialised.
+    #[serde(default = "return_true")]
+    pub virtio: bool,
+
+    /// Whether resizing feature should be enabled. Only useful when virtio is enabled.
+    #[serde(default = "return_true")]
+    pub resize: bool,
+}
+
+impl Default for ConsoleConfig {
+    fn default() -> Self {
+        ConsoleConfig {
+            virtio: true,
+            resize: true,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

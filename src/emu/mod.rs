@@ -127,7 +127,9 @@ lazy_static! {
     static ref IO_SYSTEM: IoSystem = {
         let mut sys = IoSystem::new();
         init_virtio(&mut sys);
-        init_rtc(&mut sys);
+        if crate::CONFIG.rtc {
+            init_rtc(&mut sys);
+        }
         sys
     };
 
@@ -180,8 +182,8 @@ fn init_virtio(sys: &mut IoSystem) {
 
     init_network(sys);
 
-    if crate::CONFIG.virtio_console {
-        sys.add_virtio(|irq| Console::new(irq));
+    if crate::CONFIG.console.virtio {
+        sys.add_virtio(|irq| Console::new(irq, crate::CONFIG.console.resize));
     }
 }
 
