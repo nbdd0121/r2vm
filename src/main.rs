@@ -280,12 +280,18 @@ pub fn main() {
             fibers = group.run();
         } else {
             // Run one fiber per thread.
-            let handles: Vec<_> = fibers.into_iter().map(|fiber| {
-                std::thread::spawn(move || {
+            let handles: Vec<_> = fibers.into_iter().enumerate().map(|(idx, fiber)| {
+                let name = if idx == 0 {
+                    "event-loop".to_owned()
+                } else {
+                    format!("hart {}", idx - 1)
+                };
+
+                std::thread::Builder::new().name(name).spawn(move || {
                     let mut group = fiber::FiberGroup::new();
                     group.add(fiber);
                     group.run().pop().unwrap()
-                })
+                }).unwrap()
             }).collect();
             fibers = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
         }

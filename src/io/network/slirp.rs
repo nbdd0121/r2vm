@@ -141,7 +141,10 @@ impl Slirp {
         let inner = Arc::new(Inner { slirp, stop: Mutex::new(false) });
         *inner.slirp.get_handler().1.lock() = Arc::downgrade(&inner);
         let clone = inner.clone();
-        std::thread::spawn(move || poll_loop(clone));
+        std::thread::Builder::new()
+            .name("slirp".to_owned())
+            .spawn(move || poll_loop(clone))
+            .unwrap();
         Self {
             inner,
             rx: Mutex::new(rx),

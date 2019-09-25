@@ -29,13 +29,13 @@ fn put(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
 }
 
 fn thread_run(queue: Arc<Mutex<Queue>>, irq: u32) {
-    std::thread::spawn(move || {
+    std::thread::Builder::new().name("virtio-console".to_owned()).spawn(move || {
         let mut buffer = [0; 2048];
         loop {
             let len = crate::io::console::CONSOLE.recv(&mut buffer).unwrap();
             put(&queue, &buffer[..len], irq);
         }
-    });
+    }).unwrap();
 }
 
 impl Console {

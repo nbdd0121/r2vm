@@ -56,7 +56,7 @@ impl Console {
         // We spawn a new thread instead of using non-blocking and let guest OS to pull us so we can
         // terminate the process using Ctrl+A X whenever we like.
         let (tx, rx) = std::sync::mpsc::channel::<u8>();
-        std::thread::spawn(move || {
+        std::thread::Builder::new().name("console".to_owned()).spawn(move || {
             let mut buffer = 0;
             loop {
                 // Just read a single character
@@ -85,7 +85,7 @@ impl Console {
                 }
                 tx.send(buffer).unwrap();
             }
-        });
+        }).unwrap();
 
         Console {
             rx: Mutex::new(rx),
