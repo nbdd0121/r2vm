@@ -6,6 +6,7 @@ use fnv::FnvHashMap;
 mod prop_value;
 pub use prop_value::{PropConversionError, PropValue};
 
+#[derive(Clone)]
 pub struct Node {
     pub name: String,
     pub properties: Vec<Prop>,
@@ -33,6 +34,7 @@ impl Node {
     }
 }
 
+#[derive(Clone)]
 pub struct Prop {
     pub name: String,
     pub value: PropValue,

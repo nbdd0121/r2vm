@@ -28,7 +28,7 @@ pub trait IoMemory {
 }
 
 /// An IoMemory which is synchronised internally, so it is suitable for multi-threaded access.
-pub trait IoMemorySync: Sync {
+pub trait IoMemorySync: Send + Sync {
     fn read_sync(&self, addr: usize, size: u32) -> u64;
     fn write_sync(&self, addr: usize, value: u64, size: u32);
 }
@@ -38,7 +38,7 @@ impl IoMemory for dyn IoMemorySync {
     fn write(&mut self, addr: usize, value: u64, size: u32) { self.write_sync(addr, value, size) }
 }
 
-impl<R: lock_api::RawMutex + Sync, T: IoMemory + Send> IoMemorySync for lock_api::Mutex<R, T> {
+impl<R: lock_api::RawMutex + Send + Sync, T: IoMemory + Send> IoMemorySync for lock_api::Mutex<R, T> {
     fn read_sync(&self, addr: usize, size: u32) -> u64 { self.lock().read(addr, size) }
     fn write_sync(&self, addr: usize, value: u64, size: u32) { self.lock().write(addr, value, size) }
 }

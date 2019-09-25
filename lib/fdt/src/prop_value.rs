@@ -13,6 +13,7 @@ impl<T: Error> From<T> for PropConversionError {
 
 /// A wrapper around underlying bytes of a device tree property.
 /// Use provided `{TryFrom}` trait implementations to convert types from and to this type.
+#[derive(Clone)]
 pub struct PropValue(pub Box<[u8]>);
 
 // Empty
