@@ -221,32 +221,6 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Mov(loc_of_register(rd), qreg.into()));
     }
 
-    fn load_to_rax(&mut self, rs: u8) {
-        if rs == 0 {
-            self.emit(Xor(Reg(Register::EAX), OpReg(Register::EAX)));
-            return
-        }
-        self.emit(Mov(Reg(Register::RAX), loc_of_register(rs).into()));
-    }
-
-    fn store_from_rax(&mut self, rd: u8) {
-        if rd == 0 { return }
-        self.emit(Mov(loc_of_register(rd), OpReg(Register::RAX)));
-    }
-
-    fn load_to_eax(&mut self, rs: u8) {
-        if rs == 0 {
-            self.emit(Xor(Reg(Register::EAX), OpReg(Register::EAX)));
-            return
-        }
-        self.emit(Mov(Reg(Register::EAX), loc_of_register(rs).resize(Size::Dword).into()));
-    }
-
-    fn store_from_eax(&mut self, rd: u8) {
-        self.emit(Cdqe);
-        self.store_from_rax(rd);
-    }
-
     fn emit_move(&mut self, rd: u8, rs: u8) {
         if rd == 0 || rd == rs { return }
         if rs == 0 { return self.emit_load_imm(rd, 0) }
@@ -387,7 +361,7 @@ impl<'a> DbtCompiler<'a> {
         if rd != 0 {
             self.emit(Mov(Reg(Register::RDX), OpMem(memory_of_pc())));
         }
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         if imm != 0 {
             self.emit(Add(Reg(Register::RAX), Imm(imm as i64)));
         }
@@ -405,7 +379,7 @@ impl<'a> DbtCompiler<'a> {
         }
         self.emit(Add(Mem(memory_of_pc()), Imm(imm.wrapping_sub(4) as i64)));
         if rd != 0 {
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
         }
     }
 
@@ -636,9 +610,9 @@ impl<'a> DbtCompiler<'a> {
             if rd == rs1 {
                 self.emit(Shr(loc_of_register(rd), Imm(63)));
             } else {
-                self.load_to_rax(rs1);
+                self.load_reg(Register::RAX, rs1);
                 self.emit(Shr(Reg(Register::RAX), Imm(63)));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
         } else {
             // For positive numbers we decrease the value by one and the compare less equal. This can allow 1 more possible
@@ -653,7 +627,7 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Xor(Reg(Register::EAX), OpReg(Register::EAX)));
             self.emit(Cmp(loc_of_register(rs1), Imm(imm as i64)));
             self.emit(Setcc(Reg(Register::AL), cc));
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
         }
     }
 
@@ -672,7 +646,7 @@ impl<'a> DbtCompiler<'a> {
         self.emit(Xor(Reg(Register::EAX), OpReg(Register::EAX)));
         self.emit(Cmp(loc_of_register(rs1), Imm(imm as i64)));
         self.emit(Setcc(Reg(Register::AL), cc));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_xori(&mut self, rd: u8, rs1: u8, imm: i32) {
@@ -684,17 +658,17 @@ impl<'a> DbtCompiler<'a> {
             if rd == rs1 {
                 self.emit(Not(loc_of_register(rd)));
             } else {
-                self.load_to_rax(rs1);
+                self.load_reg(Register::RAX, rs1);
                 self.emit(Not(Reg(Register::RAX)));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
         } else {
             if rd == rs1 {
                 self.emit(Xor(loc_of_register(rd), Imm(imm as i64)));
             } else {
-                self.load_to_rax(rs1);
+                self.load_reg(Register::RAX, rs1);
                 self.emit(Xor(Reg(Register::RAX), Imm(imm as i64)));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
         }
     }
@@ -736,9 +710,9 @@ impl<'a> DbtCompiler<'a> {
         if rd == rs1 {
             self.emit(Or(loc_of_register(rd), Imm(imm as i64)));
         } else {
-            self.load_to_rax(rs1);
+            self.load_reg(Register::RAX, rs1);
             self.emit(Or(Reg(Register::RAX), Imm(imm as i64)));
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
         }
     }
 
@@ -751,9 +725,9 @@ impl<'a> DbtCompiler<'a> {
         if rd == rs1 {
             self.emit(And(loc_of_register(rd), Imm(imm as i64)));
         } else {
-            self.load_to_rax(rs1);
+            self.load_reg(Register::RAX, rs1);
             self.emit(And(Reg(Register::RAX), Imm(imm as i64)));
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
         }
     }
 
@@ -768,9 +742,9 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == 0 { return self.emit_load_imm(rd, imm) }
         if imm == 0 { return self.emit_move32(rd, rs1) }
 
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
         self.emit(Add(Reg(Register::EAX), Imm(imm as i64)));
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     fn emit_slliw(&mut self, rd: u8, rs1: u8, imm: i32) {
@@ -778,14 +752,14 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == 0 { return self.emit_load_imm(rd, 0) }
         if imm == 0 { return self.emit_move32(rd, rs1) }
 
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
         // For left shift by 1, we can use add instead.
         if imm == 1 {
             self.emit(Add(Reg(Register::EAX), OpReg(Register::EAX)))
         } else {
             self.emit(Shl(Reg(Register::EAX), Imm(imm as i64)))
         }
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     fn emit_srliw(&mut self, rd: u8, rs1: u8, imm: i32) {
@@ -793,9 +767,9 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == 0 { return self.emit_load_imm(rd, 0) }
         if imm == 0 { return self.emit_move32(rd, rs1) }
 
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
         self.emit(Shr(Reg(Register::EAX), Imm(imm as i64)));
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     fn emit_sraiw(&mut self, rd: u8, rs1: u8, imm: i32) {
@@ -803,9 +777,9 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == 0 { return self.emit_load_imm(rd, 0) }
         if imm == 0 { return self.emit_move32(rd, rs1) }
 
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
         self.emit(Sar(Reg(Register::EAX), Imm(imm as i64)));
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     //
@@ -823,27 +797,27 @@ impl<'a> DbtCompiler<'a> {
         if rd == rs1 && rd == rs2 { return self.emit(Shl(loc_of_register(rd), Imm(1))) }
 
         if rd == rs1 {
-            self.load_to_rax(rs2);
+            self.load_reg(Register::RAX, rs2);
             self.emit(Add(loc_of_register(rd), OpReg(Register::RAX)));
             return
         }
 
         if rd == rs2 {
-            self.load_to_rax(rs1);
+            self.load_reg(Register::RAX, rs1);
             self.emit(Add(loc_of_register(rd), OpReg(Register::RAX)));
             return
         }
 
         if rs1 == rs2 {
-            self.load_to_rax(rs1);
+            self.load_reg(Register::RAX, rs1);
             self.emit(Add(Reg(Register::RAX), OpReg(Register::RAX)));
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(Add(Reg(Register::RAX), loc_of_register(rs2).into()));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_sub(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -852,7 +826,7 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == rs2 { return self.emit_load_imm(rd, 0) }
 
         if rd == rs1 {
-            self.load_to_rax(rs2);
+            self.load_reg(Register::RAX, rs2);
             self.emit(Sub(loc_of_register(rd), OpReg(Register::RAX)));
             return
         }
@@ -863,15 +837,15 @@ impl<'a> DbtCompiler<'a> {
         }
 
         if rs1 == 0 {
-            self.load_to_rax(rs2);
+            self.load_reg(Register::RAX, rs2);
             self.emit(Neg(Reg(Register::RAX)));
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(Sub(Reg(Register::RAX), loc_of_register(rs2).into()));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_sll(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -885,10 +859,10 @@ impl<'a> DbtCompiler<'a> {
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(Mov(Reg(Register::CL), loc_of_register(rs2).resize(Size::Byte).into()));
         self.emit(Shl(Reg(Register::RAX), OpReg(Register::CL)));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_slt(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -898,7 +872,7 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Xor(Reg(Register::EAX), OpReg(Register::EAX)));
             self.emit(Cmp(loc_of_register(rs2), Imm(0)));
             self.emit(Setcc(Reg(Register::AL), ConditionCode::Greater));
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
             return
         }
 
@@ -909,17 +883,17 @@ impl<'a> DbtCompiler<'a> {
                 return;
             }
 
-            self.load_to_rax(rs1);
+            self.load_reg(Register::RAX, rs1);
             self.emit(Shr(Reg(Register::RAX), Imm(63)));
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(Cmp(Reg(Register::RAX), loc_of_register(rs2).into()));
         self.emit(Setcc(Reg(Register::AL), ConditionCode::Less));
         self.emit(Movzx(Register::EAX, Reg(Register::AL)));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_sltu(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -931,15 +905,15 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Xor(Reg(Register::EAX), OpReg(Register::EAX)));
             self.emit(Cmp(loc_of_register(rs2), Imm(0)));
             self.emit(Setcc(Reg(Register::AL), ConditionCode::NotEqual));
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(Cmp(Reg(Register::RAX), loc_of_register(rs2).into()));
         self.emit(Setcc(Reg(Register::AL), ConditionCode::Below));
         self.emit(Movzx(Register::EAX, Reg(Register::AL)));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_xor(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -949,20 +923,20 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == rs2 { return self.emit_load_imm(rd, 0) }
 
         if rd == rs1 {
-            self.load_to_rax(rs2);
+            self.load_reg(Register::RAX, rs2);
             self.emit(Xor(loc_of_register(rd), OpReg(Register::RAX)));
             return
         }
 
         if rd == rs2 {
-            self.load_to_rax(rs1);
+            self.load_reg(Register::RAX, rs1);
             self.emit(Xor(loc_of_register(rd), OpReg(Register::RAX)));
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(Xor(Reg(Register::RAX), loc_of_register(rs2).into()));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_srl(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -976,10 +950,10 @@ impl<'a> DbtCompiler<'a> {
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(Mov(Reg(Register::CL), loc_of_register(rs2).resize(Size::Byte).into()));
         self.emit(Shr(Reg(Register::RAX), OpReg(Register::CL)));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_sra(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -993,10 +967,10 @@ impl<'a> DbtCompiler<'a> {
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(Mov(Reg(Register::CL), loc_of_register(rs2).resize(Size::Byte).into()));
         self.emit(Sar(Reg(Register::RAX), OpReg(Register::CL)));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_or(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -1006,20 +980,20 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == rs2 { return self.emit_move(rd, rs1) }
 
         if rd == rs1 {
-            self.load_to_rax(rs2);
+            self.load_reg(Register::RAX, rs2);
             self.emit(Or(loc_of_register(rd), OpReg(Register::RAX)));
             return
         }
 
         if rd == rs2 {
-            self.load_to_rax(rs1);
+            self.load_reg(Register::RAX, rs1);
             self.emit(Or(loc_of_register(rd), OpReg(Register::RAX)));
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(Or(Reg(Register::RAX), loc_of_register(rs2).into()));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_and(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -1028,20 +1002,20 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == rs2 { return self.emit_move(rd, rs1) }
 
         if rd == rs1 {
-            self.load_to_rax(rs2);
+            self.load_reg(Register::RAX, rs2);
             self.emit(And(loc_of_register(rd), OpReg(Register::RAX)));
             return
         }
 
         if rd == rs2 {
-            self.load_to_rax(rs1);
+            self.load_reg(Register::RAX, rs1);
             self.emit(And(loc_of_register(rd), OpReg(Register::RAX)));
             return
         }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         self.emit(And(Reg(Register::RAX), loc_of_register(rs2).into()));
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     //
@@ -1055,13 +1029,13 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == 0 { return self.emit_move32(rd, rs2) }
         if rs2 == 0 { return self.emit_move32(rd, rs1) }
 
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
         if rs1 == rs2 {
             self.emit(Add(Reg(Register::EAX), OpReg(Register::EAX)));
         } else {
             self.emit(Add(Reg(Register::EAX), loc_of_register(rs2).resize(Size::Dword).into()));
         }
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     fn emit_subw(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -1070,13 +1044,13 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == rs2 { return self.emit_load_imm(rd, 0) }
 
         if rs1 == 0 {
-            self.load_to_eax(rs2);
+            self.load_reg(Register::EAX, rs2);
             self.emit(Neg(Reg(Register::EAX)));
         } else {
-            self.load_to_eax(rs1);
+            self.load_reg(Register::EAX, rs1);
             self.emit(Sub(Reg(Register::EAX), loc_of_register(rs2).resize(Size::Dword).into()));
         }
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     fn emit_sllw(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -1084,10 +1058,10 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == 0 { return self.emit_load_imm(rd, 0) }
         if rs2 == 0 { return self.emit_move32(rd, rs1) }
 
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
         self.emit(Mov(Reg(Register::CL), loc_of_register(rs2).resize(Size::Byte).into()));
         self.emit(Shl(Reg(Register::EAX), OpReg(Register::CL)));
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     fn emit_srlw(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -1095,10 +1069,10 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == 0 { return self.emit_load_imm(rd, 0) }
         if rs2 == 0 { return self.emit_move32(rd, rs1) }
 
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
         self.emit(Mov(Reg(Register::CL), loc_of_register(rs2).resize(Size::Byte).into()));
         self.emit(Shr(Reg(Register::EAX), OpReg(Register::CL)));
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     fn emit_sraw(&mut self, rd: u8, rs1: u8, rs2: u8) {
@@ -1106,10 +1080,10 @@ impl<'a> DbtCompiler<'a> {
         if rs1 == 0 { return self.emit_load_imm(rd, 0) }
         if rs2 == 0 { return self.emit_move32(rd, rs1) }
 
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
         self.emit(Mov(Reg(Register::CL), loc_of_register(rs2).resize(Size::Byte).into()));
         self.emit(Sar(Reg(Register::EAX), OpReg(Register::CL)));
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     //
@@ -1122,20 +1096,20 @@ impl<'a> DbtCompiler<'a> {
         if rd == 0 { return }
         if rs1 == 0 || rs2 == 0 { return self.emit_load_imm(rd, 0) }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         if rs1 == rs2 {
             self.emit(Imul2(Register::RAX, Reg(Register::RAX)));
         } else {
             self.emit(Imul2(Register::RAX, loc_of_register(rs2)));
         }
-        self.store_from_rax(rd);
+        self.store_reg(rd, Register::RAX);
     }
 
     fn emit_mulh(&mut self, rd: u8, rs1: u8, rs2: u8, unsigned: bool) {
         if rd == 0 { return }
         if rs1 == 0 || rs2 == 0 { return self.emit_load_imm(rd, 0) }
 
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
         let loc = if rs1 == rs2 { Reg(Register::RAX) } else { loc_of_register(rs2) };
         if unsigned {
             self.emit(Mul(loc))
@@ -1167,13 +1141,13 @@ impl<'a> DbtCompiler<'a> {
         if rd == 0 { return }
         if rs1 == 0 || rs2 == 0 { return self.emit_load_imm(rd, 0) }
 
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
         if rs1 == rs2 {
             self.emit(Imul2(Register::EAX, Reg(Register::EAX)));
         } else {
             self.emit(Imul2(Register::EAX, loc_of_register(rs2).resize(Size::Dword)));
         }
-        self.store_from_eax(rd);
+        self.store_reg(rd, Register::EAX);
     }
 
     fn emit_div(&mut self, rd: u8, rs1: u8, rs2: u8, unsigned: bool, rem: bool) {
@@ -1191,7 +1165,7 @@ impl<'a> DbtCompiler<'a> {
         }
 
         // rs1 is loaded to rax, so no need to deal with x0
-        self.load_to_rax(rs1);
+        self.load_reg(Register::RAX, rs1);
 
         if unsigned {
             self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
@@ -1204,7 +1178,7 @@ impl<'a> DbtCompiler<'a> {
         if rem {
             self.emit(Mov(loc_of_register(rd), OpReg(Register::RDX)));
         } else {
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
         }
     }
 
@@ -1223,7 +1197,7 @@ impl<'a> DbtCompiler<'a> {
         }
 
         // rs1 is loaded to rax, so no need to deal with x0
-        self.load_to_eax(rs1);
+        self.load_reg(Register::EAX, rs1);
 
         if unsigned {
             self.emit(Xor(Reg(Register::EDX), OpReg(Register::EDX)));
@@ -1235,9 +1209,9 @@ impl<'a> DbtCompiler<'a> {
 
         if rem {
             self.emit(Movsx(Register::RAX, Reg(Register::EDX)));
-            self.store_from_rax(rd);
+            self.store_reg(rd, Register::RAX);
         } else {
-            self.store_from_eax(rd);
+            self.store_reg(rd, Register::EAX);
         }
     }
 
@@ -1251,7 +1225,7 @@ impl<'a> DbtCompiler<'a> {
         self.minstret += 1;
         self.load_reg(Register::RSI, rs1);
         self.dcache_access(Size::Dword, true);
-        self.load_to_eax(rs2);
+        self.load_reg(Register::EAX, rs2);
         // Perform action on RSI, RAX and store to RAX
         action(self);
         self.store_reg(rd, Register::EAX);
@@ -1261,7 +1235,7 @@ impl<'a> DbtCompiler<'a> {
         self.minstret += 1;
         self.load_reg(Register::RSI, rs1);
         self.dcache_access(Size::Qword, true);
-        self.load_to_rax(rs2);
+        self.load_reg(Register::RAX, rs2);
         // Perform action on RSI, RAX and store to RAX
         action(self);
         self.store_reg(rd, Register::RAX);
@@ -1343,37 +1317,37 @@ impl<'a> DbtCompiler<'a> {
             Op::Lb { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Byte);
                 self.emit(Movsx(Register::RAX, Mem((Register::RSI + 0).byte())));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
             Op::Lh { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Word);
                 self.emit(Movsx(Register::RAX, Mem((Register::RSI + 0).word())));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
             Op::Lw { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Dword);
                 self.emit(Movsx(Register::RAX, Mem((Register::RSI + 0).dword())));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
             Op::Ld { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Qword);
                 self.emit(Mov(Reg(Register::RAX), OpMem((Register::RSI + 0).qword())));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
             Op::Lbu { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Byte);
                 self.emit(Movzx(Register::RAX, Mem((Register::RSI + 0).byte())));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
             Op::Lhu { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Word);
                 self.emit(Movzx(Register::RAX, Mem((Register::RSI + 0).word())));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
             Op::Lwu { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Dword);
                 self.emit(Mov(Reg(Register::EAX), OpMem((Register::RSI + 0).dword())));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
             /* OP-IMM */
             Op::Addi { rd, rs1, imm } => self.emit_addi(rd, rs1, imm),
@@ -1423,7 +1397,7 @@ impl<'a> DbtCompiler<'a> {
                 let imm = imm as i64 + pc_rel;
                 self.emit(Mov(Reg(Register::RAX), OpMem(memory_of_pc())));
                 self.emit(Add(Reg(Register::RAX), Imm(imm)));
-                self.store_from_rax(rd);
+                self.store_reg(rd, Register::RAX);
             }
             /* BRANCH */
             Op::Beq { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Equal),
