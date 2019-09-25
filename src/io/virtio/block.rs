@@ -8,7 +8,6 @@ const VIRTIO_BLK_F_RO: usize = 5;
 const VIRTIO_BLK_T_IN  : u32 = 0;
 const VIRTIO_BLK_T_OUT : u32 = 1;
 // TODO: This is an un-documented but required feature yet to support.
-#[allow(dead_code)]
 const VIRTIO_BLK_T_GET_ID : u32 = 8;
 
 #[repr(C)]
@@ -86,6 +85,11 @@ impl Device for Block {
                     trace!(target: "VirtioBlk", "write {} bytes from sector {:x}", io_buffer.len(), header.sector);
 
                     writer.write_all(&[0]).unwrap();
+                }
+                VIRTIO_BLK_T_GET_ID => {
+                    // Fill in a dummy ID for now.
+                    let len = writer.len();
+                    writer.write_all(&vec![0; len]).unwrap();
                 }
                 _ => {
                     error!(target: "VirtioBlk", "unsupported block operation type {}", header.r#type);
