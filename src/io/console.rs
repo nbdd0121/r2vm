@@ -100,7 +100,7 @@ impl Console {
     }
 
     pub fn try_recv(&self, data: &mut [u8]) -> std::io::Result<usize> {
-        let rx = match CONSOLE.rx.try_lock() {
+        let rx = match self.rx.try_lock() {
             Some(v) => v,
             None => return Ok(0),
         };
@@ -127,6 +127,16 @@ impl Console {
             Err(_) => unreachable!(),
         }
         Ok(self.try_recv(&mut data[1..])? + 1)
+    }
+
+    pub fn get_size(&self) -> std::io::Result<(u16, u16)> {
+        unsafe {
+            let mut size: libc::winsize = std::mem::uninitialized();
+            if libc::ioctl(1, libc::TIOCGWINSZ, &mut size) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok((size.ws_col, size.ws_row))
+        }
     }
 }
 

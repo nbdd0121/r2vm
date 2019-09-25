@@ -119,7 +119,7 @@ impl IoMemory for Mmio {
                 ret
             }
             // As currently config space is readonly, the interrupt status must be an used buffer.
-            ADDR_INTERRUPT_STATUS    => 1,
+            ADDR_INTERRUPT_STATUS    => self.device.interrupt_status(),
             ADDR_STATUS              => self.device.get_status(),
             ADDR_CONFIG_GENERATION   => 0,
             _                        => {
@@ -207,7 +207,7 @@ impl IoMemory for Mmio {
                     self.device.queue_ready(self.queue_sel);
                 }
             }
-            ADDR_INTERRUPT_ACK       => (),
+            ADDR_INTERRUPT_ACK       => self.device.interrupt_ack(value),
             ADDR_STATUS              =>
                 if value == 0 {
                     self.device.reset();

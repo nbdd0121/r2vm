@@ -59,4 +59,10 @@ pub trait Device {
 
     /// Notify the device that the queue is ready
     fn queue_ready(&mut self, _idx: usize) {}
+
+    /// Query what has caused the interrupt to be sent.
+    fn interrupt_status(&mut self) -> u32 { 1 }
+
+    /// Answer the interrupt.
+    fn interrupt_ack(&mut self, _ack: u32) {}
 }

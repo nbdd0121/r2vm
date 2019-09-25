@@ -3,12 +3,22 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use parking_lot::Mutex;
 
+const VIRTIO_CONSOLE_F_SIZE: usize = 0;
+
+fn size_to_config(col: u16, row: u16) -> [u8; 4] {
+    let col = col.to_le_bytes();
+    let row = row.to_le_bytes();
+    [col[0], col[1], row[0], row[1]]
+}
+
 /// A virtio entropy source device.
 pub struct Console {
     status: u32,
     rx: Arc<Mutex<Queue>>,
     tx: Queue,
     irq: u32,
+    config: [u8; 4],
+    config_changed: bool,
 }
 
 fn put(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
@@ -41,22 +51,27 @@ fn thread_run(queue: Arc<Mutex<Queue>>, irq: u32) {
 impl Console {
     pub fn new(irq: u32) -> Console {
         let queue = Arc::new(Mutex::new(Queue::new_with_max(128)));
+        let (col, row) = crate::io::console::CONSOLE.get_size().unwrap();
         Console {
             status: 0,
             rx: queue,
             tx: Queue::new(),
             irq,
+            config: size_to_config(col, row),
+            // Mark the config changed by default so the driver will poll
+            // the size from the very beginning.
+            config_changed: true,
         }
     }
 }
 
 impl Device for Console {
     fn device_id(&self) -> DeviceId { DeviceId::Console }
-    fn device_feature(&self) -> u32 { 0 }
+    fn device_feature(&self) -> u32 { 1 << VIRTIO_CONSOLE_F_SIZE }
     fn driver_feature(&mut self, _value: u32) {}
     fn get_status(&self) -> u32 { self.status }
     fn set_status(&mut self, status: u32) { self.status = status }
-    fn config_space(&self) -> &[u8] { &[] }
+    fn config_space(&self) -> &[u8] { &self.config }
     fn num_queues(&self) -> usize { 2 } 
     fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue)) {
         if idx == 0 {
@@ -93,5 +108,13 @@ impl Device for Console {
         if idx == 0 {
             thread_run(self.rx.clone(), self.irq);
         }
+    }
+
+    fn interrupt_status(&mut self) -> u32 {
+        if self.config_changed { 3 } else { 1 }
+    }
+
+    fn interrupt_ack(&mut self, ack: u32) {
+        if ack & 2 != 0 { self.config_changed = false }
     }
 }
