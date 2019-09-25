@@ -1552,6 +1552,7 @@ impl<'a> DbtCompiler<'a> {
                 self.dcache_access(Size::Dword, true);
                 self.emit(Mov(Register::EAX.into(), OpMem(memory_of!(lr_value).dword())));
                 self.load_reg(Register::EDX, rs2);
+                self.emit(Lock);
                 self.emit(Cmpxchg(Mem((Register::RSI + 0).dword()), Register::EDX));
                 let label = self.label();
                 self.patch(jcc_addr_mismatch, label);
@@ -1567,6 +1568,7 @@ impl<'a> DbtCompiler<'a> {
                 self.dcache_access(Size::Qword, true);
                 self.emit(Mov(Register::RAX.into(), OpMem(memory_of!(lr_value))));
                 self.load_reg(Register::RDX, rs2);
+                self.emit(Lock);
                 self.emit(Cmpxchg(Mem(Register::RSI + 0), Register::RDX));
                 let label = self.label();
                 self.patch(jcc_addr_mismatch, label);
@@ -1640,7 +1642,7 @@ impl<'a> DbtCompiler<'a> {
             }),
             Op::AmominW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
                 this.emit(Cmp(Register::EDX.into(), Register::ECX.into()));
-                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Less));
+                this.emit(Cmovcc(Register::ECX, Register::EDX.into(), ConditionCode::Less));
             }),
             Op::AmominD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
                 this.emit(Cmp(Register::RDX.into(), Register::RCX.into()));
@@ -1648,7 +1650,7 @@ impl<'a> DbtCompiler<'a> {
             }),
             Op::AmomaxW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
                 this.emit(Cmp(Register::EDX.into(), Register::ECX.into()));
-                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Greater));
+                this.emit(Cmovcc(Register::ECX, Register::EDX.into(), ConditionCode::Greater));
             }),
             Op::AmomaxD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
                 this.emit(Cmp(Register::RDX.into(), Register::RCX.into()));
@@ -1656,7 +1658,7 @@ impl<'a> DbtCompiler<'a> {
             }),
             Op::AmominuW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
                 this.emit(Cmp(Register::EDX.into(), Register::ECX.into()));
-                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Below));
+                this.emit(Cmovcc(Register::ECX, Register::EDX.into(), ConditionCode::Below));
             }),
             Op::AmominuD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
                 this.emit(Cmp(Register::RDX.into(), Register::RCX.into()));
@@ -1664,7 +1666,7 @@ impl<'a> DbtCompiler<'a> {
             }),
             Op::AmomaxuW { rd, rs1, rs2, .. } => self.cmpxchg_w(rd, rs1, rs2, |this| {
                 this.emit(Cmp(Register::EDX.into(), Register::ECX.into()));
-                this.emit(Cmovcc(Register::RCX, Register::RDX.into(), ConditionCode::Above));
+                this.emit(Cmovcc(Register::ECX, Register::EDX.into(), ConditionCode::Above));
             }),
             Op::AmomaxuD { rd, rs1, rs2, .. } => self.cmpxchg_d(rd, rs1, rs2, |this| {
                 this.emit(Cmp(Register::RDX.into(), Register::RCX.into()));
