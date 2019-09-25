@@ -134,7 +134,7 @@ impl Console {
     pub fn get_size(&self) -> std::io::Result<(u16, u16)> {
         unsafe {
             let mut size: libc::winsize = std::mem::uninitialized();
-            if libc::ioctl(1, libc::TIOCGWINSZ, &mut size) == -1 {
+            if libc::ioctl(0, libc::TIOCGWINSZ, &mut size) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
             Ok((size.ws_col, size.ws_row))

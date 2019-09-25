@@ -2,7 +2,6 @@ use super::Device;
 use super::super::IoMemory;
 
 use std::convert::TryInto;
-use crate::util::SplitInt;
 
 const ADDR_MAGIC_VALUE         : usize = 0x000;
 const ADDR_VERSION             : usize = 0x004;
@@ -109,12 +108,12 @@ impl IoMemory for Mmio {
                     ret = match addr {
                         ADDR_QUEUE_NUM        => queue.num as u32,
                         ADDR_QUEUE_READY      => queue.ready as u32,
-                        ADDR_QUEUE_DESC_LOW   => queue.desc_addr.lo(),
-                        ADDR_QUEUE_DESC_HIGH  => queue.desc_addr.hi(),
-                        ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr.lo(),
-                        ADDR_QUEUE_AVAIL_HIGH => queue.avail_addr.hi(),
-                        ADDR_QUEUE_USED_LOW   => queue.used_addr.lo(),
-                        ADDR_QUEUE_USED_HIGH  => queue.used_addr.hi(),
+                        ADDR_QUEUE_DESC_LOW   => queue.desc_addr as u32,
+                        ADDR_QUEUE_DESC_HIGH  => (queue.desc_addr >> 32) as u32,
+                        ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr as u32,
+                        ADDR_QUEUE_AVAIL_HIGH => (queue.avail_addr >> 32) as u32,
+                        ADDR_QUEUE_USED_LOW   => queue.used_addr as u32,
+                        ADDR_QUEUE_USED_HIGH  => (queue.used_addr >> 32) as u32,
                         _ => unsafe { std::hint::unreachable_unchecked() }
                     }
                 });
@@ -195,12 +194,12 @@ impl IoMemory for Mmio {
                             }
                         }
                         ADDR_QUEUE_READY      => queue.ready = (value & 1) != 0,
-                        ADDR_QUEUE_DESC_LOW   => queue.desc_addr.set_lo(value),
-                        ADDR_QUEUE_DESC_HIGH  => queue.desc_addr.set_hi(value),
-                        ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr.set_lo(value),
-                        ADDR_QUEUE_AVAIL_HIGH => queue.avail_addr.set_hi(value),
-                        ADDR_QUEUE_USED_LOW   => queue.used_addr.set_lo(value),
-                        ADDR_QUEUE_USED_HIGH  => queue.used_addr.set_hi(value),
+                        ADDR_QUEUE_DESC_LOW   => queue.desc_addr = (queue.desc_addr &! 0xffffffff) | value as u64,
+                        ADDR_QUEUE_DESC_HIGH  => queue.desc_addr = (queue.desc_addr & 0xffffffff) | (value as u64) << 32,
+                        ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr = (queue.avail_addr &! 0xffffffff) | value as u64,
+                        ADDR_QUEUE_AVAIL_HIGH => queue.avail_addr = (queue.avail_addr & 0xffffffff) | (value as u64) << 32,
+                        ADDR_QUEUE_USED_LOW   => queue.used_addr = (queue.used_addr &! 0xffffffff) | value as u64,
+                        ADDR_QUEUE_USED_HIGH  => queue.used_addr = (queue.used_addr & 0xffffffff) | (value as u64) << 32,
                         _ => unsafe { std::hint::unreachable_unchecked() }
                     }
                 });

@@ -1,6 +1,3 @@
-mod split_int;
-pub use split_int::SplitInt;
-
 mod atomic_ext;
 mod ro_cell;
 pub use atomic_ext::AtomicExt;
