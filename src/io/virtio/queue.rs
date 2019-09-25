@@ -1,4 +1,5 @@
 use std::io::{IoSlice, IoSliceMut, Read, Write, Seek, SeekFrom};
+use std::sync::atomic::{AtomicU16, Ordering};
 
 const VIRTQ_DESC_F_NEXT    : u16 = 1;
 const VIRTQ_DESC_F_WRITE   : u16 = 2;
@@ -23,6 +24,7 @@ pub struct Queue {
     pub avail_addr: u64,
     pub used_addr: u64,
     last_avail_idx: u16,
+    last_used_idx: u16,
 }
 
 impl Queue {
@@ -39,6 +41,7 @@ impl Queue {
             avail_addr: 0,
             used_addr: 0,
             last_avail_idx: 0,
+            last_used_idx: 0,
         }
     }
 
@@ -49,13 +52,16 @@ impl Queue {
         self.avail_addr = 0;
         self.used_addr = 0;
         self.last_avail_idx = 0;
+        self.last_used_idx = 0;
     }
 
     /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
     /// returned.
     pub fn take(&mut self) -> Option<Buffer> {
+        let avail_idx_ptr = unsafe { &*((self.avail_addr + 2) as usize as *const AtomicU16) };
+
         // Read the current index
-        let avail_idx = unsafe { *((self.avail_addr + 2) as usize as *const u16) };
+        let avail_idx = avail_idx_ptr.load(Ordering::Acquire);
 
         // No extra elements in this queue
         if self.last_avail_idx == avail_idx { return None }
@@ -104,13 +110,8 @@ impl Queue {
 
     /// Put back a buffer to the ring. This function is unsafe because there is no guarantee that
     /// the buffer to put back comes from this queue.
-    pub unsafe fn put(&self, avail: Buffer) {
-        let used_idx_ptr = (self.used_addr + 2) as usize as *mut u16;
-        let used_idx = *used_idx_ptr;
-        let elem_ptr = self.used_addr + 4 + (used_idx & (self.num - 1)) as u64 * 8;
-        *(elem_ptr as usize as *mut u32) = avail.idx as u32;
-        *((elem_ptr + 4) as usize as *mut u32) = avail.bytes_written as u32;
-        *used_idx_ptr = used_idx.wrapping_add(1);
+    pub unsafe fn put(&mut self, avail: Buffer) {
+        let used_idx_ptr = &*((self.used_addr + 2) as usize as *const AtomicU16);
 
         // Write requires invalidating icache
         for slice in avail.write {
@@ -118,6 +119,13 @@ impl Queue {
             let end = start + slice.len();
             crate::emu::interp::icache_invalidate(start, end);
         }
+
+        let elem_ptr = self.used_addr + 4 + (self.last_used_idx & (self.num - 1)) as u64 * 8;
+        *(elem_ptr as usize as *mut u32) = avail.idx as u32;
+        *((elem_ptr + 4) as usize as *mut u32) = avail.bytes_written as u32;
+        self.last_used_idx = self.last_used_idx.wrapping_add(1);
+
+        used_idx_ptr.store(self.last_used_idx, Ordering::Release);
     }
 }
 
