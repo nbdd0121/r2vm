@@ -51,18 +51,20 @@ impl IoMemory for Mmio {
     fn read(&mut self, addr: usize, size: u32) -> u64 {
         if addr >= ADDR_CONFIG {
             let offset = (addr - ADDR_CONFIG) as usize;
-            let config = self.device.config_space();
-            if offset + size as usize > config.len() {
-                error!(target: "Mmio", "out-of-bound config register read 0x{:x}", offset);
-                return 0
-            }
-            let slice = &config[offset .. offset + size as usize];
-            let value = match size {
-                8 => u64::from_le_bytes(slice.try_into().unwrap()) as u64,
-                4 => u32::from_le_bytes(slice.try_into().unwrap()) as u64,
-                2 => u16::from_le_bytes(slice.try_into().unwrap()) as u64,
-                _ => slice[0] as u64,
-            };
+            let mut value = 0;
+            self.device.with_config_space(&mut |config| {
+                if offset + size as usize > config.len() {
+                    error!(target: "Mmio", "out-of-bound config register read 0x{:x}", offset);
+                    return
+                }
+                let slice = &config[offset .. offset + size as usize];
+                value = match size {
+                    8 => u64::from_le_bytes(slice.try_into().unwrap()) as u64,
+                    4 => u32::from_le_bytes(slice.try_into().unwrap()) as u64,
+                    2 => u16::from_le_bytes(slice.try_into().unwrap()) as u64,
+                    _ => slice[0] as u64,
+                };
+            });
             trace!(target: "Mmio", "config register read 0x{:x} = 0x{:x}", addr, value);
             return value;
         }

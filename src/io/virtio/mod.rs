@@ -43,7 +43,12 @@ pub trait Device {
     fn set_status(&mut self, status: u32);
 
     /// Get the configuration space. In current implementation this is readonly.
-    fn config_space(&self) -> &[u8];
+    fn config_space(&self) -> &[u8] { unimplemented!() }
+
+    /// Get the configuration space, callback form.
+    fn with_config_space(&self, f: &mut dyn FnMut(&[u8])) {
+        f(self.config_space())
+    }
 
     /// Get number of queues of this device
     fn num_queues(&self) -> usize;

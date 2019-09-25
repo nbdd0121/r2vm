@@ -17,8 +17,8 @@ pub struct Console {
     rx: Arc<Mutex<Queue>>,
     tx: Queue,
     irq: u32,
-    config: [u8; 4],
-    config_changed: bool,
+    // Keep config with whether it has changed
+    config: Arc<Mutex<([u8; 4], bool)>>,
 }
 
 fn put(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
@@ -48,19 +48,38 @@ fn thread_run(queue: Arc<Mutex<Queue>>, irq: u32) {
     }).unwrap();
 }
 
+impl Drop for Console {
+    fn drop(&mut self) {
+        crate::io::console::CONSOLE.on_size_change(None);
+    }
+}
+
 impl Console {
     pub fn new(irq: u32) -> Console {
         let queue = Arc::new(Mutex::new(Queue::new_with_max(128)));
         let (col, row) = crate::io::console::CONSOLE.get_size().unwrap();
+        // Mark the config changed by default so the driver will poll
+        // the size from the very beginning.
+        let config = Arc::new(Mutex::new((size_to_config(col, row), true)));
+
+        let callback = {
+            let config = config.clone();
+            Box::new(move || {
+                let (col, row) = crate::io::console::CONSOLE.get_size().unwrap();
+                let mut guard = config.lock();
+                guard.0 = size_to_config(col, row);
+                guard.1 = true;
+                crate::emu::PLIC.lock().trigger(irq);
+            })
+        };
+        crate::io::console::CONSOLE.on_size_change(Some(callback));
+
         Console {
             status: 0,
             rx: queue,
             tx: Queue::new(),
             irq,
-            config: size_to_config(col, row),
-            // Mark the config changed by default so the driver will poll
-            // the size from the very beginning.
-            config_changed: true,
+            config,
         }
     }
 }
@@ -71,7 +90,9 @@ impl Device for Console {
     fn driver_feature(&mut self, _value: u32) {}
     fn get_status(&self) -> u32 { self.status }
     fn set_status(&mut self, status: u32) { self.status = status }
-    fn config_space(&self) -> &[u8] { &self.config }
+    fn with_config_space(&self, f: &mut dyn FnMut(&[u8])) {
+        f(&self.config.lock().0)
+    }
     fn num_queues(&self) -> usize { 2 } 
     fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue)) {
         if idx == 0 {
@@ -111,10 +132,10 @@ impl Device for Console {
     }
 
     fn interrupt_status(&mut self) -> u32 {
-        if self.config_changed { 3 } else { 1 }
+        if self.config.lock().1 { 3 } else { 1 }
     }
 
     fn interrupt_ack(&mut self, ack: u32) {
-        if ack & 2 != 0 { self.config_changed = false }
+        if ack & 2 != 0 { self.config.lock().1 = false }
     }
 }

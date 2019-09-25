@@ -24,6 +24,7 @@ extern "C" fn console_exit() {
 
 pub struct Console {
     rx: Mutex<Receiver<u8>>,
+    size_callback: Mutex<Option<Box<dyn FnMut() + Send>>>,
 }
 
 impl Drop for Console {
@@ -33,7 +34,7 @@ impl Drop for Console {
 }
 
 impl Console {
-    pub fn new() -> Console {
+    fn new() -> Console {
         let mut guard = OLD_TTY.lock();
         // It's an error to create a new console while previous one isn't cleaned up.
         if guard.is_some() { panic!("Console can only be initialized once") }
@@ -89,6 +90,7 @@ impl Console {
 
         Console {
             rx: Mutex::new(rx),
+            size_callback: Mutex::new(None),
         }
     }
 
@@ -138,10 +140,26 @@ impl Console {
             Ok((size.ws_col, size.ws_row))
         }
     }
+
+    pub fn on_size_change(&self, callback: Option<Box<dyn FnMut() + Send>>) {
+        *self.size_callback.lock() = callback;
+    }
+}
+
+/// Handle SIGWINCH for tty size change notification
+unsafe extern "C" fn handle_winch(_: libc::c_int, _: &mut libc::siginfo_t, _: &mut libc::ucontext_t) {
+    CONSOLE.size_callback.lock().as_mut().map(|x| x());
 }
 
 lazy_static! {
     pub static ref CONSOLE: Console = {
+        unsafe {
+            let mut act: libc::sigaction = std::mem::zeroed();
+            act.sa_sigaction = handle_winch as usize;
+            act.sa_flags = libc::SA_SIGINFO;
+            libc::sigaction(libc::SIGWINCH, &act, std::ptr::null_mut());
+        }
+
         Console::new()
     };
 }
