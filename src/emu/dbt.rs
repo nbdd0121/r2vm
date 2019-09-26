@@ -66,11 +66,8 @@ pub struct DbtCompiler<'a> {
     /// The physical address of `ctx.pc`
     pc_rel: u64,
 
-    /// The current instret, relative to `instret` before entering the basic block.
-    instret: u32,
-
-    /// `ctx.instret`, relative to `instret` before entering the basic block.
-    instret_rel: u32,
+    /// The current instret relative to `ctx.instret`
+    instret: i32,
 
     /// The offset past the speculative guard.
     pub speculative_len: usize,
@@ -250,7 +247,7 @@ impl<'a> DbtCompiler<'a> {
     fn get_ebx(&mut self) -> u32 {
         // Calculate the differences that need to apply
         let pc_rel = (self.pc_cur as i64 - self.pc_rel as i64) as i16;
-        let instret_rel = (self.instret as i32 - self.instret_rel as i32) as i16;
+        let instret_rel = self.instret as i16;
         // Pack them into a single register
         (instret_rel as u16 as u32) << 16 | pc_rel as u16 as u32
     }
@@ -1790,15 +1787,16 @@ impl<'a> DbtCompiler<'a> {
     pub fn end_cross(&mut self, lo_bits: u16) {
         self.pc_rel = self.pc_cur + 4;
         self.pc_end = self.pc_cur + 4;
-        self.instret_rel = self.instret + 1;
 
         // Adjust PC, instret and minstret. minstret does not count the boundary-crossing
         // instruction. For that instruction, it should be taken care specially when we
         // generate code for it.
         self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
-        self.emit(Add(Mem(memory_of!(instret)), Imm(self.instret_rel as i64)));
+        self.emit(Add(Mem(memory_of!(instret)), Imm(self.instret as i64 + 1)));
+        self.instret = -1;
         if self.minstret != 0 {
             self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
+            self.minstret = 0;
         }
 
         // Access the word at the boundary. Keep RSI, as we will need its value.
@@ -1836,7 +1834,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     /// Finish compilation with the last op being a jump/branch.
-    pub fn end(&mut self, op: Op, c: bool) {
+    pub fn end_jump(&mut self, op: Op, c: bool) {
         let is_branch = match op {
             Op::Beq {..} |
             Op::Bne {..} |
@@ -1848,21 +1846,19 @@ impl<'a> DbtCompiler<'a> {
         };
 
         self.pc_rel = self.pc_cur + if c { 2 } else { 4 };
-        self.instret_rel = self.instret + 1;
 
         // Pre-adjust PC
         self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
 
         // Increase instret
         let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
-        self.emit(Add(Mem(mem_of_instret), Imm(self.instret_rel as i64)));
+        self.emit(Add(Mem(mem_of_instret), Imm(self.instret as i64 + 1)));
+        self.instret = -1;
 
-        // Increase minstret, the immediate is a placeholder and will be patched later
-        // Note minstret is not precisely tracked in case of exception
+        // Increase minstret, note minstret is not precisely tracked in case of exception
         if self.minstret != 0 {
-            let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
-            // The PC-changing instruction is never a memory access, so use minstret.
-            self.emit(Add(Mem(mem_of_minstret), Imm(self.minstret as i64)));
+            self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
+            self.minstret = 0;
         }
 
         self.compile_op(&op, c, 0);
@@ -1890,23 +1886,21 @@ impl<'a> DbtCompiler<'a> {
     }
 
     /// Finish compilation because we reach the end of current page.
-    pub fn end_page(&mut self) {
+    pub fn end(&mut self) {
         self.pc_rel = self.pc_cur;
-        self.instret_rel = self.instret;
 
         // Pre-adjust PC
         self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
 
         // Increase instret
         let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
-        self.emit(Add(Mem(mem_of_instret), Imm(self.instret_rel as i64)));
+        self.emit(Add(Mem(mem_of_instret), Imm(self.instret as i64)));
+        self.instret = 0;
 
-        // Increase minstret, the immediate is a placeholder and will be patched later
-        // Note minstret is not precisely tracked in case of exception
+        // Increase minstret, note minstret is not precisely tracked in case of exception
         if self.minstret != 0 {
-            let mem_of_minstret = (Register::RBP + offset_of!(Context, minstret) as i32).qword();
-            // The PC-changing instruction is never a memory access, so use minstret.
-            self.emit(Add(Mem(mem_of_minstret), Imm(self.minstret as i64)));
+            self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
+            self.minstret = 0;
         }
 
         self.emit_interrupt_check();
@@ -1932,7 +1926,7 @@ fn icache_cross_miss(ctx: &mut Context, pc: u64, patch: usize, insn: u32) {
     compiler.pc_cur = pc - 2;
     compiler.pc_end = pc + 2;
     compiler.pc_rel = pc + 2;
-    compiler.instret_rel = 1;
+    compiler.instret = -1;
     compiler.emit_op(&op);
     // Jump to end of reservation, which has the chain tail code.
     let jmp = compiler.emit_jmp_long();

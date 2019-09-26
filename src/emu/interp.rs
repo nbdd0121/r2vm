@@ -1723,7 +1723,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
         if (prv as u8) < op.min_prv_level() { op = Op::Illegal }
 
         if op.can_change_control_flow() {
-            compiler.end(op, c);
+            compiler.end_jump(op, c);
             break
         }
 
@@ -1731,7 +1731,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
 
         // Need to stop when crossing page boundary
         if phys_pc_end & 4095 == 0 {
-            compiler.end_page();
+            compiler.end();
             break
         }
     }
