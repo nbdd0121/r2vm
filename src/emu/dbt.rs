@@ -50,7 +50,6 @@ extern "C" {
 pub struct DbtCompiler<'a> {
     pub buffer: &'a mut [u8],
     pub len: usize,
-    pub interp: bool,
     slow_path: Vec<SlowPath>,
     minstret: u32,
 
@@ -104,7 +103,6 @@ impl<'a> DbtCompiler<'a> {
         DbtCompiler {
             buffer: code,
             len: 0,
-            interp: false,
             slow_path: Vec::new(),
             minstret: 0,
             pc_start: 0,
@@ -1705,15 +1703,7 @@ impl<'a> DbtCompiler<'a> {
         }
 
         // Actually emit the op
-        if self.interp {
-            if let Op::Auipc {..} = op {
-                self.emit_op(op)
-            } else {
-                self.emit_step_call(op)
-            }
-        } else {
-            self.emit_op(op)
-        }
+        self.emit_op(op);
 
         // In non-threaded mode, generate a yield call.
         if !crate::threaded() {
@@ -1863,7 +1853,7 @@ impl<'a> DbtCompiler<'a> {
 
         // If the next basic block lives within the same page,
         // then we does not need to generate the guarding code for the jump.
-        if (is_branch && !self.interp) && self.pc_start &! 4095 == self.pc_rel &! 4095 {
+        if is_branch && self.pc_start &! 4095 == self.pc_rel &! 4095 {
             if (self.pc_rel - 1) >> CACHE_LINE_LOG2_SIZE != self.pc_rel >> CACHE_LINE_LOG2_SIZE {
                 assert_eq!(self.get_ebx(), 0);
                 self.emit_icache_access(self.pc_rel, false);
