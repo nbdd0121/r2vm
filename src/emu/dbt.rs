@@ -51,22 +51,24 @@ pub struct DbtCompiler<'a> {
     pub buffer: &'a mut [u8],
     pub len: usize,
     slow_path: Vec<SlowPath>,
-    minstret: u32,
 
     /// The physical start PC of this basic block.
     pc_start: u64,
 
-    /// The physical current PC
-    pc_cur: u64,
-
-    /// The physical PC after current op
-    pc_end: u64,
-
     /// The physical address of `ctx.pc`
     pc_rel: u64,
 
+    /// The current PC relative to `ctx.pc`
+    pc_cur: i64,
+
+    /// The current PC relative to `ctx.pc`
+    pc_end: i64,
+
     /// The current instret relative to `ctx.instret`
     instret: i32,
+
+    /// The current minstret relative to `ctx.minstret`
+    minstret: u32,
 
     /// The offset past the speculative guard.
     pub speculative_len: usize,
@@ -243,7 +245,7 @@ impl<'a> DbtCompiler<'a> {
     /// This function gets the EBX to set.
     fn get_ebx(&mut self) -> u32 {
         // Calculate the differences that need to apply
-        let pc_rel = (self.pc_cur as i64 - self.pc_rel as i64) as i16;
+        let pc_rel = self.pc_cur as i16;
         let instret_rel = self.instret as i16;
         // Pack them into a single register
         (instret_rel as u16 as u32) << 16 | pc_rel as u16 as u32
@@ -301,9 +303,7 @@ impl<'a> DbtCompiler<'a> {
         let jcc_not = self.emit_jcc_long(!cc);
 
         // Adjust PC, instret and minstret.
-        let pc_offset = ((self.pc_end - self.pc_rel) as i64)
-                            .wrapping_add(imm as i64)
-                            .wrapping_sub(4);
+        let pc_offset = self.pc_end.wrapping_add(imm as i64).wrapping_sub(4);
         self.emit(Add(Mem(memory_of!(pc)), Imm(pc_offset)));
         if self.instret != -1 {
             self.emit(Add(Mem(memory_of!(instret)), Imm(self.instret as i64 + 1)));
@@ -318,20 +318,20 @@ impl<'a> DbtCompiler<'a> {
 
         self.emit_interrupt_check();
 
-        let target = self.pc_end.wrapping_add(imm as u64).wrapping_sub(4);
+        let target = self.pc_rel.wrapping_add(self.pc_end as u64).wrapping_add(imm as u64).wrapping_sub(4);
 
         // emit_icache_access will fill ebx with values in case of an exception happening.
         // We would like to produce correct ebx which is all 0.
         // Save old pc_cur and set pc_rel, instret
         let old_pc_cur = self.pc_cur;
-        self.pc_cur = self.pc_rel;
+        self.pc_cur = 0;
         let old_instret = self.instret;
         self.instret = 0;
 
         if self.pc_start &! 4095 == target &! 4095 {
-            if (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE != target >> CACHE_LINE_LOG2_SIZE {
+            if (self.pc_rel.wrapping_add(self.pc_end as u64) - 1) >> CACHE_LINE_LOG2_SIZE != target >> CACHE_LINE_LOG2_SIZE {
                 assert_eq!(self.get_ebx(), 0);
-                self.emit_icache_access(self.pc_rel, false);
+                self.emit_icache_access(0, false);
             }
             self.emit_helper_call(helper_patch_direct_jump);
         } else {
@@ -347,7 +347,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32) {
-        assert_eq!(self.pc_end, self.pc_rel);
+        assert_eq!(self.pc_end, 0);
         if rd != 0 {
             self.emit(Mov(Reg(Register::RDX), OpMem(memory_of_pc())));
         }
@@ -363,7 +363,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_jal(&mut self, rd: u8, imm: i32) {
-        assert_eq!(self.pc_end, self.pc_rel);
+        assert_eq!(self.pc_end, 0);
         if rd != 0 {
             self.emit(Mov(Reg(Register::RAX), OpMem(memory_of_pc())));
         }
@@ -373,12 +373,11 @@ impl<'a> DbtCompiler<'a> {
         }
     }
 
-    fn emit_icache_access(&mut self, pc: u64, set_rsi: bool) {
+    fn emit_icache_access(&mut self, pc_offset: i64, set_rsi: bool) {
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
-        let off = pc as i64 - self.pc_rel as i64;
-        if off != 0 {
-            self.emit(Add(Reg(Register::RSI), Imm(off)));
+        if pc_offset != 0 {
+            self.emit(Add(Reg(Register::RSI), Imm(pc_offset)));
         }
 
         if cfg!(feature = "direct") && crate::get_flags().user_only { return }
@@ -1383,8 +1382,7 @@ impl<'a> DbtCompiler<'a> {
             Op::Sraw { rd, rs1, rs2 } => self.emit_sraw(rd, rs1, rs2),
             /* AUIPC */
             Op::Auipc { rd, imm } => {
-                let pc_rel = self.pc_cur as i64 - self.pc_rel as i64;
-                let imm = imm as i64 + pc_rel;
+                let imm = imm as i64 + self.pc_cur;
                 self.emit(Mov(Reg(Register::RAX), OpMem(memory_of_pc())));
                 self.emit(Add(Reg(Register::RAX), Imm(imm)));
                 self.store_reg(rd, Register::RAX);
@@ -1689,14 +1687,14 @@ impl<'a> DbtCompiler<'a> {
             }
         } else {
             // This instruction will access a new cache line.
-            if (self.pc_cur - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE {
+            if (self.pc_rel.wrapping_add(self.pc_cur as u64) - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_rel.wrapping_add(self.pc_end as u64) - 1) >> CACHE_LINE_LOG2_SIZE {
                 // We don't need to generate cache line access for the first instruction, as by
                 // jumping to this DBT-ed block:
                 // * find_block is called, which accesses the cache line already;
                 // * OR is the result of fall-through, which either does not leave the cache line
                 //   or relevant access is already generated;
                 // * OR entered via the speculation guard, which have accessed cache line already.
-                if self.pc_start != self.pc_cur {
+                if self.pc_start != self.pc_rel.wrapping_add(self.pc_cur as u64) {
                     self.emit_icache_access(self.pc_end - 1, false);
                 }
             }
@@ -1717,10 +1715,9 @@ impl<'a> DbtCompiler<'a> {
 
     pub fn begin(&mut self, pc: u64) {
         self.pc_start = pc;
-        self.pc_cur = pc;
         self.pc_rel = pc;
 
-        self.emit_icache_access(pc, true);
+        self.emit_icache_access(0, true);
         if let Ok(pc32) = i32::try_from(pc as i64) {
             self.emit(Cmp(Register::RSI.into(), Imm(pc32 as i64)));
         } else {
@@ -1770,8 +1767,9 @@ impl<'a> DbtCompiler<'a> {
 
     /// Finish compilation with the last instruction spanning across two pages.
     pub fn end_cross(&mut self, lo_bits: u16) {
-        self.pc_rel = self.pc_cur + 4;
-        self.pc_end = self.pc_cur + 4;
+        self.pc_rel += (self.pc_cur + 4) as u64;
+        self.pc_cur = -4;
+        self.pc_end = 0;
 
         // Adjust PC, instret and minstret. minstret does not count the boundary-crossing
         // instruction. For that instruction, it should be taken care specially when we
@@ -1830,7 +1828,9 @@ impl<'a> DbtCompiler<'a> {
             _ => false,
         };
 
-        self.pc_rel = self.pc_cur + if c { 2 } else { 4 };
+        self.pc_rel += (self.pc_cur + if c { 2 } else { 4 }) as u64;
+        self.pc_cur = if c { -2 } else { -4 };
+        self.pc_end = 0;
 
         // Pre-adjust PC
         self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
@@ -1856,7 +1856,7 @@ impl<'a> DbtCompiler<'a> {
         if is_branch && self.pc_start &! 4095 == self.pc_rel &! 4095 {
             if (self.pc_rel - 1) >> CACHE_LINE_LOG2_SIZE != self.pc_rel >> CACHE_LINE_LOG2_SIZE {
                 assert_eq!(self.get_ebx(), 0);
-                self.emit_icache_access(self.pc_rel, false);
+                self.emit_icache_access(0, false);
             }
 
             // We want to have a direct jump to the target block.
@@ -1872,7 +1872,9 @@ impl<'a> DbtCompiler<'a> {
 
     /// Finish compilation because we reach the end of current page.
     pub fn end(&mut self) {
-        self.pc_rel = self.pc_cur;
+        self.pc_rel += self.pc_cur as u64;
+        self.pc_cur = 0;
+        self.pc_end = 0;
 
         // Pre-adjust PC
         self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
@@ -1914,8 +1916,8 @@ fn icache_cross_miss(ctx: &mut Context, pc: u64, patch: usize, insn: u32) {
     let mut compiler = DbtCompiler::new(slice);
     // Treat the basic block range as `pc - 2` to `pc + 2`
     compiler.pc_start = pc - 2;
-    compiler.pc_cur = pc - 2;
-    compiler.pc_end = pc + 2;
+    compiler.pc_cur = -4;
+    compiler.pc_end = 0;
     compiler.pc_rel = pc + 2;
     compiler.instret = -1;
     compiler.emit_op(&op);
