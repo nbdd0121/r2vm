@@ -112,7 +112,6 @@ impl<'a> DbtCompiler<'a> {
             pc_cur: 0,
             pc_rel: 0,
             instret: 0,
-            instret_rel: 0,
             speculative_len: 0,
         }
     }
@@ -286,22 +285,10 @@ impl<'a> DbtCompiler<'a> {
     // #endregion
 
     fn emit_branch(&mut self, rs1: u8, rs2: u8, imm: i32, mut cc: ConditionCode) {
-        assert_eq!(self.pc_end, self.pc_rel);
-        if rs1 == rs2 {
-            let result = match cc {
-                ConditionCode::Equal |
-                ConditionCode::GreaterEqual |
-                ConditionCode::AboveEqual => true,
-                _ => false,
-            };
-            if result {
-                self.emit(Add(Mem(memory_of_pc()), Imm(imm.wrapping_sub(4) as i64)));
-            }
-            return;
-        }
-
         // Compare and set flags.
         // If either operand is 0, it should be treated specially.
+        // We didn't handle the case of rs1 == rs2 specially because that's very unlikely, so we
+        // don't need to optimise for that case.
         if rs2 == 0 {
             self.emit(Cmp(loc_of_register(rs1), Imm(0)));
         } else if rs1 == 0 {
@@ -315,7 +302,17 @@ impl<'a> DbtCompiler<'a> {
 
         let jcc_not = self.emit_jcc_long(!cc);
 
-        self.emit(Add(Mem(memory_of_pc()), Imm(imm.wrapping_sub(4) as i64)));
+        // Adjust PC, instret and minstret.
+        let pc_offset = ((self.pc_end - self.pc_rel) as i64)
+                            .wrapping_add(imm as i64)
+                            .wrapping_sub(4);
+        self.emit(Add(Mem(memory_of!(pc)), Imm(pc_offset)));
+        if self.instret != -1 {
+            self.emit(Add(Mem(memory_of!(instret)), Imm(self.instret as i64 + 1)));
+        }
+        if self.minstret != 0 {
+            self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
+        }
 
         if !crate::threaded() {
             self.emit_helper_call(fiber_yield_raw);
@@ -326,14 +323,12 @@ impl<'a> DbtCompiler<'a> {
         let target = self.pc_end.wrapping_add(imm as u64).wrapping_sub(4);
 
         // emit_icache_access will fill ebx with values in case of an exception happening.
-        // We would like to produce correct ebx which is all 0, so we need to make sure pc_cur
-        // is equal to pc_rel, instret equal to instret_rel prior to calling, and reset
-        // them after calling.
-
+        // We would like to produce correct ebx which is all 0.
         // Save old pc_cur and set pc_rel, instret
         let old_pc_cur = self.pc_cur;
         self.pc_cur = self.pc_rel;
-        self.instret += 1;
+        let old_instret = self.instret;
+        self.instret = 0;
 
         if self.pc_start &! 4095 == target &! 4095 {
             if (self.pc_end - 1) >> CACHE_LINE_LOG2_SIZE != target >> CACHE_LINE_LOG2_SIZE {
@@ -347,7 +342,7 @@ impl<'a> DbtCompiler<'a> {
 
         // Restore
         self.pc_cur = old_pc_cur;
-        self.instret -= 1;
+        self.instret = old_instret;
 
         let label_not = self.label();
         self.patch(jcc_not, label_not);
@@ -1904,7 +1899,13 @@ impl<'a> DbtCompiler<'a> {
         }
 
         self.emit_interrupt_check();
-        self.emit_chain_tail();
+
+        if (self.pc_rel - 1) >> CACHE_LINE_LOG2_SIZE == self.pc_rel >> CACHE_LINE_LOG2_SIZE {
+            self.emit_helper_call(helper_patch_direct_jump);
+        } else {
+            self.emit_chain_tail();
+        }
+
         self.emit_slow_path();
     }
 }
