@@ -8,7 +8,7 @@
 
 use x86::{Op as X86Op, Op::*, Register, Memory, Size, ConditionCode};
 use x86::builder::*;
-use riscv::Op;
+use riscv::{Op, Csr};
 use super::interp::{Context, CACHE_LINE_LOG2_SIZE};
 use std::convert::TryFrom;
 
@@ -52,11 +52,9 @@ pub struct DbtCompiler<'a> {
     pub len: usize,
     slow_path: Vec<SlowPath>,
 
-    /// The physical start PC of this basic block.
+    /// The physical start PC of this basic block. This should be identical to the physical
+    /// translation of `ctx.pc`.
     pc_start: u64,
-
-    /// The physical address of `ctx.pc`
-    pc_rel: u64,
 
     /// The current PC relative to `ctx.pc`
     pc_cur: i64,
@@ -110,7 +108,6 @@ impl<'a> DbtCompiler<'a> {
             pc_start: 0,
             pc_end: 0,
             pc_cur: 0,
-            pc_rel: 0,
             instret: 0,
             speculative_len: 0,
         }
@@ -318,18 +315,18 @@ impl<'a> DbtCompiler<'a> {
 
         self.emit_interrupt_check();
 
-        let target = self.pc_rel.wrapping_add(self.pc_end as u64).wrapping_add(imm as u64).wrapping_sub(4);
+        let target = self.pc_start.wrapping_add(self.pc_end as u64).wrapping_add(imm as u64).wrapping_sub(4);
 
         // emit_icache_access will fill ebx with values in case of an exception happening.
         // We would like to produce correct ebx which is all 0.
-        // Save old pc_cur and set pc_rel, instret
+        // Save old pc_cur, instret
         let old_pc_cur = self.pc_cur;
         self.pc_cur = 0;
         let old_instret = self.instret;
         self.instret = 0;
 
         if self.pc_start &! 4095 == target &! 4095 {
-            if (self.pc_rel.wrapping_add(self.pc_end as u64) - 1) >> CACHE_LINE_LOG2_SIZE != target >> CACHE_LINE_LOG2_SIZE {
+            if (self.pc_start.wrapping_add(self.pc_end as u64) - 1) >> CACHE_LINE_LOG2_SIZE != target >> CACHE_LINE_LOG2_SIZE {
                 assert_eq!(self.get_ebx(), 0);
                 self.emit_icache_access(0, false);
             }
@@ -346,8 +343,9 @@ impl<'a> DbtCompiler<'a> {
         self.patch(jcc_not, label_not);
     }
 
-    fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32) {
-        assert_eq!(self.pc_end, 0);
+    fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32, comp: bool) {
+        self.pre_adjust_pc_instret(comp);
+
         if rd != 0 {
             self.emit(Mov(Reg(Register::RDX), OpMem(memory_of_pc())));
         }
@@ -360,10 +358,17 @@ impl<'a> DbtCompiler<'a> {
         if rd != 0 {
             self.emit(Mov(loc_of_register(rd), OpReg(Register::RDX)));
         }
+
+        if !crate::threaded() {
+            self.emit_helper_call(fiber_yield_raw);
+        }
+        self.emit_interrupt_check();
+        self.emit_chain_tail();
     }
 
-    fn emit_jal(&mut self, rd: u8, imm: i32) {
-        assert_eq!(self.pc_end, 0);
+    fn emit_jal(&mut self, rd: u8, imm: i32, comp: bool) {
+        self.pre_adjust_pc_instret(comp);
+
         if rd != 0 {
             self.emit(Mov(Reg(Register::RAX), OpMem(memory_of_pc())));
         }
@@ -371,6 +376,12 @@ impl<'a> DbtCompiler<'a> {
         if rd != 0 {
             self.store_reg(rd, Register::RAX);
         }
+
+        if !crate::threaded() {
+            self.emit_helper_call(fiber_yield_raw);
+        }
+        self.emit_interrupt_check();
+        self.emit_chain_tail();
     }
 
     fn emit_icache_access(&mut self, pc_offset: i64, set_rsi: bool) {
@@ -422,7 +433,6 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_chain_tail(&mut self) {
-        assert_eq!(self.get_ebx(), 0);
         // Save the address to patch for misprediction
         self.emit(Lea(Register::RBX, Register::RIP + 5));
         // 5 bytes
@@ -1299,9 +1309,8 @@ impl<'a> DbtCompiler<'a> {
     //
     // #endregion
 
-    fn emit_op(&mut self, op: &Op) {
+    fn emit_op(&mut self, op: &Op, comp: bool) {
         match *op {
-            Op::Illegal => self.emit_step_call(op),
             /* LOAD */
             Op::Lb { rd, rs1, imm } => {
                 self.emit_load(rs1, imm, Size::Byte);
@@ -1350,7 +1359,6 @@ impl<'a> DbtCompiler<'a> {
             Op::Andi { rd, rs1, imm } => self.emit_andi(rd, rs1, imm),
             /* MISC-MEM */
             Op::Fence => self.emit(Mfence),
-            Op::FenceI => self.emit_step_call(op),
             /* OP-IMM-32 */
             Op::Addiw { rd, rs1, imm } => self.emit_addiw(rd, rs1, imm),
             Op::Slliw { rd, rs1, imm } => self.emit_slliw(rd, rs1, imm),
@@ -1395,10 +1403,38 @@ impl<'a> DbtCompiler<'a> {
             Op::Bltu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Below),
             Op::Bgeu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::AboveEqual),
             /* JALR */
-            Op::Jalr { rd, rs1, imm } => self.emit_jalr(rd, rs1, imm),
+            Op::Jalr { rd, rs1, imm } => self.emit_jalr(rd, rs1, imm, comp),
             /* JAL */
-            Op::Jal { rd, imm } => self.emit_jal(rd, imm),
+            Op::Jal { rd, imm } => self.emit_jal(rd, imm, comp),
             /* SYSTEM */
+            Op::Csrrw { csr, .. } |
+            Op::Csrrs { csr, .. } |
+            Op::Csrrc { csr, .. } |
+            Op::Csrrwi { csr, .. } |
+            Op::Csrrsi { csr, .. } |
+            Op::Csrrci { csr, .. } if match csr {
+                // A common way of using basic blocks is to `batch' instret and pc increment. So if CSR to be accessed is
+                // instret, consider it as special.
+                Csr::Instret |
+                Csr::Instreth |
+                // SATP shouldn't belong here, but somehow Linux assumes setting SATP changes
+                // addressing mode immediately...
+                Csr::Satp => true,
+                _ => false,
+            } => {
+                self.pre_adjust_pc_instret(comp);
+                let backup = (self.pc_cur, self.instret);
+                self.pc_cur = if comp { -2 } else { -4 };
+                self.instret = -1;
+                self.emit_step_call(op);
+                self.pc_cur = backup.0;
+                self.instret = backup.1;
+                if !crate::threaded() {
+                    self.emit_helper_call(fiber_yield_raw);
+                }
+                self.emit_interrupt_check();
+                self.emit_chain_tail();
+            }
             Op::Csrrw { rd: 0, rs1, csr } => {
                 self.load_reg(Register::RDX, rs1);
                 self.emit_write_csr(csr);
@@ -1419,8 +1455,6 @@ impl<'a> DbtCompiler<'a> {
                     self.store_reg(rd, Register::RDX);
                 }
             }
-            Op::Ecall |
-            Op::Ebreak |
             Op::Csrrw {..} |
             Op::Csrrs {..} |
             Op::Csrrc {..} |
@@ -1662,11 +1696,30 @@ impl<'a> DbtCompiler<'a> {
             }),
 
             /* Privileged */
-            Op::Sret => self.emit_step_call(op),
             Op::Wfi => {
                 if crate::threaded() { self.emit_step_call(op) }
             }
-            Op::SfenceVma {..} => self.emit_step_call(op),
+
+            /* OPs that can disrupt control flow */
+            Op::Sret |
+            Op::Ecall |
+            Op::Ebreak |
+            Op::Illegal |
+            Op::FenceI |
+            Op::SfenceVma {..} => {
+                self.pre_adjust_pc_instret(comp);
+                let backup = (self.pc_cur, self.instret);
+                self.pc_cur = if comp { -2 } else { -4 };
+                self.instret = -1;
+                self.emit_step_call(op);
+                self.pc_cur = backup.0;
+                self.instret = backup.1;
+                if !crate::threaded() {
+                    self.emit_helper_call(fiber_yield_raw);
+                }
+                self.emit_interrupt_check();
+                self.emit_chain_tail();
+            }
         }
     }
 
@@ -1687,21 +1740,21 @@ impl<'a> DbtCompiler<'a> {
             }
         } else {
             // This instruction will access a new cache line.
-            if (self.pc_rel.wrapping_add(self.pc_cur as u64) - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_rel.wrapping_add(self.pc_end as u64) - 1) >> CACHE_LINE_LOG2_SIZE {
+            if (self.pc_start.wrapping_add(self.pc_cur as u64) - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_start.wrapping_add(self.pc_end as u64) - 1) >> CACHE_LINE_LOG2_SIZE {
                 // We don't need to generate cache line access for the first instruction, as by
                 // jumping to this DBT-ed block:
                 // * find_block is called, which accesses the cache line already;
                 // * OR is the result of fall-through, which either does not leave the cache line
                 //   or relevant access is already generated;
                 // * OR entered via the speculation guard, which have accessed cache line already.
-                if self.pc_start != self.pc_rel.wrapping_add(self.pc_cur as u64) {
+                if self.pc_cur != 0 {
                     self.emit_icache_access(self.pc_end - 1, false);
                 }
             }
         }
 
         // Actually emit the op
-        self.emit_op(op);
+        self.emit_op(op, compressed);
 
         // In non-threaded mode, generate a yield call.
         if !crate::threaded() {
@@ -1715,7 +1768,6 @@ impl<'a> DbtCompiler<'a> {
 
     pub fn begin(&mut self, pc: u64) {
         self.pc_start = pc;
-        self.pc_rel = pc;
 
         self.emit_icache_access(0, true);
         if let Ok(pc32) = i32::try_from(pc as i64) {
@@ -1765,25 +1817,40 @@ impl<'a> DbtCompiler<'a> {
         }
     }
 
+    /// Adjust PC/instret before executing an instruction
+    fn pre_adjust_pc_instret(&mut self, comp: bool) {
+        let pc_offset = self.pc_cur + if comp { 2 } else { 4 };
+        let instret_offset = self.instret as i64 + 1;
+        if pc_offset != 0 {
+            self.emit(Add(memory_of!(pc).into(), Imm(pc_offset)));
+        }
+        if instret_offset != 0 {
+            self.emit(Add(memory_of!(instret).into(), Imm(instret_offset)));
+        }
+        if self.minstret != 0 {
+            self.emit(Add(memory_of!(minstret).into(), Imm(self.minstret as i64)));
+        }
+    }
+
+    /// Adjust PC/instret after executing an instruction
+    fn post_adjust_pc_instret(&mut self) {
+        if self.pc_cur != 0 {
+            self.emit(Add(memory_of!(pc).into(), Imm(self.pc_cur)));
+        }
+        if self.instret != 0 {
+            self.emit(Add(memory_of!(instret).into(), Imm(self.instret as i64)));
+        }
+        if self.minstret != 0 {
+            self.emit(Add(memory_of!(minstret).into(), Imm(self.minstret as i64)));
+        }
+    }
+
     /// Finish compilation with the last instruction spanning across two pages.
     pub fn end_cross(&mut self, lo_bits: u16) {
-        self.pc_rel += (self.pc_cur + 4) as u64;
-        self.pc_cur = -4;
-        self.pc_end = 0;
-
-        // Adjust PC, instret and minstret. minstret does not count the boundary-crossing
-        // instruction. For that instruction, it should be taken care specially when we
-        // generate code for it.
-        self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
-        self.emit(Add(Mem(memory_of!(instret)), Imm(self.instret as i64 + 1)));
-        self.instret = -1;
-        if self.minstret != 0 {
-            self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
-            self.minstret = 0;
-        }
+        self.pre_adjust_pc_instret(false);
 
         // Access the word at the boundary. Keep RSI, as we will need its value.
-        self.emit_icache_access(self.pc_end - 2, true);
+        self.emit_icache_access(-2, true);
         // Compare the next u16 with the stored tag. If it misses, execute the miss handler.
         self.emit(Cmp(Mem((Register::RSI + 0).word()), Imm(0xCCCC)));
         let jcc_miss = self.emit_jcc_long(ConditionCode::NotEqual);
@@ -1794,15 +1861,6 @@ impl<'a> DbtCompiler<'a> {
         for _ in 5..PAGE_CROSS_RESERVATION {
             self.emit(Nop);
         }
-
-        self.pc_cur = self.pc_end;
-        self.instret += 1;
-
-        if !crate::threaded() {
-            self.emit_helper_call(fiber_yield_raw);
-        }
-        self.emit_interrupt_check();
-        self.emit_chain_tail();
 
         // Slow path. Execute in first run, or when the second half is changed (unlikely)
         let label_miss = self.label();
@@ -1816,66 +1874,14 @@ impl<'a> DbtCompiler<'a> {
         self.emit_slow_path();
     }
 
-    /// Emit an op that concludes the end of basic block.
-    /// It cannot be a branch instruction becauses
-    pub fn compile_jump_op(&mut self, op: Op, c: bool) {
-        match op {
-            Op::Beq {..} |
-            Op::Bne {..} |
-            Op::Blt {..} |
-            Op::Bge {..} |
-            Op::Bltu {..} |
-            Op::Bgeu {..} => unreachable!(),
-            _ => false,
-        };
-
-        self.pc_rel += (self.pc_cur + if c { 2 } else { 4 }) as u64;
-        self.pc_cur = if c { -2 } else { -4 };
-        self.pc_end = 0;
-
-        // Pre-adjust PC
-        self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
-
-        // Increase instret
-        let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
-        self.emit(Add(Mem(mem_of_instret), Imm(self.instret as i64 + 1)));
-        self.instret = -1;
-
-        // Increase minstret, note minstret is not precisely tracked in case of exception
-        if self.minstret != 0 {
-            self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
-            self.minstret = 0;
-        }
-
-        self.compile_op(&op, c, 0);
-
-        self.emit_interrupt_check();
-        self.emit_chain_tail();
-    }
-
     /// Finish compilation.
     pub fn end(&mut self) {
-        self.pc_rel += self.pc_cur as u64;
-        self.pc_cur = 0;
-        self.pc_end = 0;
-
-        // Pre-adjust PC
-        self.emit(Add(Mem(memory_of_pc()), Imm((self.pc_rel - self.pc_start) as i64)));
-
-        // Increase instret
-        let mem_of_instret = (Register::RBP + offset_of!(Context, instret) as i32).qword();
-        self.emit(Add(Mem(mem_of_instret), Imm(self.instret as i64)));
-        self.instret = 0;
-
-        // Increase minstret, note minstret is not precisely tracked in case of exception
-        if self.minstret != 0 {
-            self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
-            self.minstret = 0;
-        }
+        self.post_adjust_pc_instret();
 
         self.emit_interrupt_check();
 
-        if (self.pc_rel - 1) >> CACHE_LINE_LOG2_SIZE == self.pc_rel >> CACHE_LINE_LOG2_SIZE {
+        let pc_end = self.pc_start.wrapping_add(self.pc_cur as u64);
+        if (pc_end - 1) >> CACHE_LINE_LOG2_SIZE == pc_end >> CACHE_LINE_LOG2_SIZE {
             self.emit_helper_call(helper_patch_direct_jump);
         } else {
             // We could emit a direct jump plus icache access if the destination falls in the smae
@@ -1908,20 +1914,28 @@ fn icache_cross_miss(ctx: &mut Context, pc: u64, patch: usize, insn: u32) {
 
     let slice = unsafe { std::slice::from_raw_parts_mut(patch as *mut u8, PAGE_CROSS_RESERVATION) };
     let mut compiler = DbtCompiler::new(slice);
-    // Treat the basic block range as `pc - 2` to `pc + 2`
-    compiler.pc_start = pc - 2;
+    compiler.pc_start = pc + 2;
     compiler.pc_cur = -4;
     compiler.pc_end = 0;
-    compiler.pc_rel = pc + 2;
     compiler.instret = -1;
-    compiler.emit_op(&op);
-    // Jump to end of reservation, which has the chain tail code.
-    let jmp = compiler.emit_jmp_long();
-    if compiler.minstret != 0 {
-        compiler.emit(Add(Mem(memory_of!(minstret)), Imm(compiler.minstret as i64)));
+    compiler.emit_op(&op, false);
+    let unreachable = match op {
+        Op::Beq { .. } |
+        Op::Bne { .. } |
+        Op::Blt { .. } |
+        Op::Bge { .. } |
+        Op::Bltu { .. } |
+        Op::Bgeu { .. } => false,
+        op => op.can_change_control_flow(),
+    };
+    if !unreachable {
+        if !crate::threaded() {
+            compiler.emit_helper_call(fiber_yield_raw);
+        }
+        compiler.emit_interrupt_check();
+        compiler.emit_chain_tail();
     }
-    compiler.patch(jmp, Label(PAGE_CROSS_RESERVATION));
-    compiler.emit_slow_path();
+    compiler.end_unreachable();
 
     unsafe { std::ptr::write_unaligned((patch - 8) as *mut u16, (insn >> 16) as u16); }
 }

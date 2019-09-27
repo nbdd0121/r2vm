@@ -1740,12 +1740,13 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
                 compiler.end();
                 break
             }
-            op if op.can_change_control_flow() => {
-                compiler.compile_jump_op(op, c);
-                compiler.end_unreachable();
-                break
+            op => {
+                compiler.compile_op(&op, c, bits);
+                if op.can_change_control_flow() {
+                    compiler.end_unreachable();
+                    break
+                }
             }
-            op => compiler.compile_op(&op, c, bits),
         }
 
         // Need to stop when crossing page boundary
