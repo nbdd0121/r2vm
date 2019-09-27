@@ -1766,6 +1766,81 @@ impl<'a> DbtCompiler<'a> {
         self.instret += 1;
     }
 
+    /// Compile an conditional execution instruction pair.
+    /// The first op in the pair should follow the previous one fed to this compiler, and it must
+    /// be a branching instruction.
+    ///
+    /// *Note*: Unlike `compile_op`, this function will not respect sanitize feature. If these are needed, macro-op fusion should better be disable at all.
+    /// It should also be noted that there will be no interrupt check in the generated code, making
+    /// it slightly different in behaviour. However it is guaranteed that the number of cycles
+    /// taken is the same.
+    ///
+    /// *TODO*: In the future we may want to support multiple jump-ahead if everything is contained
+    /// within an extended basic block, but to allow for conditional load/move, this is an easy
+    /// optimisation.
+    pub fn compile_cond_op(&mut self, bop: &Op, bcomp: bool, op: &Op, comp: bool) {
+        let blen = if bcomp { 2 } else { 4 };
+        let olen = if comp { 2 } else { 4 };
+
+        // First check if the op cross cache block boundary and we need to access the icache.
+        self.pc_end = self.pc_cur + blen + olen;
+        if (self.pc_start.wrapping_add(self.pc_cur as u64) - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_start.wrapping_add(self.pc_start as u64) - 1) >> CACHE_LINE_LOG2_SIZE {
+            self.emit_icache_access(self.pc_end - 1, false);
+        }
+
+        // Get the operands of the branch
+        let (rs1, rs2, mut cc) = match bop {
+            &Op::Beq { rs1, rs2, .. } => (rs1, rs2, ConditionCode::Equal),
+            &Op::Bne { rs1, rs2, .. } => (rs1, rs2, ConditionCode::NotEqual),
+            &Op::Blt { rs1, rs2, .. } => (rs1, rs2, ConditionCode::Less),
+            &Op::Bge { rs1, rs2, .. } => (rs1, rs2, ConditionCode::GreaterEqual),
+            &Op::Bltu { rs1, rs2, .. } => (rs1, rs2, ConditionCode::Below),
+            &Op::Bgeu { rs1, rs2, .. } => (rs1, rs2, ConditionCode::AboveEqual),
+            _ => unreachable!(),
+        };
+
+        // In non-threaded mode, generate a yield call.
+        // This is done before we start the sequence as we cannot do it between the macro-op.
+        if !crate::threaded() {
+            self.emit_helper_call(fiber_yield_raw);
+        }
+
+        // Compare and set flags.
+        // If either operand is 0, it should be treated specially.
+        if rs2 == 0 {
+            self.emit(Cmp(loc_of_register(rs1), Imm(0)));
+        } else if rs1 == 0 {
+            // Switch around condition code in this case.
+            cc = cc.swap();
+            self.emit(Cmp(loc_of_register(rs2), Imm(0)));
+        } else {
+            self.emit(Mov(Reg(Register::RDX), loc_of_register(rs1).into()));
+            self.emit(Cmp(Reg(Register::RDX), loc_of_register(rs2).into()));
+        }
+
+        let jcc = self.emit_jcc_long(cc);
+
+        // Increment instret here eagerly, because we need to track precise instret.
+        // So we must differentiate between two paths.
+        self.emit(Add(memory_of!(instret).into(), Imm(1)));
+
+        // Emit the conditionally executed op.
+        self.pc_cur += blen as i64;
+        self.emit_op(op, comp);
+
+        // In non-threaded mode, generate a yield call.
+        if !crate::threaded() {
+            self.emit_helper_call(fiber_yield_raw);
+        }
+
+        let label_fin = self.label();
+        self.patch(jcc, label_fin);
+
+        // Advance counters past both instructions
+        self.pc_cur = self.pc_end;
+        self.instret += 1;
+    }
+
     pub fn begin(&mut self, pc: u64) {
         self.pc_start = pc;
 

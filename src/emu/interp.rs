@@ -1729,6 +1729,58 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
         // We must not emit code for protected ops
         if (prv as u8) < op.min_prv_level() { op = Op::Illegal }
 
+        // The way we generate code is a bit slow for branches. The mini-optimisation here
+        // captures conditional execution patterns.
+        match op {
+            Op::Beq { imm: 6, .. } |
+            Op::Bne { imm: 6, .. } |
+            Op::Blt { imm: 6, .. } |
+            Op::Bge { imm: 6, .. } |
+            Op::Bltu { imm: 6, .. } |
+            Op::Bgeu { imm: 6, .. } => {
+                if let Ok((next_op, true, bits)) = read_insn(phys_pc_end as usize) {
+                    // Currently we require the conditional executed instruction to not change
+                    // control flow.
+                    if !next_op.can_change_control_flow() {
+                        if crate::get_flags().disassemble {
+                            eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
+                        }
+                        phys_pc_end += 2;
+                        compiler.compile_cond_op(&op, c, &next_op, true);
+                        if phys_pc_end & 4095 == 0 {
+                            compiler.end();
+                            break
+                        }
+                        continue;
+                    }
+                }
+            }
+            Op::Beq { imm: 8, .. } |
+            Op::Bne { imm: 8, .. } |
+            Op::Blt { imm: 8, .. } |
+            Op::Bge { imm: 8, .. } |
+            Op::Bltu { imm: 8, .. } |
+            Op::Bgeu { imm: 8, .. } => {
+                if let Ok((next_op, false, bits)) = read_insn(phys_pc_end as usize) {
+                    // Currently we require the conditional executed instruction to not change
+                    // control flow.
+                    if !next_op.can_change_control_flow() {
+                        if crate::get_flags().disassemble {
+                            eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
+                        }
+                        phys_pc_end += 4;
+                        compiler.compile_cond_op(&op, c, &next_op, false);
+                        if phys_pc_end & 4095 == 0 {
+                            compiler.end();
+                            break
+                        }
+                        continue;
+                    }
+                }
+            }
+            _ => (),
+        }
+
         match op {
             Op::Beq { .. } |
             Op::Bne { .. } |
