@@ -30,6 +30,11 @@ fn loc_of_register(reg: u8) -> x86::Location {
     Mem(Register::RBP + reg as i32 * 8)
 }
 
+#[inline]
+fn same_cache_line(a: u64, b: u64) -> bool {
+    a >> CACHE_LINE_LOG2_SIZE == b >> CACHE_LINE_LOG2_SIZE
+}
+
 extern "C" {
     fn read_csr();
     fn write_csr();
@@ -372,7 +377,9 @@ impl<'a> DbtCompiler<'a> {
         if rd != 0 {
             self.emit(Mov(Reg(Register::RAX), OpMem(memory_of_pc())));
         }
-        self.emit(Add(Mem(memory_of_pc()), Imm(imm.wrapping_sub(4) as i64)));
+
+        let imm_from_end = (imm as i64).wrapping_sub(4);
+        self.emit(Add(Mem(memory_of_pc()), Imm(imm_from_end)));
         if rd != 0 {
             self.store_reg(rd, Register::RAX);
         }
@@ -381,7 +388,14 @@ impl<'a> DbtCompiler<'a> {
             self.emit_helper_call(fiber_yield_raw);
         }
         self.emit_interrupt_check();
-        self.emit_chain_tail();
+
+        let pc_end = self.pc_start.wrapping_add(self.pc_end as u64);
+        let target = pc_end.wrapping_add(imm_from_end as u64);
+        if same_cache_line(pc_end, target) {
+            self.emit_helper_call(helper_patch_direct_jump);
+        } else {
+            self.emit_chain_tail();
+        }
     }
 
     fn emit_icache_access(&mut self, pc_offset: i64, set_rsi: bool) {
