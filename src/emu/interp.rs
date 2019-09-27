@@ -1695,39 +1695,58 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
     compiler.begin(phys_pc);
 
     loop {
-        let bits = crate::emu::read_memory::<u16>(phys_pc_end as usize);
-        let (mut op, c, bits) = if bits & 3 == 3 {
-            // The instruction will cross page boundary.
-            if phys_pc_end & 4095 == 4094 {
+        /// Decode a instruction at given location. If it will cross a page boundary, then Err is
+        /// returned.
+        fn read_insn(pc: usize) -> Result<(Op, bool, u32), u16> {
+            let bits = crate::emu::read_memory::<u16>(pc);
+            if bits & 3 == 3 {
+                // The instruction will cross page boundary.
+                if pc & 4095 == 4094 {
+                    return Err(bits);
+                }
+                let hi_bits = crate::emu::read_memory::<u16>(pc + 2);
+                let bits = (hi_bits as u32) << 16 | bits as u32;
+                let op = riscv::decode(bits);
+                Ok((op, false, bits))
+            } else {
+                let op = riscv::decode_compressed(bits);
+                Ok((op, true, bits as u32))
+            }
+        }
+
+        let (mut op, c, bits) = match read_insn(phys_pc_end as usize) {
+            Ok(v) => v,
+            Err(bits) => {
                 compiler.end_cross(bits);
                 break
             }
-            let hi_bits = crate::emu::read_memory::<u16>((phys_pc_end + 2) as usize);
-            let bits = (hi_bits as u32) << 16 | bits as u32;
-            let op = riscv::decode(bits);
-            if crate::get_flags().disassemble {
-                eprintln!("{}", op.pretty_print(phys_pc_end, bits));
-            }
-            phys_pc_end += 4;
-            (op, false, bits)
-        } else {
-            let op = riscv::decode_compressed(bits);
-            if crate::get_flags().disassemble {
-                eprintln!("{}", op.pretty_print(phys_pc_end, bits as u32));
-            }
-            phys_pc_end += 2;
-            (op, true, bits as u32)
         };
+        if crate::get_flags().disassemble {
+            eprintln!("{}", op.pretty_print(phys_pc_end, bits));
+        }
+        phys_pc_end += if c { 2 } else { 4 };
 
         // We must not emit code for protected ops
         if (prv as u8) < op.min_prv_level() { op = Op::Illegal }
 
-        if op.can_change_control_flow() {
-            compiler.end_jump(op, c);
-            break
+        match op {
+            Op::Beq { .. } |
+            Op::Bne { .. } |
+            Op::Blt { .. } |
+            Op::Bge { .. } |
+            Op::Bltu { .. } |
+            Op::Bgeu { .. } => {
+                compiler.compile_op(&op, c, bits);
+                compiler.end();
+                break
+            }
+            op if op.can_change_control_flow() => {
+                compiler.compile_jump_op(op, c);
+                compiler.end_unreachable();
+                break
+            }
+            op => compiler.compile_op(&op, c, bits),
         }
-
-        compiler.compile_op(&op, c, bits);
 
         // Need to stop when crossing page boundary
         if phys_pc_end & 4095 == 0 {

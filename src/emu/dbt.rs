@@ -1816,15 +1816,16 @@ impl<'a> DbtCompiler<'a> {
         self.emit_slow_path();
     }
 
-    /// Finish compilation with the last op being a jump/branch.
-    pub fn end_jump(&mut self, op: Op, c: bool) {
-        let is_branch = match op {
+    /// Emit an op that concludes the end of basic block.
+    /// It cannot be a branch instruction becauses
+    pub fn compile_jump_op(&mut self, op: Op, c: bool) {
+        match op {
             Op::Beq {..} |
             Op::Bne {..} |
             Op::Blt {..} |
             Op::Bge {..} |
             Op::Bltu {..} |
-            Op::Bgeu {..} => true,
+            Op::Bgeu {..} => unreachable!(),
             _ => false,
         };
 
@@ -1848,29 +1849,11 @@ impl<'a> DbtCompiler<'a> {
 
         self.compile_op(&op, c, 0);
 
-        // Epilogue
         self.emit_interrupt_check();
-
-        // If the next basic block lives within the same page,
-        // then we does not need to generate the guarding code for the jump.
-        if is_branch && self.pc_start &! 4095 == self.pc_rel &! 4095 {
-            if (self.pc_rel - 1) >> CACHE_LINE_LOG2_SIZE != self.pc_rel >> CACHE_LINE_LOG2_SIZE {
-                assert_eq!(self.get_ebx(), 0);
-                self.emit_icache_access(0, false);
-            }
-
-            // We want to have a direct jump to the target block.
-            // We first generate a helper call, and within the call, we will decode the target block
-            // and patch it.
-            self.emit_helper_call(helper_patch_direct_jump);
-        } else {
-            self.emit_chain_tail();
-        }
-
-        self.emit_slow_path();
+        self.emit_chain_tail();
     }
 
-    /// Finish compilation because we reach the end of current page.
+    /// Finish compilation.
     pub fn end(&mut self) {
         self.pc_rel += self.pc_cur as u64;
         self.pc_cur = 0;
@@ -1895,9 +1878,20 @@ impl<'a> DbtCompiler<'a> {
         if (self.pc_rel - 1) >> CACHE_LINE_LOG2_SIZE == self.pc_rel >> CACHE_LINE_LOG2_SIZE {
             self.emit_helper_call(helper_patch_direct_jump);
         } else {
+            // We could emit a direct jump plus icache access if the destination falls in the smae
+            // page but not same cache line, but currently using chain tail only adds:
+            // * An extra mov for the patch address
+            // * An extra cmp and non-taken jmp to verify the address.
+            // Which isn't too costly compared to the huge chunk of code to access icache.
+            // So probably it's okay to do this.
             self.emit_chain_tail();
         }
 
+        self.emit_slow_path();
+    }
+
+    /// Finish compilation, assuming non-reachable.
+    pub fn end_unreachable(&mut self) {
         self.emit_slow_path();
     }
 }
