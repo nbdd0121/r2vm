@@ -98,14 +98,14 @@ impl SharedContext {
             sip: AtomicU64::new(0),
             alarm: AtomicU64::new(0),
             line: unsafe {
-                let mut arr: [CacheLine; 1024] = std::mem::uninitialized();
+                let mut arr: [CacheLine; 1024] = std::mem::MaybeUninit::uninit().assume_init();
                 for item in arr.iter_mut() {
                     std::ptr::write(item, Default::default());
                 }
                 arr
             },
             i_line: unsafe {
-                let mut arr: [CacheLine; 1024] = std::mem::uninitialized();
+                let mut arr: [CacheLine; 1024] = std::mem::MaybeUninit::uninit().assume_init();
                 for item in arr.iter_mut() {
                     std::ptr::write(item, Default::default());
                 }

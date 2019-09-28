@@ -1144,7 +1144,7 @@ impl<'a> DbtCompiler<'a> {
 
         // Fix up negative by: if (rs1 < 0) rd = rd - rs2
         // Note that this is identical to rd = rd - (rs1 >>> 63) & rs2
-        self.emit(Sar(Reg(Register::RCX), Imm(63)));;
+        self.emit(Sar(Reg(Register::RCX), Imm(63)));
         self.emit(And(Reg(Register::RCX), OpReg(Register::RSI)));
         self.emit(Sub(Reg(Register::RDX), OpReg(Register::RCX)));
         self.emit(Mov(loc_of_register(rd), OpReg(Register::RDX)));

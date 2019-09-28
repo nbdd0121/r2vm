@@ -41,8 +41,9 @@ impl Console {
 
         // Make tty as raw terminal
         unsafe {
-            let mut tty: libc::termios = std::mem::uninitialized();
-            libc::tcgetattr(0, &mut tty);
+            let mut tty = std::mem::MaybeUninit::uninit();
+            libc::tcgetattr(0, tty.as_mut_ptr());
+            let mut tty = tty.assume_init();
             *guard = Some(tty);
             libc::cfmakeraw(&mut tty);
             // Still treat \n as \r\n, for convience of logging
@@ -135,10 +136,11 @@ impl Console {
 
     pub fn get_size(&self) -> std::io::Result<(u16, u16)> {
         unsafe {
-            let mut size: libc::winsize = std::mem::uninitialized();
+            let mut size = std::mem::MaybeUninit::<libc::winsize>::uninit();
             if libc::ioctl(0, libc::TIOCGWINSZ, &mut size) == -1 {
                 return Err(std::io::Error::last_os_error());
             }
+            let size = size.assume_init();
             Ok((size.ws_col, size.ws_row))
         }
     }

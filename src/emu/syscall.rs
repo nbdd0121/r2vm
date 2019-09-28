@@ -510,22 +510,23 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let dirfd: i32 = if arg0 == abi::AT_FDCWD { libc::AT_FDCWD } else { arg0 as _ };
             let pathname = CStr::from_ptr(arg1 as usize as _);
 
-            let mut host_stat = std::mem::uninitialized();
+            let mut host_stat = std::mem::MaybeUninit::uninit();
             let ret = return_errno(libc::fstatat(
                 dirfd,
                 translate_path_cstr(pathname).as_ptr(),
-                &mut host_stat,
+                host_stat.as_mut_ptr(),
                 arg3 as _
             ) as _);
 
             // When success, convert stat format to guest format.
             if ret == 0 {
                 let guest_stat = &mut *(arg2 as usize as *mut abi::stat);
-                convert_stat_from_host(guest_stat, &host_stat);
+                convert_stat_from_host(guest_stat, &*host_stat.as_ptr());
             }
 
             if *STRACE {
                 if ret == 0 {
+                    let host_stat = host_stat.assume_init();
                     eprintln!(
                         "fstatat({}, {}, {{st_mode={:#o}, st_size={}, ...}}, {}) = 0",
                         arg0, Escape(pathname.to_bytes()), host_stat.st_mode, host_stat.st_size, arg3
@@ -537,17 +538,18 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             ret
         }
         abi::SYS_fstat => {
-            let mut host_stat = std::mem::uninitialized();
-            let ret = return_errno(libc::fstat(arg0 as _, &mut host_stat) as _);
+            let mut host_stat = std::mem::MaybeUninit::uninit();
+            let ret = return_errno(libc::fstat(arg0 as _, host_stat.as_mut_ptr()) as _);
 
             // When success, convert stat format to guest format.
             if ret == 0 {
                 let guest_stat = &mut *(arg1 as usize as *mut abi::stat);
-                convert_stat_from_host(guest_stat, &host_stat);
+                convert_stat_from_host(guest_stat, &*host_stat.as_ptr());
             }
 
             if *STRACE {
                 if ret == 0 {
+                    let host_stat = host_stat.assume_init();
                     eprintln!("fstat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0", arg0, host_stat.st_mode, host_stat.st_size);
                 } else {
                     eprintln!("fstat({}, {:#x}) = {}", arg0, arg1, ret);
@@ -713,17 +715,18 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         }
         abi::SYS_stat => {
             let pathname = CStr::from_ptr(arg0 as usize as _);
-            let mut host_stat = std::mem::uninitialized();
-            let ret = return_errno(libc::stat(translate_path_cstr(pathname).as_ptr(), &mut host_stat) as _);
+            let mut host_stat = std::mem::MaybeUninit::uninit();
+            let ret = return_errno(libc::stat(translate_path_cstr(pathname).as_ptr(), host_stat.as_mut_ptr()) as _);
 
             // When success, convert stat format to guest format.
             if ret == 0 {
                 let guest_stat = &mut *(arg1 as usize as *mut abi::stat);
-                convert_stat_from_host(guest_stat, &host_stat);
+                convert_stat_from_host(guest_stat, &*host_stat.as_ptr());
             }
 
             if *STRACE {
                 if ret == 0 {
+                    let host_stat = host_stat.assume_init();
                     eprintln!(
                         "stat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0",
                         Escape(pathname.to_bytes()), host_stat.st_mode, host_stat.st_size,
