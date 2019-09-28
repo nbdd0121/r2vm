@@ -1741,18 +1741,16 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
                 if let Ok((next_op, true, bits)) = read_insn(phys_pc_end as usize) {
                     // Currently we require the conditional executed instruction to not change
                     // control flow.
-                    if !next_op.can_change_control_flow() {
-                        if crate::get_flags().disassemble {
-                            eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
-                        }
-                        phys_pc_end += 2;
-                        compiler.compile_cond_op(&op, c, &next_op, true);
-                        if phys_pc_end & 4095 == 0 {
-                            compiler.end();
-                            break
-                        }
-                        continue;
+                    if crate::get_flags().disassemble {
+                        eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
                     }
+                    phys_pc_end += 2;
+                    compiler.compile_cond_op(&op, c, &next_op, true);
+                    if phys_pc_end & 4095 == 0 {
+                        compiler.end();
+                        break
+                    }
+                    continue;
                 }
             }
             Op::Beq { imm: 8, .. } |
@@ -1764,18 +1762,16 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
                 if let Ok((next_op, false, bits)) = read_insn(phys_pc_end as usize) {
                     // Currently we require the conditional executed instruction to not change
                     // control flow.
-                    if !next_op.can_change_control_flow() {
-                        if crate::get_flags().disassemble {
-                            eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
-                        }
-                        phys_pc_end += 4;
-                        compiler.compile_cond_op(&op, c, &next_op, false);
-                        if phys_pc_end & 4095 == 0 {
-                            compiler.end();
-                            break
-                        }
-                        continue;
+                    if crate::get_flags().disassemble {
+                        eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
                     }
+                    phys_pc_end += 4;
+                    compiler.compile_cond_op(&op, c, &next_op, false);
+                    if phys_pc_end & 4095 == 0 {
+                        compiler.end();
+                        break
+                    }
+                    continue;
                 }
             }
             _ => (),
