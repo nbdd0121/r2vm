@@ -321,7 +321,6 @@ fn is_proc_self(path: &CStr) -> Option<&Path> {
 pub fn translate_path(path: &Path) -> Cow<Path> {
     // We assume relative paths cannot point to sysroot
     if path.is_relative() { return Cow::Borrowed(path) }
-    // TODO: Replace this once we get proper type for sysroot
     let newpath = SYSROOT.join(path.strip_prefix("/").unwrap());
     if !newpath.exists() { return Cow::Borrowed(path) }
     if *STRACE {

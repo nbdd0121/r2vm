@@ -7,7 +7,7 @@ const VIRTIO_BLK_F_RO: usize = 5;
 
 const VIRTIO_BLK_T_IN  : u32 = 0;
 const VIRTIO_BLK_T_OUT : u32 = 1;
-// TODO: This is an un-documented but required feature yet to support.
+/// This is an un-documented.
 const VIRTIO_BLK_T_GET_ID : u32 = 8;
 
 #[repr(C)]

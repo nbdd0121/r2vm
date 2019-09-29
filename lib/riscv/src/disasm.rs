@@ -273,14 +273,14 @@ impl Op {
             // jalr has same string representation as load instructions.
             Op::Jalr { rd, rs1, imm } =>
                 write!(fmt, "{}, {}({})", register_name(rd), imm, register_name(rs1))?,
-            // TODO: display the arguments of fence/sfence.vma?
             Op::Fence |
             Op::FenceI |
             Op::Ecall |
             Op::Ebreak |
             Op::Sret |
-            Op::Wfi |
-            Op::SfenceVma {..} => (),
+            Op::Wfi => (),
+            Op::SfenceVma { rs1, rs2 } =>
+                write!(fmt, "{}, {}", register_name(rs1), register_name(rs2))?,
             Op::Sb { rs1, rs2, imm } |
             Op::Sh { rs1, rs2, imm } |
             Op::Sw { rs1, rs2, imm } |
@@ -340,7 +340,6 @@ impl Op {
             Op::Csrrsi { rd, imm, csr } |
             Op::Csrrci { rd, imm, csr } =>
                 write!(fmt, "{}, #{}, {}", register_name(rd), csr, imm)?,
-            // TODO: For atomic instructions we may want to display their aq, rl arguments?
             Op::LrW { rd, rs1, .. } |
             Op::LrD { rd, rs1, .. } =>
                 write!(fmt, "{}, ({})", register_name(rd), register_name(rs1))?,

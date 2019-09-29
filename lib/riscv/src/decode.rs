@@ -559,7 +559,6 @@ pub fn decode(bits: u32) -> Op {
         0b0101111 => {
             /* A-Extension */
             let func = funct7(bits) >> 2;
-            // TODO: Encode this
             let aqrl = match funct7(bits) & 3 {
                 0 => Ordering::Relaxed,
                 1 => Ordering::Release,
