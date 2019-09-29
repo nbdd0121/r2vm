@@ -177,8 +177,10 @@ impl Serializable for String {
     fn decode(reader: &mut dyn Read) -> Result<Self> {
         let len = reader.read_u16::<LE>()? as usize;
         let bytes = read_exact(reader, len)?;
-        // TODO: Propagate the error through
-        Ok(String::from_utf8(bytes).unwrap())
+        match String::from_utf8(bytes) {
+            Ok(v) => Ok(v),
+            Err(v) => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, v)),
+        }
     }
 
     fn encode(&self, writer: &mut dyn Write) -> Result<()> {

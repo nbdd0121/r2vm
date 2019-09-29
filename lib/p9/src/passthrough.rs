@@ -76,12 +76,13 @@ impl FileSystem for Passthrough {
     fn statfs(&mut self, file: &mut Self::File) -> std::io::Result<StatFs> {
         let path_str_c = CString::new(file.path.as_os_str().as_bytes()).unwrap();
         unsafe {
-            let mut buf: libc::statvfs = std::mem::uninitialized();
+            let mut buf = std::mem::MaybeUninit::uninit();
             // We use statvfs over statfs because statfs's f_fsid has type fsid_t but we need to
             // return u64.
-            if libc::statvfs(path_str_c.as_ptr(), &mut buf) != 0 {
+            if libc::statvfs(path_str_c.as_ptr(), buf.as_mut_ptr()) != 0 {
                 return Err(std::io::Error::last_os_error())
             }
+            let buf = buf.assume_init();
             Ok(StatFs {
                 r#type: 0,
                 bsize: buf.f_bsize as _,
