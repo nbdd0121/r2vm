@@ -870,3 +870,29 @@ pub fn decode(bits: u32) -> Op {
         _ => Op::Illegal,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fence_future_compatibility() {
+        // Unsupported FM, RS1, RD must be ignore for future compatiblity.
+        let future = decode(0b1111_1111_1111_11111_000_11111_0001111);
+        let current = decode(0b0000_1111_1111_00000_000_00000_0001111);
+        assert_eq!(
+            unsafe { std::mem::transmute::<_, u64>(future) },
+            unsafe { std::mem::transmute::<_, u64>(current) }
+        );
+    }
+
+    #[test]
+    fn test_addi4spn_signedness() {
+        let op = decode_compressed(0b000_10_1010_0_1_000_00);
+        assert!(match op {
+            // Make sure the immediate is correctly decoded as unsigned.
+            Op::Addi { rd: 8, rs1: 2, imm: 0b1010101000 } => true,
+            _ => false,
+        });
+    }
+}
