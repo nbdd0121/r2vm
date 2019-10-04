@@ -705,7 +705,8 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             0
         }
         _ => {
-            panic!("unknown sbi call {}", nr);
+            error!("unknown sbi call {}", nr);
+            (-2i64) as u64
         }
     }
 }

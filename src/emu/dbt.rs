@@ -6,7 +6,7 @@
 //! | [RSP-8]  | return address                                       |   |   |   |
 //! | [RSP-16] | next translated PC, when executing a helper function |   |   |   |
 
-use x86::{Op as X86Op, Op::*, Register, Memory, Size, ConditionCode};
+use x86::{Op as X86Op, Op::*, Register, Size, ConditionCode};
 use x86::builder::*;
 use riscv::{Op, Csr};
 use super::interp::{Context, CACHE_LINE_LOG2_SIZE};
@@ -21,13 +21,13 @@ macro_rules! memory_of {
 }
 
 #[inline]
-fn memory_of_pc() -> Memory {
-    (Register::RBP + offset_of!(Context, pc) as i32).qword()
+fn loc_of_register(reg: u8) -> x86::Location {
+    Mem(Register::RBP + reg as i32 * 8)
 }
 
 #[inline]
-fn loc_of_register(reg: u8) -> x86::Location {
-    Mem(Register::RBP + reg as i32 * 8)
+fn same_page(a: u64, b: u64) -> bool {
+    a >> 12 == b >> 12
 }
 
 #[inline]
@@ -330,8 +330,8 @@ impl<'a> DbtCompiler<'a> {
         let old_instret = self.instret;
         self.instret = 0;
 
-        if self.pc_start &! 4095 == target &! 4095 {
-            if (self.pc_start.wrapping_add(self.pc_end as u64) - 1) >> CACHE_LINE_LOG2_SIZE != target >> CACHE_LINE_LOG2_SIZE {
+        if same_page(self.pc_start, target) {
+            if !same_cache_line(self.pc_start.wrapping_add(self.pc_end as u64) - 1, target) {
                 assert_eq!(self.get_ebx(), 0);
                 self.emit_icache_access(0, false);
             }
@@ -352,14 +352,14 @@ impl<'a> DbtCompiler<'a> {
         self.pre_adjust_pc_instret(comp);
 
         if rd != 0 {
-            self.emit(Mov(Reg(Register::RDX), OpMem(memory_of_pc())));
+            self.emit(Mov(Reg(Register::RDX), OpMem(memory_of!(pc))));
         }
         self.load_reg(Register::RAX, rs1);
         if imm != 0 {
             self.emit(Add(Reg(Register::RAX), Imm(imm as i64)));
         }
         self.emit(And(Reg(Register::RAX), Imm(!(1 as i64))));
-        self.emit(Mov(Mem(memory_of_pc()), OpReg(Register::RAX)));
+        self.emit(Mov(Mem(memory_of!(pc)), OpReg(Register::RAX)));
         if rd != 0 {
             self.emit(Mov(loc_of_register(rd), OpReg(Register::RDX)));
         }
@@ -375,11 +375,11 @@ impl<'a> DbtCompiler<'a> {
         self.pre_adjust_pc_instret(comp);
 
         if rd != 0 {
-            self.emit(Mov(Reg(Register::RAX), OpMem(memory_of_pc())));
+            self.emit(Mov(Reg(Register::RAX), OpMem(memory_of!(pc))));
         }
 
         let imm_from_end = (imm as i64).wrapping_sub(4);
-        self.emit(Add(Mem(memory_of_pc()), Imm(imm_from_end)));
+        self.emit(Add(Mem(memory_of!(pc)), Imm(imm_from_end)));
         if rd != 0 {
             self.store_reg(rd, Register::RAX);
         }
@@ -400,7 +400,7 @@ impl<'a> DbtCompiler<'a> {
 
     fn emit_icache_access(&mut self, pc_offset: i64, set_rsi: bool) {
         // RSI = addr
-        self.emit(Mov(Reg(Register::RSI), OpMem(memory_of_pc())));
+        self.emit(Mov(Reg(Register::RSI), OpMem(memory_of!(pc))));
         if pc_offset != 0 {
             self.emit(Add(Reg(Register::RSI), Imm(pc_offset)));
         }
@@ -1405,7 +1405,7 @@ impl<'a> DbtCompiler<'a> {
             /* AUIPC */
             Op::Auipc { rd, imm } => {
                 let imm = imm as i64 + self.pc_cur;
-                self.emit(Mov(Reg(Register::RAX), OpMem(memory_of_pc())));
+                self.emit(Mov(Reg(Register::RAX), OpMem(memory_of!(pc))));
                 self.emit(Add(Reg(Register::RAX), Imm(imm)));
                 self.store_reg(rd, Register::RAX);
             }
@@ -1754,7 +1754,10 @@ impl<'a> DbtCompiler<'a> {
             }
         } else {
             // This instruction will access a new cache line.
-            if (self.pc_start.wrapping_add(self.pc_cur as u64) - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_start.wrapping_add(self.pc_end as u64) - 1) >> CACHE_LINE_LOG2_SIZE {
+            if !same_cache_line(
+                self.pc_start.wrapping_add(self.pc_cur as u64) - 1,
+                self.pc_start.wrapping_add(self.pc_end as u64) - 1
+            ) {
                 // We don't need to generate cache line access for the first instruction, as by
                 // jumping to this DBT-ed block:
                 // * find_block is called, which accesses the cache line already;
@@ -1798,7 +1801,10 @@ impl<'a> DbtCompiler<'a> {
 
         // First check if the op cross cache block boundary and we need to access the icache.
         self.pc_end = self.pc_cur + blen + olen;
-        if (self.pc_start.wrapping_add(self.pc_cur as u64) - 1) >> CACHE_LINE_LOG2_SIZE != (self.pc_start.wrapping_add(self.pc_start as u64) - 1) >> CACHE_LINE_LOG2_SIZE {
+        if !same_cache_line(
+            self.pc_start.wrapping_add(self.pc_cur as u64) - 1,
+            self.pc_start.wrapping_add(self.pc_start as u64) - 1
+        ) {
             self.emit_icache_access(self.pc_end - 1, false);
         }
 
@@ -1970,7 +1976,7 @@ impl<'a> DbtCompiler<'a> {
         self.emit_interrupt_check();
 
         let pc_end = self.pc_start.wrapping_add(self.pc_cur as u64);
-        if (pc_end - 1) >> CACHE_LINE_LOG2_SIZE == pc_end >> CACHE_LINE_LOG2_SIZE {
+        if same_cache_line(pc_end - 1, pc_end) {
             self.emit_helper_call(helper_patch_direct_jump);
         } else {
             // We could emit a direct jump plus icache access if the destination falls in the smae
