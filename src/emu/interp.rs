@@ -87,6 +87,9 @@ pub struct SharedContext {
 
     /// Condvar for supporting WFI. Used in pair with the mutex.
     pub wfi_condvar: Box<Condvar>,
+
+    /// Tasks that needs to be running on the hart-specific thread, such as manipulating I-Cache.
+    pub tasks: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
 }
 
 impl SharedContext {
@@ -115,6 +118,7 @@ impl SharedContext {
             fflags: AtomicU32::new(0),
             wfi_mutex: Box::new(Mutex::new(())),
             wfi_condvar: Box::new(Condvar::new()),
+            tasks: Mutex::new(Vec::new()),
         }
     }
 
@@ -153,6 +157,12 @@ impl SharedContext {
 
     pub fn shutdown(&self) {
         self.fire_alarm(2);
+    }
+
+    /// Do a task on this hart's thread.
+    pub fn run_on(&self, task: impl FnOnce() + Send + 'static) {
+        self.tasks.lock().push(Box::new(task));
+        self.alert();
     }
 
     pub fn clear_local_cache(&self) {
@@ -383,17 +393,24 @@ pub fn icache_invalidate(start: usize, end: usize) {
 
     if need_inv {
         trace!(target: "CodeProt", "invalidate {:x} to {:x}", start, end);
-        for mut icache in icaches() {
-            let keys: Vec<u64> = icache.s_map.range(start .. end).map(|(k,_)|*k).collect();
-            for key in keys {
-                let blk = icache.s_map.remove(&key).unwrap();
-                unsafe { *(blk.1 as *mut u8) = 0xC3 }
-            }
-            let keys: Vec<u64> = icache.u_map.range(start .. end).map(|(k,_)|*k).collect();
-            for key in keys {
-                let blk = icache.u_map.remove(&key).unwrap();
-                unsafe { *(blk.1 as *mut u8) = 0xC3 }
-            }
+        for i in 0..crate::core_count() {
+            // `run_on` will queue the closure for execution the next time interrupt is checked
+            // on the target hart. As SFENCE.VMA/FENCE.I will terminate a basic block and thus
+            // imply a cache check, this guarantees that the closure is definitely executed before
+            // before the software expects a coherence instruction cache.
+            crate::shared_context(i).run_on(move || {
+                let mut icache = icache(i as u64);
+                let keys: Vec<u64> = icache.s_map.range(start .. end).map(|(k,_)|*k).collect();
+                for key in keys {
+                    let blk = icache.s_map.remove(&key).unwrap();
+                    unsafe { *(blk.1 as *mut u8) = 0xC3 }
+                }
+                let keys: Vec<u64> = icache.u_map.range(start .. end).map(|(k,_)|*k).collect();
+                for key in keys {
+                    let blk = icache.u_map.remove(&key).unwrap();
+                    unsafe { *(blk.1 as *mut u8) = 0xC3 }
+                }
+            });
         }
     }
 }
@@ -599,17 +616,18 @@ lazy_static! {
     ///
     /// This field is to provide this guarantee. There are a few requirements for the correct
     /// usage:
-    /// (1) A writable entry should only be inserted into D-Cache before CODE_PROT is unlocked.
-    /// (2) I-Cache invalidation must happen with CODE_PROT locked.
-    /// (3) Acquiring the lock of I-Cache must happen with CODE_PROT locked.
-    /// (4) When code needs to invalidate D-Cache entries due to a I-Cache entry insertion,
-    ///     CODE_PROT must be locked.
+    /// (1) A writable entry should be inserted into D-Cache with CODE_PROT locked.
+    /// (2) When inserting a I-Cache entry, CODE_PROT must be locked and updated while
+    ///     (a) invalidating D-Cache entries
+    ///     (b) before the I-Cache insertion happens.
+    /// (3) I-Cache invalidation must be queued with CODE_PROT locked.
     ///
-    /// (1) and (4) guarantee that when there is a new piece of code being translated, next memory
+    /// (1) and (2)(a) guarantee that when there is a new piece of code being translated, next memory
     /// access to that location will always hit the slow path, because CODE_PROT serialises them.
-    /// (2) and (3) guarantee that after a write can be serialised with a concurrent code
-    /// translation, because it will prevent the case where a new block is translated in thread A
-    /// while we are in the process invalidating thread B.
+    /// (2)(b) and (3) guarantee that after a write can be serialised with a concurrent code
+    /// translation. In such situation, as CODE_PROT is updated before actual translation, the
+    /// queued invalidation callback will be executed after the translated code is inserted into
+    /// the I-Cache.
     static ref CODE_PROT: Mutex<BTreeSet<u64>> = {
         Mutex::new(BTreeSet::default())
     };
@@ -619,12 +637,9 @@ fn icache(hartid: u64) -> MutexGuard<'static, ICache> {
     ICACHE[hartid as usize].lock()
 }
 
-fn icaches() -> impl Iterator<Item = MutexGuard<'static, ICache>> {
-    ICACHE.iter().map(|x| x.lock())
-}
-
 pub fn icache_reset() {
-    for mut icache in icaches() {
+    for icache in ICACHE.iter() {
+        let mut icache = icache.lock();
         icache.s_map.clear();
         icache.u_map.clear();
         icache.heap_offset = 0;
@@ -1855,6 +1870,13 @@ pub fn check_interrupt(ctx: &mut Context) -> Result<(), ()> {
 
     if alarm & 2 != 0 {
         return Err(())
+    }
+
+    {
+        let mut guard = ctx.shared.tasks.lock();
+        for task in guard.drain(..) {
+            task();
+        }
     }
 
     if crate::event_loop().time() >= ctx.timecmp {
