@@ -55,6 +55,9 @@ helper_patch_direct_jump:
     pop rbx
     mov rdi, rbp
     call find_block
+    # If rax is zero, it means we have a rollover, so don't patch
+    test rax, rax
+    jz 1f
     # RBX contains the RIP past the call instruction
     # So we RDX - RBX will be the offset needed to patch the offset.
     # Note we use RDX as it is the nonspeculative entry point
@@ -62,6 +65,7 @@ helper_patch_direct_jump:
     sub rcx, rbx
     mov dword ptr [rbx - 5], 0xE9
     mov [rbx - 4], ecx
+1:
     jmp rdx
 
 .global helper_check_interrupt
@@ -86,10 +90,14 @@ helper_san_fail:
 helper_pred_miss:
     mov rdi, rbp
     call find_block
+    # If rax is zero, it means we have a rollover, so don't patch
+    test rax, rax
+    jz 1f
     # RBX contains the RIP past the call instruction
     # So we RAX - RBX will be the offset needed to patch the offset.
     sub rax, rbx
     mov [rbx - 4], eax
+1:
     jmp rdx
 
 .global fiber_interp_run

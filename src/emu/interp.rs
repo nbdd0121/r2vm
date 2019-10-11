@@ -540,51 +540,27 @@ impl ICache {
         }
     }
 
-    // Make sure that there are enough space for next allocation.
-    // Returns the reserved space.
-    unsafe fn ensure_size(&mut self, size: usize) -> &'static mut [u8] {
-        // Enforce alignment
-        let size = (size + 7) &! 7;
-        // Crossing half-boundary
-        let rollover = if self.heap_offset < HEAP_SIZE / 2 && self.heap_offset + size >= HEAP_SIZE / 2 {
-            self.heap_offset = HEAP_SIZE / 2;
-            true
-        } else if self.heap_offset + size > HEAP_SIZE {
-            // Rollover, start from zero
-            self.heap_offset = 0;
-            true
-        } else {
-            false
-        };
-
-        if rollover {
-            self.s_map.clear();
-            self.u_map.clear();
-            debug!("icache {:x} rollover", self.heap_start);
+    // Get the space left in I-Cache.
+    fn space(&mut self) -> &mut [u8] {
+        unsafe {
+            std::slice::from_raw_parts_mut(
+                (self.heap_offset + self.heap_start) as *mut u8,
+                HEAP_SIZE - self.heap_offset
+            )
         }
-
-        std::slice::from_raw_parts_mut((self.heap_offset + self.heap_start) as *mut u8, size)
     }
 
-    fn alloc_size(&mut self, size: usize) -> usize {
-        // Enforce alignment
-        let size = (size + 7) &! 7;
-        unsafe { self.ensure_size(size) };
-        let ret = self.heap_offset + self.heap_start;
+    fn rollover(&mut self) {
+        self.heap_offset = 0;
+        self.s_map.clear();
+        self.u_map.clear();
+        debug!("icache {:x} rollover", self.heap_start);
+    }
+
+    // Commit space of some size
+    fn commit(&mut self, size: usize) {
         self.heap_offset += size;
-        ret
-    }
-
-    #[allow(dead_code)]
-    unsafe fn alloc<T: Copy>(&mut self) -> &'static mut T {
-        let size = std::mem::size_of::<T>();
-        &mut *(self.alloc_size(size) as *mut T)
-    }
-
-    #[allow(dead_code)]
-    unsafe fn alloc_slice<T: Copy>(&mut self, len: usize) -> &'static mut [T] {
-        let size = std::mem::size_of::<T>();
-        std::slice::from_raw_parts_mut(self.alloc_size(size * len) as *mut T, len)
+        assert!(self.heap_offset <= HEAP_SIZE);
     }
 }
 
@@ -1706,7 +1682,14 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
 
     // Reserve some space for the DBT compiler.
     // This uses a very relax upper bound, enough for an entire page.
-    let code = unsafe { icache.ensure_size(256 * 1024) };
+    let mut code = icache.space();
+    let rollover = code.len() < 256 * 1024;
+    // Rollover if the space is not sufficient for next allocation.
+    if rollover {
+        icache.rollover();
+        code = icache.space();
+    }
+
     let mut compiler = super::dbt::DbtCompiler::new(code);
     compiler.begin(phys_pc);
 
@@ -1820,16 +1803,20 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
         }
     }
 
-    // Actually commit the space we allocated
-    icache.alloc_size(compiler.len);
-
+    let func_len = compiler.len;
+    assert!(func_len <= 256 * 1024);
     let spec_len = compiler.speculative_len;
     let code_fn = code.as_ptr() as usize;
     let nonspec_fn = code_fn + spec_len;
     let map = if prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
     map.insert(phys_pc, (code_fn, nonspec_fn));
 
-    (code_fn, nonspec_fn)
+    // Actually commit the space we allocated
+    icache.commit(func_len);
+
+    // We use 0 to indicate that a rollover has happened during the translation, and therefore
+    // no code should be patched, but the execution should resume from nonspec_fn instead.
+    (if rollover { 0 } else { code_fn }, nonspec_fn)
 }
 
 extern "C" fn no_op() {}
