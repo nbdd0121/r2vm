@@ -55,7 +55,7 @@ impl Device for Block {
         self.queue.reset();
     }
     fn notify(&mut self, _idx: usize) {
-        while let Some(mut buffer) = self.queue.take() {
+        while let Some(mut buffer) = self.queue.try_take() {
             let (mut reader, mut writer) = buffer.reader_writer();
 
             let header: VirtioBlkReqHeader = unsafe {

@@ -180,6 +180,10 @@ impl IoMemory for Mmio {
                     error!(target: "Mmio", "attempting to access unavailable queue {}", self.queue_sel);
                     return;
                 }
+                if let Some(waker) = self.queues[self.queue_sel].lock().waker.take() {
+                    waker.wake();
+                }
+
                 self.device.notify(self.queue_sel);
             }
             ADDR_QUEUE_NUM ..= ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW ..= ADDR_QUEUE_USED_HIGH => {

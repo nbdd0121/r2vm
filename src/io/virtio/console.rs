@@ -26,7 +26,7 @@ pub struct Console {
 
 fn put(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
     let mut queue = queue.lock();
-    if let Some(mut buffer) = queue.take() {
+    if let Some(mut buffer) = queue.try_take() {
         let mut writer = buffer.writer();
         writer.write_all(buf).unwrap();
         unsafe { queue.put(buffer) };
@@ -143,7 +143,7 @@ impl Device for Console {
             eprintln!("Filling receving queue");
             return;
         }
-        while let Some(buffer) = self.tx.take() {
+        while let Some(buffer) = self.tx.try_take() {
             let mut reader = buffer.reader();
 
             let mut io_buffer = Vec::with_capacity(reader.len());

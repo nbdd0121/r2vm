@@ -53,7 +53,7 @@ impl Device for P9 {
         self.queue.reset();
     }
     fn notify(&mut self, _idx: usize) {
-        while let Some(mut buffer) = self.queue.take() {
+        while let Some(mut buffer) = self.queue.try_take() {
             let (mut reader, mut writer) = buffer.reader_writer();
 
             reader.seek(SeekFrom::Start(4)).unwrap();

@@ -47,7 +47,7 @@ impl Device for Rng {
         self.queue.reset();
     }
     fn notify(&mut self, _idx: usize) {
-        while let Some(mut buffer) = self.queue.take() {
+        while let Some(mut buffer) = self.queue.try_take() {
             let rng: &mut dyn rand::RngCore = &mut self.rng;
             let mut writer = buffer.writer();
             std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();

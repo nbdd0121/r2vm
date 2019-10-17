@@ -3,6 +3,10 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use parking_lot::Mutex;
 
+use std::pin::Pin;
+use std::future::{Future};
+use std::task::{Poll, Waker, Context};
+
 const VIRTQ_DESC_F_NEXT    : u16 = 1;
 const VIRTQ_DESC_F_WRITE   : u16 = 2;
 // We don't support indirect yet
@@ -26,6 +30,7 @@ pub(super) struct QueueInner {
     pub desc_addr: u64,
     pub avail_addr: u64,
     pub used_addr: u64,
+    pub waker: Option<Waker>,
 }
 
 pub struct Queue {
@@ -47,6 +52,7 @@ impl Queue {
             desc_addr: 0,
             avail_addr: 0,
             used_addr: 0,
+            waker: None,
         }));
         Queue {
             inner,
@@ -62,13 +68,14 @@ impl Queue {
         inner.desc_addr = 0;
         inner.avail_addr = 0;
         inner.used_addr = 0;
+        inner.waker = None;
         self.last_avail_idx = 0;
         self.last_used_idx = 0;
     }
 
     /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
     /// returned.
-    pub fn take(&mut self) -> Option<Buffer> {
+    pub fn try_take(&mut self) -> Option<Buffer> {
         let inner = self.inner.lock();
         
         // If the queue is not ready, trying to take item from it can cause segfault.
@@ -122,6 +129,28 @@ impl Queue {
         }
 
         Some(avail)
+    }
+
+    // This is to be changed to async fn once 1.39 arrives.
+    pub fn take(&mut self) -> impl Future<Output = Buffer> + '_ {
+        /// The future returned for calling async `wake` function of `Queue`.
+        struct Take<'a> {
+            queue: &'a mut Queue,
+        }
+
+        impl Future for Take<'_> {
+            type Output = Buffer;
+
+            fn poll(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Buffer> {
+                if let Some(v) = self.queue.try_take() {
+                    return Poll::Ready(v);
+                }
+                self.queue.inner.lock().waker = Some(ctx.waker().clone());
+                Poll::Pending
+            }
+        }
+
+        Take { queue: self }
     }
 
     /// Put back a buffer to the ring. This function is unsafe because there is no guarantee that

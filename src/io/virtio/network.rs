@@ -29,7 +29,7 @@ pub struct Network {
 
 fn send_packet(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
     let mut queue = queue.lock();
-    if let Some(mut buffer) = queue.take() {
+    if let Some(mut buffer) = queue.try_take() {
         let mut writer = buffer.writer();
         let header: [u8; std::mem::size_of::<VirtioNetHeader>()] = {
             let header = VirtioNetHeader {
@@ -117,7 +117,7 @@ impl Device for Network {
             eprintln!("Filling receving queue");
             return;
         }
-        while let Some(buffer) = self.tx.take() {
+        while let Some(buffer) = self.tx.try_take() {
             let mut reader = buffer.reader();
 
             let hdr_len = std::mem::size_of::<VirtioNetHeader>();
