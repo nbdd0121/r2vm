@@ -1,5 +1,7 @@
 use std::io::{IoSlice, IoSliceMut, Read, Write, Seek, SeekFrom};
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::Arc;
+use parking_lot::Mutex;
 
 const VIRTQ_DESC_F_NEXT    : u16 = 1;
 const VIRTQ_DESC_F_WRITE   : u16 = 2;
@@ -16,41 +18,50 @@ struct VirtqDesc {
     next: u16,
 }
 
-pub struct Queue {
+/// Queue structures shared by both virtio and the device
+pub(super) struct QueueInner {
     pub ready: bool,
     pub num: u16,
     pub num_max: u16,
     pub desc_addr: u64,
     pub avail_addr: u64,
     pub used_addr: u64,
+}
+
+pub struct Queue {
+    pub(super) inner: Arc<Mutex<QueueInner>>,
     last_avail_idx: u16,
     last_used_idx: u16,
 }
 
 impl Queue {
-    pub const fn new() -> Queue {
+    pub fn new() -> Queue {
         Self::new_with_max(32768)
     }
 
-    pub const fn new_with_max(max: u16) -> Queue {
-        Queue {
+    pub fn new_with_max(max: u16) -> Queue {
+        let inner = Arc::new(Mutex::new(QueueInner {
             ready: false,
             num: max,
             num_max: max,
             desc_addr: 0,
             avail_addr: 0,
             used_addr: 0,
+        }));
+        Queue {
+            inner,
             last_avail_idx: 0,
             last_used_idx: 0,
         }
     }
 
     pub fn reset(&mut self) {
-        self.ready = false;
-        self.num = 32768;
-        self.desc_addr = 0;
-        self.avail_addr = 0;
-        self.used_addr = 0;
+        let mut inner = self.inner.lock();
+        inner.ready = false;
+        inner.num = inner.num_max;
+        inner.desc_addr = 0;
+        inner.avail_addr = 0;
+        inner.used_addr = 0;
         self.last_avail_idx = 0;
         self.last_used_idx = 0;
     }
@@ -58,7 +69,12 @@ impl Queue {
     /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
     /// returned.
     pub fn take(&mut self) -> Option<Buffer> {
-        let avail_idx_ptr = unsafe { &*((self.avail_addr + 2) as usize as *const AtomicU16) };
+        let inner = self.inner.lock();
+        
+        // If the queue is not ready, trying to take item from it can cause segfault.
+        if !inner.ready { return None }
+
+        let avail_idx_ptr = unsafe { &*((inner.avail_addr + 2) as usize as *const AtomicU16) };
 
         // Read the current index
         let avail_idx = avail_idx_ptr.load(Ordering::Acquire);
@@ -69,7 +85,7 @@ impl Queue {
         // Obtain the corresponding descriptor index for a given index of available ring.
         // Each index is 2 bytes, and there are flags and idx (2 bytes each) before the ring, so
         // we have + 4 here.
-        let idx_ptr = self.avail_addr + 4 + (self.last_avail_idx & (self.num - 1)) as u64 * 2;
+        let idx_ptr = inner.avail_addr + 4 + (self.last_avail_idx & (inner.num - 1)) as u64 * 2;
         let mut idx = unsafe { *(idx_ptr as usize as *const u16) };
 
         // Now we have obtained this descriptor, increment the index to skip over this.
@@ -84,7 +100,7 @@ impl Queue {
 
         loop {
             let desc = unsafe {
-                std::ptr::read((self.desc_addr + (idx & (self.num - 1)) as u64 * 16) as usize as *const VirtqDesc)
+                std::ptr::read((inner.desc_addr + (idx & (inner.num - 1)) as u64 * 16) as usize as *const VirtqDesc)
             };
 
             // Add to the corresponding buffer (read/write)
@@ -111,7 +127,8 @@ impl Queue {
     /// Put back a buffer to the ring. This function is unsafe because there is no guarantee that
     /// the buffer to put back comes from this queue.
     pub unsafe fn put(&mut self, avail: Buffer) {
-        let used_idx_ptr = &*((self.used_addr + 2) as usize as *const AtomicU16);
+        let inner = self.inner.lock();
+        let used_idx_ptr = &*((inner.used_addr + 2) as usize as *const AtomicU16);
 
         // Write requires invalidating icache
         for slice in avail.write {
@@ -120,7 +137,7 @@ impl Queue {
             crate::emu::interp::icache_invalidate(start, end);
         }
 
-        let elem_ptr = self.used_addr + 4 + (self.last_used_idx & (self.num - 1)) as u64 * 8;
+        let elem_ptr = inner.used_addr + 4 + (self.last_used_idx & (inner.num - 1)) as u64 * 8;
         *(elem_ptr as usize as *mut u32) = avail.idx as u32;
         *((elem_ptr + 4) as usize as *mut u32) = avail.bytes_written as u32;
         self.last_used_idx = self.last_used_idx.wrapping_add(1);

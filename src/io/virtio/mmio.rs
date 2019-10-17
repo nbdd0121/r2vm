@@ -1,7 +1,9 @@
 use super::Device;
 use super::super::IoMemory;
 
+use std::sync::Arc;
 use std::convert::TryInto;
+use parking_lot::Mutex;
 
 const ADDR_MAGIC_VALUE         : usize = 0x000;
 const ADDR_VERSION             : usize = 0x004;
@@ -30,15 +32,24 @@ const ADDR_CONFIG              : usize = 0x100;
 
 pub struct Mmio {
     device: Box<dyn Device + Send>,
+    queues: Vec<Arc<Mutex<super::queue::QueueInner>>>,
     device_features_sel: bool,
     driver_features_sel: bool,
     queue_sel: usize,
 }
 
 impl Mmio {
-    pub fn new(dev: Box<dyn Device + Send>) -> Mmio {
+    pub fn new(mut dev: Box<dyn Device + Send>) -> Mmio {
+        let num_queues = dev.num_queues();
+        let mut queues = Vec::with_capacity(num_queues);
+        for i in 0..num_queues {
+            dev.with_queue(i, &mut |queue| {
+                queues.push(queue.inner.clone());
+            })
+        }
         Mmio {
             device: dev,
+            queues,
             device_features_sel: false,
             driver_features_sel: false,
             queue_sel: 0,
@@ -88,14 +99,9 @@ impl IoMemory for Mmio {
             ADDR_DRIVER_FEATURES_SEL => self.driver_features_sel as u32,
             ADDR_QUEUE_SEL           => self.queue_sel as u32,
             ADDR_QUEUE_NUM_MAX       => {
-                if self.queue_sel >= self.device.num_queues() {
-                    0
-                } else {
-                    let mut ret = 0;
-                    self.device.with_queue(self.queue_sel, &mut |queue| {
-                        ret = queue.num_max;
-                    });
-                    ret as u32
+                match self.queues.get(self.queue_sel) {
+                    None => 0,
+                    Some(queue) => queue.lock().num_max as u32,
                 }
             }
             ADDR_QUEUE_NUM | ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW ..= ADDR_QUEUE_USED_HIGH => {
@@ -103,21 +109,18 @@ impl IoMemory for Mmio {
                     error!(target: "Mmio", "attempting to access unavailable queue {}", self.queue_sel);
                     return 0;
                 }
-                let mut ret = 0;
-                self.device.with_queue(self.queue_sel, &mut |queue| {
-                    ret = match addr {
-                        ADDR_QUEUE_NUM        => queue.num as u32,
-                        ADDR_QUEUE_READY      => queue.ready as u32,
-                        ADDR_QUEUE_DESC_LOW   => queue.desc_addr as u32,
-                        ADDR_QUEUE_DESC_HIGH  => (queue.desc_addr >> 32) as u32,
-                        ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr as u32,
-                        ADDR_QUEUE_AVAIL_HIGH => (queue.avail_addr >> 32) as u32,
-                        ADDR_QUEUE_USED_LOW   => queue.used_addr as u32,
-                        ADDR_QUEUE_USED_HIGH  => (queue.used_addr >> 32) as u32,
-                        _ => unsafe { std::hint::unreachable_unchecked() }
-                    }
-                });
-                ret
+                let queue = self.queues[self.queue_sel].lock();
+                match addr {
+                    ADDR_QUEUE_NUM        => queue.num as u32,
+                    ADDR_QUEUE_READY      => queue.ready as u32,
+                    ADDR_QUEUE_DESC_LOW   => queue.desc_addr as u32,
+                    ADDR_QUEUE_DESC_HIGH  => (queue.desc_addr >> 32) as u32,
+                    ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr as u32,
+                    ADDR_QUEUE_AVAIL_HIGH => (queue.avail_addr >> 32) as u32,
+                    ADDR_QUEUE_USED_LOW   => queue.used_addr as u32,
+                    ADDR_QUEUE_USED_HIGH  => (queue.used_addr >> 32) as u32,
+                    _ => unsafe { std::hint::unreachable_unchecked() }
+                }
             }
             // As currently config space is readonly, the interrupt status must be an used buffer.
             ADDR_INTERRUPT_STATUS    => self.device.interrupt_status(),
@@ -184,25 +187,25 @@ impl IoMemory for Mmio {
                     error!(target: "Mmio", "attempting to access unavailable queue {}", self.queue_sel);
                     return;
                 }
-                self.device.with_queue(self.queue_sel, &mut |queue| {
-                    match addr {
-                        ADDR_QUEUE_NUM           => {
-                            if value.is_power_of_two() && value <= queue.num_max as u32 {
-                                queue.num = value as u16
-                            } else {
-                                error!(target: "Mmio", "invalid queue size {}", value)
-                            }
+                let mut queue = self.queues[self.queue_sel].lock();
+                match addr {
+                    ADDR_QUEUE_NUM           => {
+                        if value.is_power_of_two() && value <= queue.num_max as u32 {
+                            queue.num = value as u16
+                        } else {
+                            error!(target: "Mmio", "invalid queue size {}", value)
                         }
-                        ADDR_QUEUE_READY      => queue.ready = (value & 1) != 0,
-                        ADDR_QUEUE_DESC_LOW   => queue.desc_addr = (queue.desc_addr &! 0xffffffff) | value as u64,
-                        ADDR_QUEUE_DESC_HIGH  => queue.desc_addr = (queue.desc_addr & 0xffffffff) | (value as u64) << 32,
-                        ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr = (queue.avail_addr &! 0xffffffff) | value as u64,
-                        ADDR_QUEUE_AVAIL_HIGH => queue.avail_addr = (queue.avail_addr & 0xffffffff) | (value as u64) << 32,
-                        ADDR_QUEUE_USED_LOW   => queue.used_addr = (queue.used_addr &! 0xffffffff) | value as u64,
-                        ADDR_QUEUE_USED_HIGH  => queue.used_addr = (queue.used_addr & 0xffffffff) | (value as u64) << 32,
-                        _ => unsafe { std::hint::unreachable_unchecked() }
                     }
-                });
+                    ADDR_QUEUE_READY      => queue.ready = (value & 1) != 0,
+                    ADDR_QUEUE_DESC_LOW   => queue.desc_addr = (queue.desc_addr &! 0xffffffff) | value as u64,
+                    ADDR_QUEUE_DESC_HIGH  => queue.desc_addr = (queue.desc_addr & 0xffffffff) | (value as u64) << 32,
+                    ADDR_QUEUE_AVAIL_LOW  => queue.avail_addr = (queue.avail_addr &! 0xffffffff) | value as u64,
+                    ADDR_QUEUE_AVAIL_HIGH => queue.avail_addr = (queue.avail_addr & 0xffffffff) | (value as u64) << 32,
+                    ADDR_QUEUE_USED_LOW   => queue.used_addr = (queue.used_addr &! 0xffffffff) | value as u64,
+                    ADDR_QUEUE_USED_HIGH  => queue.used_addr = (queue.used_addr & 0xffffffff) | (value as u64) << 32,
+                    _ => unsafe { std::hint::unreachable_unchecked() }
+                }
+                std::mem::drop(queue);
 
                 if addr == ADDR_QUEUE_READY && value & 1 != 0 {
                     self.device.queue_ready(self.queue_sel);
