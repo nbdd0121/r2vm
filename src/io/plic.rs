@@ -2,19 +2,19 @@ use super::IoMemory;
 
 // The ranges here are all inclusive, and they are calculated under maximum permitted number
 // of interrupts (1024).
-const ADDR_PRIORITY_START        : usize = 0x000;
-const ADDR_PRIORITY_END          : usize = 0xFFC;
+const ADDR_PRIORITY_START: usize = 0x000;
+const ADDR_PRIORITY_END: usize = 0xFFC;
 
-const ADDR_PENDING_START         : usize = 0x1000;
-const ADDR_PENDING_END           : usize = 0x107C;
+const ADDR_PENDING_START: usize = 0x1000;
+const ADDR_PENDING_END: usize = 0x107C;
 
-const ADDR_ENABLE_START          : usize = 0x2000;
-const ADDR_ENABLE_SIZE           : usize = 0x80;
+const ADDR_ENABLE_START: usize = 0x2000;
+const ADDR_ENABLE_SIZE: usize = 0x80;
 
-const ADDR_CONTEXT_START         : usize = 0x200000;
-const ADDR_CONTEXT_SIZE          : usize = 0x1000;
-const OFFSET_PRIORITY_THRESHOLD  : usize = 0x000;
-const OFFSET_INTERRUPT_CLAIM     : usize = 0x004;
+const ADDR_CONTEXT_START: usize = 0x200000;
+const ADDR_CONTEXT_SIZE: usize = 0x1000;
+const OFFSET_PRIORITY_THRESHOLD: usize = 0x000;
+const OFFSET_INTERRUPT_CLAIM: usize = 0x004;
 
 /// An implementation of SiFive's PLIC controller. We support 31 interrupts at the moment.
 pub struct Plic {
@@ -45,12 +45,12 @@ impl Plic {
 
     /// Check if there are IRQs pending for a context
     fn pending(&self, ctx: usize) -> bool {
-        let claimable = (self.pending &! self.claimed) & self.enable[ctx];
+        let claimable = (self.pending & !self.claimed) & self.enable[ctx];
         for irq in 1..32 {
             let prio = self.priority[irq];
             let enabled = (claimable & (1 << irq)) != 0;
             if enabled && prio > self.threshold[ctx] {
-                return true
+                return true;
             }
         }
         false
@@ -67,7 +67,7 @@ impl Plic {
     }
 
     fn claim(&mut self, ctx: usize) -> u32 {
-        let claimable = (self.pending &! self.claimed) & self.enable[ctx];
+        let claimable = (self.pending & !self.claimed) & self.enable[ctx];
         let mut cur_irq = 0;
         // According to document, the claim operation is not affected by the setting of priority
         // threshold register, and can claim even if EIP is low.
@@ -99,7 +99,7 @@ impl IoMemory for Plic {
         }
         (match addr {
             // Interrupt priority
-            ADDR_PRIORITY_START ..= ADDR_PRIORITY_END => {
+            ADDR_PRIORITY_START..=ADDR_PRIORITY_END => {
                 let irq = (addr - ADDR_PRIORITY_START) / 4;
                 // Out of bound read
                 if irq == 0 || irq >= 32 {
@@ -111,7 +111,7 @@ impl IoMemory for Plic {
                 value as u32
             }
             // Pending bits
-            ADDR_PENDING_START ..= ADDR_PENDING_END => {
+            ADDR_PENDING_START..=ADDR_PENDING_END => {
                 let irq = (addr - ADDR_PENDING_START) * 8;
                 // Out of bound read
                 if irq >= 32 {
@@ -123,7 +123,7 @@ impl IoMemory for Plic {
                 value
             }
             // Interrupt enable bits
-            ADDR_ENABLE_START ..= 0x1FFFFF => {
+            ADDR_ENABLE_START..=0x1FFFFF => {
                 let ctx = (addr - ADDR_ENABLE_START) / ADDR_ENABLE_SIZE;
                 let irq = (addr & (ADDR_ENABLE_SIZE - 1)) * 8;
                 // Out of bound write
@@ -179,7 +179,7 @@ impl IoMemory for Plic {
 
         match addr {
             // Interrupt priority
-            ADDR_PRIORITY_START ..= ADDR_PRIORITY_END => {
+            ADDR_PRIORITY_START..=ADDR_PRIORITY_END => {
                 let irq = (addr - ADDR_PRIORITY_START) / 4;
                 // Out of bound write
                 if irq == 0 || irq >= 32 {
@@ -190,12 +190,12 @@ impl IoMemory for Plic {
                 trace!(target: "PLIC", "set interrupt priority of {} to {}", irq, value & 7);
             }
             // Pending bits are not writable
-            ADDR_PENDING_START ..= ADDR_PENDING_END => {
+            ADDR_PENDING_START..=ADDR_PENDING_END => {
                 error!(target: "PLIC", "illegal write to interrupt pending 0x{:x} = 0x{:x}", addr, value);
                 return;
-            },
+            }
             // Interrupt enable bits
-            ADDR_ENABLE_START ..= 0x1FFFFF => {
+            ADDR_ENABLE_START..=0x1FFFFF => {
                 let ctx = (addr - ADDR_ENABLE_START) / ADDR_ENABLE_SIZE;
                 let irq = (addr & (ADDR_ENABLE_SIZE - 1)) * 8;
                 // Out of bound write
@@ -221,7 +221,7 @@ impl IoMemory for Plic {
                         trace!(target: "PLIC", "{} set priority threshold to {}", ctx, self.threshold[ctx]);
                     }
                     OFFSET_INTERRUPT_CLAIM => {
-                        self.claimed &=! (1 << value);
+                        self.claimed &= !(1 << value);
                         trace!(target: "PLIC", "{} completed interrupt {}", ctx, value);
                     }
                     // Out of bound write

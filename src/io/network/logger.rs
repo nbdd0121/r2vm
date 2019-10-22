@@ -1,7 +1,7 @@
+use byteorder::{WriteBytesExt, LE};
 use parking_lot::Mutex;
-use byteorder::{LE, WriteBytesExt};
-use std::io::{Write, Result};
 use std::fs::File;
+use std::io::{Result, Write};
 
 use super::Network;
 
@@ -21,14 +21,12 @@ impl<T: Network> Logger<T> {
         file.write_u32::<LE>(0xffffffff).unwrap();
         file.write_u32::<LE>(1).unwrap();
 
-        Self {
-            file: Mutex::new(file),
-            network,
-        }
+        Self { file: Mutex::new(file), network }
     }
 
     fn log(&self, buf: &[u8]) -> Result<()> {
-        let now = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
         let mut file = self.file.lock();
         file.write_u32::<LE>(now.as_secs() as u32)?;
         file.write_u32::<LE>(now.subsec_micros())?;

@@ -1,19 +1,19 @@
 use super::IoMemorySync;
 
-const ADDR_SET_TM_WR : usize = 0x00;
-const ADDR_SET_TM_RD : usize = 0x04;
-const ADDR_CALIB_WR  : usize = 0x08;
-const ADDR_CALIB_RD  : usize = 0x0C;
-const ADDR_CUR_TM    : usize = 0x10;
-const ADDR_CUR_TICK  : usize = 0x14;
-const ADDR_ALRM      : usize = 0x18;
-const ADDR_INT_STS   : usize = 0x20;
-const ADDR_INT_MASK  : usize = 0x24;
-const ADDR_INT_EN    : usize = 0x28;
-const ADDR_INT_DIS   : usize = 0x2C;
-const ADDR_CTRL      : usize = 0x40;
+const ADDR_SET_TM_WR: usize = 0x00;
+const ADDR_SET_TM_RD: usize = 0x04;
+const ADDR_CALIB_WR: usize = 0x08;
+const ADDR_CALIB_RD: usize = 0x0C;
+const ADDR_CUR_TM: usize = 0x10;
+const ADDR_CUR_TICK: usize = 0x14;
+const ADDR_ALRM: usize = 0x18;
+const ADDR_INT_STS: usize = 0x20;
+const ADDR_INT_MASK: usize = 0x24;
+const ADDR_INT_EN: usize = 0x28;
+const ADDR_INT_DIS: usize = 0x2C;
+const ADDR_CTRL: usize = 0x40;
 
-const CTRL_BATT_EN   : u32 = 1 << 31;
+const CTRL_BATT_EN: u32 = 1 << 31;
 
 /// An implementation of Xilinx Zynq Ultrascale+ MPSoC RTC.
 /// This implementation does not support setting. It supports read only.
@@ -33,8 +33,10 @@ impl IoMemorySync for Rtc {
             return 0;
         }
         let val = match addr {
-            ADDR_SET_TM_RD |
-            ADDR_CUR_TM => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            ADDR_SET_TM_RD | ADDR_CUR_TM => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             ADDR_CALIB_RD => 0x198233,
             ADDR_CUR_TICK => 0xffff,
             ADDR_ALRM => 0,

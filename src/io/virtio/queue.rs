@@ -1,14 +1,14 @@
-use std::io::{IoSlice, IoSliceMut, Read, Write, Seek, SeekFrom};
+use parking_lot::Mutex;
+use std::io::{IoSlice, IoSliceMut, Read, Seek, SeekFrom, Write};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
-use parking_lot::Mutex;
 
+use std::future::Future;
 use std::pin::Pin;
-use std::future::{Future};
-use std::task::{Poll, Waker, Context};
+use std::task::{Context, Poll, Waker};
 
-const VIRTQ_DESC_F_NEXT    : u16 = 1;
-const VIRTQ_DESC_F_WRITE   : u16 = 2;
+const VIRTQ_DESC_F_NEXT: u16 = 1;
+const VIRTQ_DESC_F_WRITE: u16 = 2;
 // We don't support indirect yet
 #[allow(dead_code)]
 const VIRTQ_DESC_F_INDIRECT: u16 = 4;
@@ -54,11 +54,7 @@ impl Queue {
             used_addr: 0,
             waker: None,
         }));
-        Queue {
-            inner,
-            last_avail_idx: 0,
-            last_used_idx: 0,
-        }
+        Queue { inner, last_avail_idx: 0, last_used_idx: 0 }
     }
 
     pub fn reset(&mut self) {
@@ -77,9 +73,11 @@ impl Queue {
     /// returned.
     pub fn try_take(&mut self) -> Option<Buffer> {
         let inner = self.inner.lock();
-        
+
         // If the queue is not ready, trying to take item from it can cause segfault.
-        if !inner.ready { return None }
+        if !inner.ready {
+            return None;
+        }
 
         let avail_idx_ptr = unsafe { &*((inner.avail_addr + 2) as usize as *const AtomicU16) };
 
@@ -87,7 +85,9 @@ impl Queue {
         let avail_idx = avail_idx_ptr.load(Ordering::Acquire);
 
         // No extra elements in this queue
-        if self.last_avail_idx == avail_idx { return None }
+        if self.last_avail_idx == avail_idx {
+            return None;
+        }
 
         // Obtain the corresponding descriptor index for a given index of available ring.
         // Each index is 2 bytes, and there are flags and idx (2 bytes each) before the ring, so
@@ -98,27 +98,28 @@ impl Queue {
         // Now we have obtained this descriptor, increment the index to skip over this.
         self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
 
-        let mut avail = Buffer {
-            idx,
-            bytes_written: 0,
-            read: Vec::new(),
-            write: Vec::new(),
-        };
+        let mut avail = Buffer { idx, bytes_written: 0, read: Vec::new(), write: Vec::new() };
 
         loop {
             let desc = unsafe {
-                std::ptr::read((inner.desc_addr + (idx & (inner.num - 1)) as u64 * 16) as usize as *const VirtqDesc)
+                std::ptr::read(
+                    (inner.desc_addr + (idx & (inner.num - 1)) as u64 * 16) as usize
+                        as *const VirtqDesc,
+                )
             };
 
             // Add to the corresponding buffer (read/write)
             if (desc.flags & VIRTQ_DESC_F_WRITE) == 0 {
-                avail.read.push(IoSlice::new(
-                    unsafe { std::slice::from_raw_parts((desc.addr as usize) as *const u8, desc.len as usize) }
-                ));
+                avail.read.push(IoSlice::new(unsafe {
+                    std::slice::from_raw_parts((desc.addr as usize) as *const u8, desc.len as usize)
+                }));
             } else {
-                avail.write.push(IoSliceMut::new(
-                    unsafe { std::slice::from_raw_parts_mut((desc.addr as usize) as *mut u8, desc.len as usize) }
-                ));
+                avail.write.push(IoSliceMut::new(unsafe {
+                    std::slice::from_raw_parts_mut(
+                        (desc.addr as usize) as *mut u8,
+                        desc.len as usize,
+                    )
+                }));
             };
 
             // Follow the linked list until we've see a descritpro without NEXT flag.
@@ -216,12 +217,12 @@ impl<'a> BufferReader<'a> {
             let len = desc.len() as usize;
             if offset >= len {
                 offset -= len;
-                continue
+                continue;
             }
 
             self.slice_idx = i;
             self.slice_offset = offset;
-            return
+            return;
         }
 
         self.slice_idx = self.buffer.len() + 1;
@@ -236,7 +237,7 @@ impl<'a> BufferReader<'a> {
 impl<'a> Seek for BufferReader<'a> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         let (base, offset) = match pos {
-            SeekFrom::Start(n) => { (0, n as i64) }
+            SeekFrom::Start(n) => (0, n as i64),
             SeekFrom::End(n) => (self.len, n),
             SeekFrom::Current(n) => (self.pos, n),
         };
@@ -255,7 +256,7 @@ impl<'a> Seek for BufferReader<'a> {
 impl<'a> Read for BufferReader<'a> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.slice_idx >= self.buffer.len() {
-            return Ok(0)
+            return Ok(0);
         }
 
         let slice = &self.buffer[self.slice_idx][self.slice_offset..];
@@ -297,12 +298,12 @@ impl<'a> BufferWriter<'a> {
             let len = desc.len() as usize;
             if offset >= len {
                 offset -= len;
-                continue
+                continue;
             }
 
             self.slice_idx = i;
             self.slice_offset = offset;
-            return
+            return;
         }
 
         self.slice_idx = self.buffer.len() + 1;
@@ -317,7 +318,7 @@ impl<'a> BufferWriter<'a> {
 impl<'a> Seek for BufferWriter<'a> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         let (base, offset) = match pos {
-            SeekFrom::Start(n) => { (0, n as i64) }
+            SeekFrom::Start(n) => (0, n as i64),
             SeekFrom::End(n) => (self.len, n),
             SeekFrom::Current(n) => (self.pos, n),
         };
@@ -334,11 +335,13 @@ impl<'a> Seek for BufferWriter<'a> {
 }
 
 impl<'a> Write for BufferWriter<'a> {
-    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if self.slice_idx >= self.buffer.len() {
-            return Ok(0)
+            return Ok(0);
         }
 
         let slice = &mut self.buffer[self.slice_idx][self.slice_offset..];

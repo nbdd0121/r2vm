@@ -1,7 +1,7 @@
 use super::{Device, DeviceId, Queue};
+use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::sync::Arc;
-use parking_lot::Mutex;
 
 const VIRTIO_CONSOLE_F_SIZE: usize = 0;
 
@@ -42,13 +42,16 @@ fn put(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
 }
 
 fn thread_run(queue: Arc<Mutex<Queue>>, irq: u32) {
-    std::thread::Builder::new().name("virtio-console".to_owned()).spawn(move || {
-        let mut buffer = [0; 2048];
-        loop {
-            let len = crate::io::console::CONSOLE.recv(&mut buffer).unwrap();
-            put(&queue, &buffer[..len], irq);
-        }
-    }).unwrap();
+    std::thread::Builder::new()
+        .name("virtio-console".to_owned())
+        .spawn(move || {
+            let mut buffer = [0; 2048];
+            loop {
+                let len = crate::io::console::CONSOLE.recv(&mut buffer).unwrap();
+                put(&queue, &buffer[..len], irq);
+            }
+        })
+        .unwrap();
 }
 
 impl Drop for Console {
@@ -97,40 +100,33 @@ impl Console {
             crate::io::console::CONSOLE.on_size_change(Some(callback));
         }
 
-        Console {
-            status: 0,
-            rx: queue,
-            tx: Queue::new(),
-            irq,
-            resize,
-            config,
-        }
+        Console { status: 0, rx: queue, tx: Queue::new(), irq, resize, config }
     }
 }
 
 impl Device for Console {
-    fn device_id(&self) -> DeviceId { DeviceId::Console }
+    fn device_id(&self) -> DeviceId {
+        DeviceId::Console
+    }
     fn device_feature(&self) -> u32 {
-        if self.resize {
-            1 << VIRTIO_CONSOLE_F_SIZE
-        } else {
-            0
-        }
+        if self.resize { 1 << VIRTIO_CONSOLE_F_SIZE } else { 0 }
     }
 
     fn driver_feature(&mut self, _value: u32) {}
-    fn get_status(&self) -> u32 { self.status }
-    fn set_status(&mut self, status: u32) { self.status = status }
+    fn get_status(&self) -> u32 {
+        self.status
+    }
+    fn set_status(&mut self, status: u32) {
+        self.status = status
+    }
     fn with_config_space(&self, f: &mut dyn FnMut(&[u8])) {
         f(&self.config.lock().0)
     }
-    fn num_queues(&self) -> usize { 2 } 
+    fn num_queues(&self) -> usize {
+        2
+    }
     fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue)) {
-        if idx == 0 {
-            f(&mut self.rx.lock())
-        } else {
-            f(&mut self.tx)
-        }
+        if idx == 0 { f(&mut self.rx.lock()) } else { f(&mut self.tx) }
     }
     fn reset(&mut self) {
         self.status = 0;
@@ -149,7 +145,9 @@ impl Device for Console {
             let mut io_buffer = Vec::with_capacity(reader.len());
             unsafe { io_buffer.set_len(io_buffer.capacity()) };
             reader.read_exact(&mut io_buffer).unwrap();
-            unsafe { self.tx.put(buffer); }
+            unsafe {
+                self.tx.put(buffer);
+            }
 
             crate::io::console::CONSOLE.send(&io_buffer).unwrap();
         }
@@ -167,6 +165,8 @@ impl Device for Console {
     }
 
     fn interrupt_ack(&mut self, ack: u32) {
-        if ack & 2 != 0 { self.config.lock().1 = false }
+        if ack & 2 != 0 {
+            self.config.lock().1 = false
+        }
     }
 }

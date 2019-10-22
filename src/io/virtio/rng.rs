@@ -13,12 +13,7 @@ pub struct Rng {
 impl Rng {
     /// Create a virtio entropy source device using a given random number generator.
     pub fn new(irq: u32, rng: Box<dyn rand::RngCore + Send>) -> Rng {
-        Rng {
-            status: 0,
-            queue: Queue::new(),
-            rng,
-            irq,
-        }
+        Rng { status: 0, queue: Queue::new(), rng, irq }
     }
 
     /// Create a virtio entropy source device, fulfilled by OS's entropy source.
@@ -34,14 +29,28 @@ impl Rng {
 }
 
 impl Device for Rng {
-    fn device_id(&self) -> DeviceId { DeviceId::Entropy }
-    fn device_feature(&self) -> u32 { 0 }
+    fn device_id(&self) -> DeviceId {
+        DeviceId::Entropy
+    }
+    fn device_feature(&self) -> u32 {
+        0
+    }
     fn driver_feature(&mut self, _value: u32) {}
-    fn get_status(&self) -> u32 { self.status }
-    fn set_status(&mut self, status: u32) { self.status = status }
-    fn config_space(&self) -> &[u8] { &[] }
-    fn num_queues(&self) -> usize { 1 }
-    fn with_queue(&mut self, _idx: usize, f: &mut dyn FnMut(&mut Queue)) { f(&mut self.queue) }
+    fn get_status(&self) -> u32 {
+        self.status
+    }
+    fn set_status(&mut self, status: u32) {
+        self.status = status
+    }
+    fn config_space(&self) -> &[u8] {
+        &[]
+    }
+    fn num_queues(&self) -> usize {
+        1
+    }
+    fn with_queue(&mut self, _idx: usize, f: &mut dyn FnMut(&mut Queue)) {
+        f(&mut self.queue)
+    }
     fn reset(&mut self) {
         self.status = 0;
         self.queue.reset();
@@ -51,7 +60,9 @@ impl Device for Rng {
             let rng: &mut dyn rand::RngCore = &mut self.rng;
             let mut writer = buffer.writer();
             std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();
-            unsafe { self.queue.put(buffer); }
+            unsafe {
+                self.queue.put(buffer);
+            }
         }
 
         crate::emu::PLIC.lock().trigger(self.irq);

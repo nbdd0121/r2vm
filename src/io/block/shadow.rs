@@ -10,10 +10,7 @@ pub struct Shadow {
 
 impl Shadow {
     pub fn new(file: File) -> Shadow {
-        Shadow {
-            file,
-            overlay: FnvHashMap::default(),
-        }
+        Shadow { file, overlay: FnvHashMap::default() }
     }
 }
 
@@ -37,8 +34,11 @@ impl Block for Shadow {
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<()> { Ok(()) }
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
 
-    fn len(&mut self) -> Result<u64> { self.file.len() }
+    fn len(&mut self) -> Result<u64> {
+        self.file.len()
+    }
 }
-

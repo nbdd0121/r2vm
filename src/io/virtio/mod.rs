@@ -1,18 +1,18 @@
-mod queue;
-mod mmio;
 mod block;
-mod rng;
-mod p9;
-mod network;
 mod console;
+mod mmio;
+mod network;
+mod p9;
+mod queue;
+mod rng;
 
-pub use queue::{Queue, Buffer, BufferReader, BufferWriter};
-pub use mmio::Mmio;
-pub use block::Block;
-pub use rng::Rng;
 pub use self::p9::P9;
-pub use network::Network;
+pub use block::Block;
 pub use console::Console;
+pub use mmio::Mmio;
+pub use network::Network;
+pub use queue::{Buffer, BufferReader, BufferWriter, Queue};
+pub use rng::Rng;
 
 #[derive(Clone, Copy)]
 pub enum DeviceId {
@@ -43,7 +43,9 @@ pub trait Device {
     fn set_status(&mut self, status: u32);
 
     /// Get the configuration space. In current implementation this is readonly.
-    fn config_space(&self) -> &[u8] { unimplemented!() }
+    fn config_space(&self) -> &[u8] {
+        unimplemented!()
+    }
 
     /// Get the configuration space, callback form.
     fn with_config_space(&self, f: &mut dyn FnMut(&[u8])) {
@@ -66,7 +68,9 @@ pub trait Device {
     fn queue_ready(&mut self, _idx: usize) {}
 
     /// Query what has caused the interrupt to be sent.
-    fn interrupt_status(&mut self) -> u32 { 1 }
+    fn interrupt_status(&mut self) -> u32 {
+        1
+    }
 
     /// Answer the interrupt.
     fn interrupt_ack(&mut self, _ack: u32) {}

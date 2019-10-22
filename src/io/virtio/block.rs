@@ -1,14 +1,14 @@
-use super::{Device, DeviceId, Queue};
 use super::super::block::Block as BlockDevice;
+use super::{Device, DeviceId, Queue};
 use std::io::{Read, Write};
 
 #[allow(dead_code)]
 const VIRTIO_BLK_F_RO: usize = 5;
 
-const VIRTIO_BLK_T_IN  : u32 = 0;
-const VIRTIO_BLK_T_OUT : u32 = 1;
+const VIRTIO_BLK_T_IN: u32 = 0;
+const VIRTIO_BLK_T_OUT: u32 = 1;
 /// This is an un-documented.
-const VIRTIO_BLK_T_GET_ID : u32 = 8;
+const VIRTIO_BLK_T_GET_ID: u32 = 8;
 
 #[repr(C)]
 struct VirtioBlkReqHeader {
@@ -31,25 +31,33 @@ impl Block {
         if len % 512 != 0 {
             panic!("Size of block device must be multiple of 512 bytes");
         }
-        Block {
-            status: 0,
-            queue: Queue::new(),
-            config: (len / 512).to_le_bytes(),
-            file,
-            irq,
-        }
+        Block { status: 0, queue: Queue::new(), config: (len / 512).to_le_bytes(), file, irq }
     }
 }
 
 impl Device for Block {
-    fn device_id(&self) -> DeviceId { DeviceId::Block }
-    fn device_feature(&self) -> u32 { 0 }
+    fn device_id(&self) -> DeviceId {
+        DeviceId::Block
+    }
+    fn device_feature(&self) -> u32 {
+        0
+    }
     fn driver_feature(&mut self, _value: u32) {}
-    fn get_status(&self) -> u32 { self.status }
-    fn set_status(&mut self, status: u32) { self.status = status }
-    fn config_space(&self) -> &[u8] { &self.config }
-    fn num_queues(&self) -> usize { 1 }
-    fn with_queue(&mut self, _idx: usize, f: &mut dyn FnMut(&mut Queue)) { f(&mut self.queue) }
+    fn get_status(&self) -> u32 {
+        self.status
+    }
+    fn set_status(&mut self, status: u32) {
+        self.status = status
+    }
+    fn config_space(&self) -> &[u8] {
+        &self.config
+    }
+    fn num_queues(&self) -> usize {
+        1
+    }
+    fn with_queue(&mut self, _idx: usize, f: &mut dyn FnMut(&mut Queue)) {
+        f(&mut self.queue)
+    }
     fn reset(&mut self) {
         self.status = 0;
         self.queue.reset();
@@ -93,15 +101,16 @@ impl Device for Block {
                 }
                 _ => {
                     error!(target: "VirtioBlk", "unsupported block operation type {}", header.r#type);
-                    continue
+                    continue;
                 }
             }
 
-            unsafe { self.queue.put(buffer); }
+            unsafe {
+                self.queue.put(buffer);
+            }
         }
 
         // TODO
         crate::emu::PLIC.lock().trigger(self.irq);
     }
-
 }

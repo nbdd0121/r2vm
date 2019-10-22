@@ -1,9 +1,9 @@
-use std::sync::{Arc, Weak};
-use parking_lot::Mutex;
 use libslirp as slirp;
+use parking_lot::Mutex;
 use std::os::unix::io::RawFd;
+use std::sync::{Arc, Weak};
 
-use std::sync::mpsc::{sync_channel, SyncSender, Receiver};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
 pub struct Slirp {
     inner: Arc<Inner>,
@@ -63,11 +63,7 @@ impl slirp::context::Handler for Handler {
     fn notify(&mut self) {}
 
     fn timer_new(&mut self, func: Box<dyn FnMut()>) -> Self::Timer {
-        Arc::new(Mutex::new(Timer {
-            inner: self.1.lock().clone(),
-            func,
-            time: u64::max_value(),
-        }))
+        Arc::new(Mutex::new(Timer { inner: self.1.lock().clone(), func, time: u64::max_value() }))
     }
 
     fn timer_mod(&mut self, timer: &mut Self::Timer, expire_time: i64) {
@@ -76,11 +72,14 @@ impl slirp::context::Handler for Handler {
         let mut inner = timer.lock();
         inner.time = time;
         let timer_clone = Arc::downgrade(&timer);
-        crate::EVENT_LOOP.queue_time(time, Box::new(move || {
-            if let Some(timer) = timer_clone.upgrade() {
-                timer.lock().check()
-            }
-        }));
+        crate::EVENT_LOOP.queue_time(
+            time,
+            Box::new(move || {
+                if let Some(timer) = timer_clone.upgrade() {
+                    timer.lock().check()
+                }
+            }),
+        );
     }
 
     fn timer_free(&mut self, timer: Self::Timer) {
@@ -95,32 +94,50 @@ fn poll_loop(inner: Arc<Inner>) {
         let mut timeout = i32::max_value() as u32;
         inner.slirp.pollfds_fill(&mut timeout, |fd, events| {
             let mut poll = 0;
-            if events.has_in() { poll |= libc::POLLIN; }
-            if events.has_out() { poll |= libc::POLLOUT; }
-            if events.has_err() { poll |= libc::POLLERR; }
-            if events.has_hup() { poll |= libc::POLLHUP; }
-            if events.has_pri() { poll |= libc::POLLPRI; }
-            vec.push(libc::pollfd {
-                fd,
-                events: poll,
-                revents: 0,
-            });
-            return (vec.len() - 1) as i32
+            if events.has_in() {
+                poll |= libc::POLLIN;
+            }
+            if events.has_out() {
+                poll |= libc::POLLOUT;
+            }
+            if events.has_err() {
+                poll |= libc::POLLERR;
+            }
+            if events.has_hup() {
+                poll |= libc::POLLHUP;
+            }
+            if events.has_pri() {
+                poll |= libc::POLLPRI;
+            }
+            vec.push(libc::pollfd { fd, events: poll, revents: 0 });
+            return (vec.len() - 1) as i32;
         });
 
         let err = unsafe { libc::poll(vec.as_mut_ptr(), vec.len() as _, timeout as _) };
 
-        if *inner.stop.lock() { return }
+        if *inner.stop.lock() {
+            return;
+        }
         inner.slirp.pollfds_poll(err == -1, |idx| {
             let revents = vec[idx as usize].revents;
             use slirp::context::PollEvents;
             let mut ret = PollEvents::empty();
-            if revents & libc::POLLIN != 0 { ret |= PollEvents::poll_in() }
-            if revents & libc::POLLOUT != 0 { ret |= PollEvents::poll_out() }
-            if revents & libc::POLLERR != 0 { ret |= PollEvents::poll_err() }
-            if revents & libc::POLLHUP != 0 { ret |= PollEvents::poll_hup() }
-            if revents & libc::POLLPRI != 0 { ret |= PollEvents::poll_pri() }
-            return ret
+            if revents & libc::POLLIN != 0 {
+                ret |= PollEvents::poll_in()
+            }
+            if revents & libc::POLLOUT != 0 {
+                ret |= PollEvents::poll_out()
+            }
+            if revents & libc::POLLERR != 0 {
+                ret |= PollEvents::poll_err()
+            }
+            if revents & libc::POLLHUP != 0 {
+                ret |= PollEvents::poll_hup()
+            }
+            if revents & libc::POLLPRI != 0 {
+                ret |= PollEvents::poll_pri()
+            }
+            return ret;
         });
     }
 }
@@ -145,10 +162,7 @@ impl Slirp {
             .name("slirp".to_owned())
             .spawn(move || poll_loop(clone))
             .unwrap();
-        Self {
-            inner,
-            rx: Mutex::new(rx),
-        }
+        Self { inner, rx: Mutex::new(rx) }
     }
 }
 

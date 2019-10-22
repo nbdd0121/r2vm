@@ -1,8 +1,8 @@
 mod shadow;
 pub use shadow::Shadow;
 
-use std::io::Result;
 use std::fs::File;
+use std::io::Result;
 use std::os::unix::fs::FileExt;
 
 pub trait Block {

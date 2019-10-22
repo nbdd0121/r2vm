@@ -1,9 +1,9 @@
-pub mod virtio;
-pub mod console;
-pub mod plic;
 pub mod block;
+pub mod console;
 pub mod network;
+pub mod plic;
 pub mod rtc;
+pub mod virtio;
 
 /// IoMemory represents a region of physically continuous I/O memory.
 ///
@@ -34,11 +34,21 @@ pub trait IoMemorySync: Send + Sync {
 }
 
 impl IoMemory for dyn IoMemorySync {
-    fn read(&mut self, addr: usize, size: u32) -> u64 { self.read_sync(addr, size) }
-    fn write(&mut self, addr: usize, value: u64, size: u32) { self.write_sync(addr, value, size) }
+    fn read(&mut self, addr: usize, size: u32) -> u64 {
+        self.read_sync(addr, size)
+    }
+    fn write(&mut self, addr: usize, value: u64, size: u32) {
+        self.write_sync(addr, value, size)
+    }
 }
 
-impl<R: lock_api::RawMutex + Send + Sync, T: IoMemory + Send> IoMemorySync for lock_api::Mutex<R, T> {
-    fn read_sync(&self, addr: usize, size: u32) -> u64 { self.lock().read(addr, size) }
-    fn write_sync(&self, addr: usize, value: u64, size: u32) { self.lock().write(addr, value, size) }
+impl<R: lock_api::RawMutex + Send + Sync, T: IoMemory + Send> IoMemorySync
+    for lock_api::Mutex<R, T>
+{
+    fn read_sync(&self, addr: usize, size: u32) -> u64 {
+        self.lock().read(addr, size)
+    }
+    fn write_sync(&self, addr: usize, value: u64, size: u32) {
+        self.lock().write(addr, value, size)
+    }
 }

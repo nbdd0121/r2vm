@@ -1,8 +1,8 @@
 use super::{Device, DeviceId, Queue};
-use std::io::{Read, Write, Seek, SeekFrom};
-use std::sync::Arc;
+use crate::io::network::Network as NetworkDevice;
 use parking_lot::Mutex;
-use crate::io::network::{Network as NetworkDevice};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::Arc;
 
 const VIRTIO_BLK_F_MAC: usize = 5;
 
@@ -67,44 +67,48 @@ fn send_packet(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
 
 fn thread_run(iface: Arc<dyn NetworkDevice>, queue: Arc<Mutex<Queue>>, irq: u32) {
     // There's no stop mechanism, but we don't destroy devices anyway, so that's okay.
-    std::thread::Builder::new().name("virtio-network".to_owned()).spawn(move || {
-        let mut buffer = [0; 2048];
-        loop {
-            let len = iface.recv(&mut buffer).unwrap();
-            send_packet(&queue, &buffer[..len], irq);
-        }
-    }).unwrap();
+    std::thread::Builder::new()
+        .name("virtio-network".to_owned())
+        .spawn(move || {
+            let mut buffer = [0; 2048];
+            loop {
+                let len = iface.recv(&mut buffer).unwrap();
+                send_packet(&queue, &buffer[..len], irq);
+            }
+        })
+        .unwrap();
 }
 
 impl Network {
     pub fn new(irq: u32, net: impl NetworkDevice + 'static, mac: [u8; 6]) -> Network {
         let queue = Arc::new(Mutex::new(Queue::new()));
         let net = Arc::new(net);
-        Network {
-            net,
-            status: 0,
-            rx: queue,
-            tx: Queue::new(),
-            mac,
-            irq,
-        }
+        Network { net, status: 0, rx: queue, tx: Queue::new(), mac, irq }
     }
 }
 
 impl Device for Network {
-    fn device_id(&self) -> DeviceId { DeviceId::Network }
-    fn device_feature(&self) -> u32 { 1 << VIRTIO_BLK_F_MAC }
+    fn device_id(&self) -> DeviceId {
+        DeviceId::Network
+    }
+    fn device_feature(&self) -> u32 {
+        1 << VIRTIO_BLK_F_MAC
+    }
     fn driver_feature(&mut self, _value: u32) {}
-    fn get_status(&self) -> u32 { self.status }
-    fn set_status(&mut self, status: u32) { self.status = status }
-    fn config_space(&self) -> &[u8] { &self.mac }
-    fn num_queues(&self) -> usize { 2 } 
+    fn get_status(&self) -> u32 {
+        self.status
+    }
+    fn set_status(&mut self, status: u32) {
+        self.status = status
+    }
+    fn config_space(&self) -> &[u8] {
+        &self.mac
+    }
+    fn num_queues(&self) -> usize {
+        2
+    }
     fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue)) {
-        if idx == 0 {
-            f(&mut self.rx.lock())
-        } else {
-            f(&mut self.tx)
-        }
+        if idx == 0 { f(&mut self.rx.lock()) } else { f(&mut self.tx) }
         // TODO: If thread is running, we should terminate it before return here
     }
     fn reset(&mut self) {
@@ -133,7 +137,9 @@ impl Device for Network {
             let mut io_buffer = Vec::with_capacity(packet_len);
             unsafe { io_buffer.set_len(io_buffer.capacity()) };
             reader.read_exact(&mut io_buffer).unwrap();
-            unsafe { self.tx.put(buffer); }
+            unsafe {
+                self.tx.put(buffer);
+            }
 
             self.net.send(&io_buffer).unwrap();
         }

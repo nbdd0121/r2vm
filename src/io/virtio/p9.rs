@@ -1,5 +1,5 @@
 use super::{Device, DeviceId, Queue};
-use byteorder::{LE, WriteBytesExt};
+use byteorder::{WriteBytesExt, LE};
 use p9::serialize::{Fcall, Serializable};
 use p9::{P9Handler, Passthrough};
 
@@ -40,14 +40,28 @@ impl P9 {
 }
 
 impl Device for P9 {
-    fn device_id(&self) -> DeviceId { DeviceId::P9 }
-    fn device_feature(&self) -> u32 { VIRTIO_9P_MOUNT_TAG }
+    fn device_id(&self) -> DeviceId {
+        DeviceId::P9
+    }
+    fn device_feature(&self) -> u32 {
+        VIRTIO_9P_MOUNT_TAG
+    }
     fn driver_feature(&mut self, _value: u32) {}
-    fn get_status(&self) -> u32 { self.status }
-    fn set_status(&mut self, status: u32) { self.status = status }
-    fn config_space(&self) -> &[u8] { &self.config }
-    fn num_queues(&self) -> usize { 1 }
-    fn with_queue(&mut self, _idx: usize, f: &mut dyn FnMut(&mut Queue)) { f(&mut self.queue) }
+    fn get_status(&self) -> u32 {
+        self.status
+    }
+    fn set_status(&mut self, status: u32) {
+        self.status = status
+    }
+    fn config_space(&self) -> &[u8] {
+        &self.config
+    }
+    fn num_queues(&self) -> usize {
+        1
+    }
+    fn with_queue(&mut self, _idx: usize, f: &mut dyn FnMut(&mut Queue)) {
+        f(&mut self.queue)
+    }
     fn reset(&mut self) {
         self.status = 0;
         self.queue.reset();
@@ -69,11 +83,12 @@ impl Device for P9 {
             writer.seek(SeekFrom::Start(0)).unwrap();
             writer.write_u32::<LE>(size as u32).unwrap();
 
-            unsafe { self.queue.put(buffer); }
+            unsafe {
+                self.queue.put(buffer);
+            }
         }
 
         // TODO
         crate::emu::PLIC.lock().trigger(self.irq);
     }
-
 }

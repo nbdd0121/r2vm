@@ -1,12 +1,12 @@
+use lazy_static::lazy_static;
+use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::sync::mpsc::Receiver;
-use parking_lot::Mutex;
-use lazy_static::lazy_static;
 
 lazy_static! {
     /// Stores the tty config before the program is launched, so we can store it properly.
     static ref OLD_TTY: Mutex<Option<libc::termios>> = {
-        unsafe { 
+        unsafe {
             libc::atexit(console_exit);
         }
         Mutex::new(None)
@@ -37,7 +37,9 @@ impl Console {
     fn new() -> Console {
         let mut guard = OLD_TTY.lock();
         // It's an error to create a new console while previous one isn't cleaned up.
-        if guard.is_some() { panic!("Console can only be initialized once") }
+        if guard.is_some() {
+            panic!("Console can only be initialized once")
+        }
 
         // Make tty as raw terminal
         unsafe {
@@ -58,44 +60,44 @@ impl Console {
         // We spawn a new thread instead of using non-blocking and let guest OS to pull us so we can
         // terminate the process using Ctrl+A X whenever we like.
         let (tx, rx) = std::sync::mpsc::channel::<u8>();
-        std::thread::Builder::new().name("console".to_owned()).spawn(move || {
-            let mut buffer = 0;
-            loop {
-                // Just read a single character
-                if std::io::stdin().read(std::slice::from_mut(&mut buffer)).unwrap() == 0 {
-                    // EOF. Very unlikely. In this case we will just exit
-                    return
-                }
-
-                // Ctrl + A hit, read another and do corresponding action
-                if buffer == 1 {
-                    std::io::stdin().read_exact(std::slice::from_mut(&mut buffer)).unwrap();
-                    match buffer {
-                        b't' => {
-                            crate::shutdown(crate::ExitReason::SetThreaded(!crate::threaded()));
-                            continue
-                        }
-                        b'x' => {
-                            println!("Terminated");
-                            crate::shutdown(crate::ExitReason::Exit(0));
-                        }
-                        b'c' => {
-                            unsafe { libc::raise(libc::SIGTRAP); }
-                        }
-                        // Hit Ctrl + A twice, send Ctrl + A to guest
-                        1 => (),
-                        // Ignore all other characters
-                        _ => continue,
+        std::thread::Builder::new()
+            .name("console".to_owned())
+            .spawn(move || {
+                let mut buffer = 0;
+                loop {
+                    // Just read a single character
+                    if std::io::stdin().read(std::slice::from_mut(&mut buffer)).unwrap() == 0 {
+                        // EOF. Very unlikely. In this case we will just exit
+                        return;
                     }
-                }
-                tx.send(buffer).unwrap();
-            }
-        }).unwrap();
 
-        Console {
-            rx: Mutex::new(rx),
-            size_callback: Mutex::new(None),
-        }
+                    // Ctrl + A hit, read another and do corresponding action
+                    if buffer == 1 {
+                        std::io::stdin().read_exact(std::slice::from_mut(&mut buffer)).unwrap();
+                        match buffer {
+                            b't' => {
+                                crate::shutdown(crate::ExitReason::SetThreaded(!crate::threaded()));
+                                continue;
+                            }
+                            b'x' => {
+                                println!("Terminated");
+                                crate::shutdown(crate::ExitReason::Exit(0));
+                            }
+                            b'c' => unsafe {
+                                libc::raise(libc::SIGTRAP);
+                            },
+                            // Hit Ctrl + A twice, send Ctrl + A to guest
+                            1 => (),
+                            // Ignore all other characters
+                            _ => continue,
+                        }
+                    }
+                    tx.send(buffer).unwrap();
+                }
+            })
+            .unwrap();
+
+        Console { rx: Mutex::new(rx), size_callback: Mutex::new(None) }
     }
 
     pub fn send(&self, data: &[u8]) -> std::io::Result<usize> {
@@ -116,7 +118,7 @@ impl Console {
                 Ok(key) => {
                     data[len] = key;
                     len += 1;
-                },
+                }
                 Err(_) => break,
             }
         }
@@ -124,11 +126,13 @@ impl Console {
     }
 
     pub fn recv(&self, data: &mut [u8]) -> std::io::Result<usize> {
-        if data.len() == 0 { return Ok(0) }
+        if data.len() == 0 {
+            return Ok(0);
+        }
         match CONSOLE.rx.lock().recv() {
             Ok(key) => {
                 data[0] = key;
-            },
+            }
             Err(_) => loop {},
         }
         Ok(self.try_recv(&mut data[1..])? + 1)
@@ -159,16 +163,18 @@ impl Console {
 }
 
 /// Handle SIGWINCH for tty size change notification
-unsafe extern "C" fn handle_winch(_: libc::c_int, _: &mut libc::siginfo_t, _: &mut libc::ucontext_t) {
+unsafe extern "C" fn handle_winch(
+    _: libc::c_int,
+    _: &mut libc::siginfo_t,
+    _: &mut libc::ucontext_t,
+) {
     CONSOLE.size_callback.lock().as_mut().map(|x| x());
 }
 
 static WINCH: std::sync::Once = std::sync::Once::new();
 
 lazy_static! {
-    pub static ref CONSOLE: Console = {
-        Console::new()
-    };
+    pub static ref CONSOLE: Console = { Console::new() };
 }
 
 pub fn console_init() {
