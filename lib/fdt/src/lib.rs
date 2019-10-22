@@ -1,7 +1,7 @@
 extern crate fnv;
 
-use std::convert::TryInto;
 use fnv::FnvHashMap;
+use std::convert::TryInto;
 
 mod prop_value;
 pub use prop_value::{PropConversionError, PropValue};
@@ -15,15 +15,15 @@ pub struct Node {
 
 impl Node {
     pub fn new(name: impl Into<String>) -> Self {
-        Node {
-            name: name.into(),
-            properties: Vec::new(),
-            child: Vec::new(),
-        }
+        Node { name: name.into(), properties: Vec::new(), child: Vec::new() }
     }
 
     /// Convience method for append a property with given name and value to the current node.
-    pub fn add_prop(&mut self, name: impl Into<String>, value: impl TryInto<PropValue, Error=PropConversionError>) {
+    pub fn add_prop(
+        &mut self,
+        name: impl Into<String>,
+        value: impl TryInto<PropValue, Error = PropConversionError>,
+    ) {
         self.properties.push(Prop::new(name, value));
     }
 
@@ -41,16 +41,19 @@ pub struct Prop {
 }
 
 impl Prop {
-    pub fn new(name: impl Into<String>, value: impl TryInto<PropValue, Error=PropConversionError>) -> Prop {
+    pub fn new(
+        name: impl Into<String>,
+        value: impl TryInto<PropValue, Error = PropConversionError>,
+    ) -> Prop {
         let value = value.try_into().unwrap();
         Prop { name: name.into(), value }
     }
 }
 
-const FDT_MAGIC     : u32 = 0xd00dfeed;
+const FDT_MAGIC: u32 = 0xd00dfeed;
 const FDT_BEGIN_NODE: u32 = 1;
-const FDT_END_NODE  : u32 = 2;
-const FDT_PROP      : u32 = 3;
+const FDT_END_NODE: u32 = 2;
+const FDT_PROP: u32 = 3;
 
 struct Encoder<'a> {
     dt_struct: Vec<u8>,
@@ -64,7 +67,7 @@ impl<'a> Encoder<'a> {
     }
 
     fn align_to_word(&mut self) {
-        let pad_bytes = ((self.dt_struct.len() + 3) &! 3) - self.dt_struct.len();
+        let pad_bytes = ((self.dt_struct.len() + 3) & !3) - self.dt_struct.len();
         for _ in 0..pad_bytes {
             self.dt_struct.push(0);
         }
@@ -105,7 +108,11 @@ impl<'a> Encoder<'a> {
 }
 
 pub fn encode(node: &Node) -> Vec<u8> {
-    let mut enc = Encoder { dt_struct: Vec::new(), dt_strings: Vec::new(), string_map: FnvHashMap::default() };
+    let mut enc = Encoder {
+        dt_struct: Vec::new(),
+        dt_strings: Vec::new(),
+        string_map: FnvHashMap::default(),
+    };
     enc.encode_node(node);
     enc.push(9);
     let mut vec = Vec::new();

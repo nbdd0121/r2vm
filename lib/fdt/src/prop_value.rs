@@ -27,7 +27,9 @@ impl TryFrom<()> for PropValue {
 impl TryFrom<&PropValue> for () {
     type Error = PropConversionError;
     fn try_from(raw: &PropValue) -> Result<Self, Self::Error> {
-        if raw.0.len() != 0 { return Err(PropConversionError) }
+        if raw.0.len() != 0 {
+            return Err(PropConversionError);
+        }
         Ok(())
     }
 }
@@ -72,7 +74,9 @@ impl TryFrom<u32> for PropValue {
 impl TryFrom<&PropValue> for u32 {
     type Error = PropConversionError;
     fn try_from(raw: &PropValue) -> Result<Self, Self::Error> {
-        if raw.0.len() != 4 { return Err(PropConversionError) }
+        if raw.0.len() != 4 {
+            return Err(PropConversionError);
+        }
         Ok(u32::from_be_bytes(raw.0[..].try_into().unwrap()))
     }
 }
@@ -87,7 +91,9 @@ impl TryFrom<u64> for PropValue {
 impl TryFrom<&PropValue> for u64 {
     type Error = PropConversionError;
     fn try_from(raw: &PropValue) -> Result<Self, Self::Error> {
-        if raw.0.len() != 8 { return Err(PropConversionError) }
+        if raw.0.len() != 8 {
+            return Err(PropConversionError);
+        }
         Ok(u64::from_be_bytes(raw.0[..].try_into().unwrap()))
     }
 }
@@ -107,11 +113,13 @@ impl TryFrom<&[u32]> for PropValue {
 impl TryFrom<&PropValue> for Box<[u32]> {
     type Error = PropConversionError;
     fn try_from(raw: &PropValue) -> Result<Self, Self::Error> {
-        if raw.0.len() % 4 != 0 { return Err(PropConversionError) }
+        if raw.0.len() % 4 != 0 {
+            return Err(PropConversionError);
+        }
         let len = raw.0.len() / 4;
         let mut vec = Vec::with_capacity(len);
         for i in 0..len {
-            vec.push(u32::from_be_bytes(raw.0[i*4..i*4+4].try_into().unwrap()));
+            vec.push(u32::from_be_bytes(raw.0[i * 4..i * 4 + 4].try_into().unwrap()));
         }
         Ok(vec.into_boxed_slice())
     }
@@ -131,13 +139,14 @@ impl TryFrom<&[u64]> for PropValue {
 impl TryFrom<&PropValue> for Box<[u64]> {
     type Error = PropConversionError;
     fn try_from(raw: &PropValue) -> Result<Self, Self::Error> {
-        if raw.0.len() % 8 != 0 { return Err(PropConversionError) }
+        if raw.0.len() % 8 != 0 {
+            return Err(PropConversionError);
+        }
         let len = raw.0.len() / 8;
         let mut vec = Vec::with_capacity(len);
         for i in 0..len {
-            vec.push(u64::from_be_bytes(raw.0[i*8..i*8+8].try_into().unwrap()));
+            vec.push(u64::from_be_bytes(raw.0[i * 8..i * 8 + 8].try_into().unwrap()));
         }
         Ok(vec.into_boxed_slice())
     }
 }
-
