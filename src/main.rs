@@ -4,14 +4,16 @@ extern crate log;
 pub mod io;
 #[macro_use]
 pub mod util;
+pub mod config;
 pub mod emu;
 pub mod fiber;
-pub mod config;
 
-use std::ffi::{CString};
+use std::ffi::CString;
 use util::RoCell;
 
-macro_rules! usage_string {() => ("Usage: {} [options] program [arguments...]
+macro_rules! usage_string {
+    () => {
+        "Usage: {} [options] program [arguments...]
 Options:
   --no-direct-memory    Disable generation of memory access instruction, use
                         call to helper function instead.
@@ -21,10 +23,11 @@ Options:
   --lockstep            Use lockstep non-threaded mode for execution.
   --sysroot             Change the sysroot to a non-default value.
   --help                Display this help message.
-")}
+"
+    };
+}
 
 pub struct Flags {
-
     // Whether direct memory access or call to helper should be generated for guest memory access.
     no_direct_memory_access: bool,
 
@@ -53,7 +56,8 @@ pub fn get_flags() -> &'static Flags {
     unsafe { &FLAGS }
 }
 
-static SHARED_CONTEXTS: RoCell<Vec<&'static emu::interp::SharedContext>> = unsafe { RoCell::new_uninit() };
+static SHARED_CONTEXTS: RoCell<Vec<&'static emu::interp::SharedContext>> =
+    unsafe { RoCell::new_uninit() };
 
 pub fn shared_context(id: usize) -> &'static emu::interp::SharedContext {
     SHARED_CONTEXTS[id]
@@ -100,7 +104,7 @@ fn shutdown(reason: ExitReason) {
 
 static CONFIG: RoCell<config::Config> = unsafe { RoCell::new_uninit() };
 
-extern {
+extern "C" {
     fn fiber_interp_run();
 }
 
@@ -131,25 +135,27 @@ pub fn main() {
         match arg.as_str() {
             "--no-direct-memory" => unsafe {
                 FLAGS.no_direct_memory_access = true;
-            }
+            },
             "--strace" => unsafe {
                 RoCell::replace(&emu::syscall::STRACE, true);
-            }
+            },
             "--disassemble" => unsafe {
                 FLAGS.disassemble = true;
-            }
+            },
             "--perf" => unsafe { FLAGS.perf = true },
             "--lockstep" => unsafe { FLAGS.thread = false },
             "--help" => {
                 eprintln!(usage_string!(), interp_name);
                 std::process::exit(0);
             }
-            _ => if arg.starts_with("--sysroot=") {
-                let path_slice = &arg["--sysroot=".len()..];
-                sysroot = path_slice.to_owned();
-            } else {
-                eprintln!("{}: unrecognized option '{}'", interp_name, arg);
-                std::process::exit(1);
+            _ => {
+                if arg.starts_with("--sysroot=") {
+                    let path_slice = &arg["--sysroot=".len()..];
+                    sysroot = path_slice.to_owned();
+                } else {
+                    eprintln!("{}: unrecognized option '{}'", interp_name, arg);
+                    std::process::exit(1);
+                }
             }
         }
 
@@ -244,9 +250,11 @@ pub fn main() {
 
         let fiber = fiber::Fiber::new();
         let ptr = fiber.data_pointer();
-        unsafe { std::ptr::write(ptr, newctx); }
-        contexts.push(unsafe {&mut *ptr});
-        shared_contexts.push(unsafe {&(*ptr).shared});
+        unsafe {
+            std::ptr::write(ptr, newctx);
+        }
+        contexts.push(unsafe { &mut *ptr });
+        shared_contexts.push(unsafe { &(*ptr).shared });
         fibers.push(fiber);
     }
 
@@ -259,7 +267,9 @@ pub fn main() {
     }
 
     // Load the program
-    unsafe { emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args), &mut contexts) };
+    unsafe {
+        emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args), &mut contexts)
+    };
     std::mem::drop(loader);
 
     loop {
@@ -268,7 +278,7 @@ pub fn main() {
             this.event_loop()
         });
         for fiber in &mut fibers[1..] {
-            fiber.set_fn(|| unsafe{fiber_interp_run()});
+            fiber.set_fn(|| unsafe { fiber_interp_run() });
         }
 
         if !crate::threaded() {
@@ -280,25 +290,34 @@ pub fn main() {
             fibers = group.run();
         } else {
             // Run one fiber per thread.
-            let handles: Vec<_> = fibers.into_iter().enumerate().map(|(idx, fiber)| {
-                let name = if idx == 0 {
-                    "event-loop".to_owned()
-                } else {
-                    format!("hart {}", idx - 1)
-                };
+            let handles: Vec<_> = fibers
+                .into_iter()
+                .enumerate()
+                .map(|(idx, fiber)| {
+                    let name = if idx == 0 {
+                        "event-loop".to_owned()
+                    } else {
+                        format!("hart {}", idx - 1)
+                    };
 
-                std::thread::Builder::new().name(name).spawn(move || {
-                    let mut group = fiber::FiberGroup::new();
-                    group.add(fiber);
-                    group.run().pop().unwrap()
-                }).unwrap()
-            }).collect();
+                    std::thread::Builder::new()
+                        .name(name)
+                        .spawn(move || {
+                            let mut group = fiber::FiberGroup::new();
+                            group.add(fiber);
+                            group.run().pop().unwrap()
+                        })
+                        .unwrap()
+                })
+                .collect();
             fibers = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
         }
 
         match EXIT_REASON.lock().as_ref().unwrap() {
             &ExitReason::SetThreaded(threaded) => {
-                unsafe { FLAGS.thread = threaded; }
+                unsafe {
+                    FLAGS.thread = threaded;
+                }
                 info!("switching to mode threaded={}", threaded);
             }
             &ExitReason::Exit(code) => {

@@ -1,10 +1,16 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-fn return_true() -> bool { true }
+fn return_true() -> bool {
+    true
+}
 
-fn default_core() -> usize { 4 }
-fn default_memory() -> usize { 1024 }
+fn default_core() -> usize {
+    4
+}
+fn default_memory() -> usize {
+    1024
+}
 fn default_cmdline() -> String {
     "console=hvc0 rw root=/dev/vda".to_owned()
 }
@@ -65,10 +71,7 @@ pub struct ConsoleConfig {
 
 impl Default for ConsoleConfig {
     fn default() -> Self {
-        ConsoleConfig {
-            virtio: true,
-            resize: true,
-        }
+        ConsoleConfig { virtio: true, resize: true }
     }
 }
 

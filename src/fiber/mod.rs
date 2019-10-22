@@ -1,4 +1,4 @@
-extern {
+extern "C" {
     fn fiber_start(cell: FiberStack) -> FiberStack;
     fn fiber_current() -> FiberStack;
     fn fiber_sleep(num: usize);
@@ -105,11 +105,7 @@ pub struct FiberGroup(FiberGroupData);
 
 impl FiberGroup {
     pub fn new() -> FiberGroup {
-        FiberGroup(FiberGroupData {
-            fibers: Vec::new(),
-            first: None,
-            last: None,
-        })
+        FiberGroup(FiberGroupData { fibers: Vec::new(), first: None, last: None })
     }
 
     /// Add a fiber to this fiber group.
