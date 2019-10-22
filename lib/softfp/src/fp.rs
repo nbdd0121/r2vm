@@ -1,8 +1,8 @@
-use core::ops;
-use core::cmp::Ordering;
-use core::sync::atomic::{AtomicUsize, Ordering as MemOrder};
-use core::convert::{TryInto, TryFrom};
 use bitflags::bitflags;
+use core::cmp::Ordering;
+use core::convert::{TryFrom, TryInto};
+use core::ops;
+use core::sync::atomic::{AtomicUsize, Ordering as MemOrder};
 
 use super::int::{CastFrom, CastTo, Int, UInt};
 
@@ -12,21 +12,17 @@ use super::int::{CastFrom, CastTo, Int, UInt};
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RoundingMode {
-    TiesToEven     = 0b000,
-    TowardZero     = 0b001,
+    TiesToEven = 0b000,
+    TowardZero = 0b001,
     TowardNegative = 0b010,
     TowardPositive = 0b011,
-    TiesToAway     = 0b100,
+    TiesToAway = 0b100,
 }
 
 impl TryFrom<u32> for RoundingMode {
     type Error = ();
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        if value >= 5 {
-            Err(())
-        } else {
-            Ok(unsafe { core::mem::transmute(value) })
-        }
+        if value >= 5 { Err(()) } else { Ok(unsafe { core::mem::transmute(value) }) }
     }
 }
 
@@ -82,26 +78,22 @@ pub fn register_set_exception_flag(f: fn(ExceptionFlags)) {
 #[repr(u32)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Class {
-    NegativeInfinity  = 0,
-    NegativeNormal    = 1,
+    NegativeInfinity = 0,
+    NegativeNormal = 1,
     NegativeSubnormal = 2,
-    NegativeZero      = 3,
-    PositiveZero      = 4,
+    NegativeZero = 3,
+    PositiveZero = 4,
     PositiveSubnormal = 5,
-    PositiveNormal    = 6,
-    PositiveInfinity  = 7,
-    SignalingNan      = 8,
-    QuietNan          = 9,
+    PositiveNormal = 6,
+    PositiveInfinity = 7,
+    SignalingNan = 8,
+    QuietNan = 9,
 }
 
 impl TryFrom<u32> for Class {
     type Error = ();
     fn try_from(value: u32) -> Result<Self, Self::Error> {
-        if value >= 10 {
-            Err(())
-        } else {
-            Ok(unsafe { core::mem::transmute(value) })
-        }
+        if value >= 10 { Err(()) } else { Ok(unsafe { core::mem::transmute(value) }) }
     }
 }
 
@@ -137,14 +129,13 @@ pub trait FpDesc: Copy {
 pub struct Fp<Desc: FpDesc>(pub Desc::Holder);
 
 impl<Desc: FpDesc> Fp<Desc> {
-
     // Special exponent values
     // All biased exponents have type u32, and unbiased exponents have type i32.
     const INFINITY_BIASED_EXPONENT: u32 = (1 << Desc::EXPONENT_WIDTH) - 1;
-    const MAXIMUM_BIASED_EXPONENT : u32 = Self::INFINITY_BIASED_EXPONENT - 1;
-    const EXPONENT_BIAS           : i32 = (1 << (Desc::EXPONENT_WIDTH - 1)) - 1;
-    const MINIMUM_EXPONENT        : i32 = 1 - Self::EXPONENT_BIAS;
-    const MAXIMUM_EXPONENT        : i32 = Self::MAXIMUM_BIASED_EXPONENT as i32 - Self::EXPONENT_BIAS;
+    const MAXIMUM_BIASED_EXPONENT: u32 = Self::INFINITY_BIASED_EXPONENT - 1;
+    const EXPONENT_BIAS: i32 = (1 << (Desc::EXPONENT_WIDTH - 1)) - 1;
+    const MINIMUM_EXPONENT: i32 = 1 - Self::EXPONENT_BIAS;
+    const MAXIMUM_EXPONENT: i32 = Self::MAXIMUM_BIASED_EXPONENT as i32 - Self::EXPONENT_BIAS;
 
     #[inline]
     pub fn new(value: Desc::Holder) -> Self {
@@ -188,7 +179,7 @@ impl<Desc: FpDesc> Fp<Desc> {
             // If shift amount is large enough, then the entire significand is residue
             (T::zero(), significand)
         } else {
-            let residue =  significand & ((T::one() << shift_amount) - T::one());
+            let residue = significand & ((T::one() << shift_amount) - T::one());
             (significand >> shift_amount, residue)
         };
         if residue != T::zero() {
@@ -198,7 +189,10 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     /// Normalized the significand while preserving rounding property.
-    fn normalize<T: UInt + CastTo<Desc::Holder>>(exponent: i32, significand: T) -> (i32, Desc::Holder) {
+    fn normalize<T: UInt + CastTo<Desc::Holder>>(
+        exponent: i32,
+        significand: T,
+    ) -> (i32, Desc::Holder) {
         let width = significand.log2_floor() as i32 - 2;
         let width_diff = width - Desc::SIGNIFICAND_WIDTH as i32;
         let exponent = exponent + width_diff;
@@ -221,14 +215,25 @@ impl<Desc: FpDesc> Fp<Desc> {
             inexact = true;
 
             match get_rounding_mode() {
-                RoundingMode::TiesToEven =>
-                    significand += ((significand >> 2) & Desc::Holder::one()) + Desc::Holder::one(),
+                RoundingMode::TiesToEven => {
+                    significand += ((significand >> 2) & Desc::Holder::one()) + Desc::Holder::one()
+                }
                 RoundingMode::TowardZero => (),
-                RoundingMode::TowardNegative => if sign { significand += 3u32.cast_to() }
-                RoundingMode::TowardPositive => if !sign { significand += 3u32.cast_to() }
+                RoundingMode::TowardNegative => {
+                    if sign {
+                        significand += 3u32.cast_to()
+                    }
+                }
+                RoundingMode::TowardPositive => {
+                    if !sign {
+                        significand += 3u32.cast_to()
+                    }
+                }
                 RoundingMode::TiesToAway =>
-                    // If last two bits are 10 or 11, then round up.
-                    significand += 2u32.cast_to(),
+                // If last two bits are 10 or 11, then round up.
+                {
+                    significand += 2u32.cast_to()
+                }
             }
         }
 
@@ -244,10 +249,10 @@ impl<Desc: FpDesc> Fp<Desc> {
         let mut value = Self::infinity(sign);
 
         let rm = get_rounding_mode();
-        if (sign && rm == RoundingMode::TowardPositive) ||
-           (!sign && rm == RoundingMode::TowardNegative) ||
-           rm == RoundingMode::TowardZero {
-
+        if (sign && rm == RoundingMode::TowardPositive)
+            || (!sign && rm == RoundingMode::TowardNegative)
+            || rm == RoundingMode::TowardZero
+        {
             // Decrement by one will shift value from infinity to max finite number
             value.0 -= Desc::Holder::one();
         }
@@ -265,7 +270,9 @@ impl<Desc: FpDesc> Fp<Desc> {
     /// Therefore we require signicand to contain two more bits beyond precision.
     /// Input must be normal.
     fn round(sign: bool, mut exponent: i32, significand: Desc::Holder) -> Self {
-        if exponent > Self::MAXIMUM_EXPONENT { return Self::round_overflow(sign) }
+        if exponent > Self::MAXIMUM_EXPONENT {
+            return Self::round_overflow(sign);
+        }
 
         let mut value = Self(Desc::Holder::zero());
         value.set_sign(sign);
@@ -292,16 +299,14 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         // Underflow or subnormal
         if exponent < Self::MINIMUM_EXPONENT {
-
             // The border between subnormal and normal.
             if rounded == Desc::Holder::one() << Desc::SIGNIFICAND_WIDTH {
-
                 // In this special case, we need to deal with underflow flag very carefully.
                 // IEEE specifies that the underflow flag should only be set if rounded result
                 // in *unbounded* exponent will yield to an overflow.
-                if Self::round_significand(sign, significand).1 !=
-                    Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 1) {
-
+                if Self::round_significand(sign, significand).1
+                    != Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 1)
+                {
                     set_exception_flag(ExceptionFlags::UNDERFLOW);
                 }
 
@@ -319,14 +324,20 @@ impl<Desc: FpDesc> Fp<Desc> {
             return value;
         }
 
-        if exponent > Self::MAXIMUM_EXPONENT { return Self::round_overflow(sign) }
+        if exponent > Self::MAXIMUM_EXPONENT {
+            return Self::round_overflow(sign);
+        }
 
         value.set_biased_exponent((exponent + Self::EXPONENT_BIAS) as u32);
         value.set_trailing_significand(rounded);
         value
     }
 
-    fn normalize_and_round<T: UInt + CastTo<Desc::Holder>>(sign: bool, exponent: i32, significand: T) -> Self {
+    fn normalize_and_round<T: UInt + CastTo<Desc::Holder>>(
+        sign: bool,
+        exponent: i32,
+        significand: T,
+    ) -> Self {
         let (exponent, final_significand) = Self::normalize(exponent, significand);
         Self::round(sign, exponent, final_significand)
     }
@@ -356,7 +367,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         if sign {
             self.0 |= mask;
         } else {
-            self.0 &=! mask;
+            self.0 &= !mask;
         }
     }
 
@@ -368,8 +379,10 @@ impl<Desc: FpDesc> Fp<Desc> {
     /// Set the biased exponent of the floating pointer number.
     /// Only up to exponent_width bits are respected and all other bits are ignored.
     fn set_biased_exponent(&mut self, exp: u32) {
-        let mask = ((Desc::Holder::one() << Desc::EXPONENT_WIDTH) - Desc::Holder::one()) << Desc::SIGNIFICAND_WIDTH;
-        self.0 = (self.0 &! mask) | ((CastTo::<Desc::Holder>::cast_to(exp) << Desc::SIGNIFICAND_WIDTH) & mask);
+        let mask = ((Desc::Holder::one() << Desc::EXPONENT_WIDTH) - Desc::Holder::one())
+            << Desc::SIGNIFICAND_WIDTH;
+        self.0 = (self.0 & !mask)
+            | ((CastTo::<Desc::Holder>::cast_to(exp) << Desc::SIGNIFICAND_WIDTH) & mask);
     }
 
     fn trailing_significand(&self) -> Desc::Holder {
@@ -381,7 +394,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     // Only up to significand_width bits are respected and all other bits are ignored.
     fn set_trailing_significand(&mut self, value: Desc::Holder) {
         let mask = (Desc::Holder::one() << Desc::SIGNIFICAND_WIDTH) - Desc::Holder::one();
-        self.0 = (self.0 &! mask) | (value & mask);
+        self.0 = (self.0 & !mask) | (value & mask);
     }
 
     fn get_normalized_significand(&self) -> (i32, Desc::Holder) {
@@ -389,12 +402,18 @@ impl<Desc: FpDesc> Fp<Desc> {
         let trailing_significand = self.trailing_significand();
 
         // We couldn't handle this
-        if biased_exponent == Self::INFINITY_BIASED_EXPONENT ||
-            (biased_exponent == 0 && trailing_significand == Desc::Holder::zero()) { panic!() }
+        if biased_exponent == Self::INFINITY_BIASED_EXPONENT
+            || (biased_exponent == 0 && trailing_significand == Desc::Holder::zero())
+        {
+            panic!()
+        }
 
         if biased_exponent == 0 {
             let width_diff = Desc::SIGNIFICAND_WIDTH - trailing_significand.log2_floor();
-            return (Self::MINIMUM_EXPONENT - width_diff as i32, trailing_significand << (width_diff + 2));
+            return (
+                Self::MINIMUM_EXPONENT - width_diff as i32,
+                trailing_significand << (width_diff + 2),
+            );
         }
 
         let exponent = biased_exponent as i32 - Self::EXPONENT_BIAS;
@@ -402,12 +421,14 @@ impl<Desc: FpDesc> Fp<Desc> {
         (exponent, significand << 2)
     }
 
-    fn get_significand(&self) -> (i32, Desc::Holder)  {
+    fn get_significand(&self) -> (i32, Desc::Holder) {
         let biased_exponent = self.biased_exponent();
         let trailing_significand = self.trailing_significand();
 
         // We couldn't handle this
-        if biased_exponent == Self::INFINITY_BIASED_EXPONENT  { panic!() }
+        if biased_exponent == Self::INFINITY_BIASED_EXPONENT {
+            panic!()
+        }
 
         if biased_exponent == 0 {
             // Perform lvalue-rvalue conversion to get rid of ODR-use of minimum_exponent.
@@ -429,9 +450,10 @@ impl<Desc: FpDesc> Fp<Desc> {
     /// Magnitude add. a and b must have the same sign and not NaN.
     /// a must have greater magnitude.
     fn add_magnitude(a: Self, b: Self) -> Self {
-
         // Handling for Infinity
-        if a.is_infinite() { return a }
+        if a.is_infinite() {
+            return a;
+        }
 
         // If both are subnormal, then neither signifcand we retrieved below will be normal.
         // So we handle them specially here.
@@ -452,7 +474,9 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         // Add significands and take care of the carry bit
         let mut significand_sum = significand_a + significand_b;
-        if (significand_sum & (Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 3))) != Desc::Holder::zero() {
+        if (significand_sum & (Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 3)))
+            != Desc::Holder::zero()
+        {
             exponent_a += 1;
             significand_sum = Self::right_shift(significand_sum, 1);
         }
@@ -463,10 +487,8 @@ impl<Desc: FpDesc> Fp<Desc> {
     /// Magnitude subtract. a and b must have the same sign and not NaN.
     /// a must have greater magnitude.
     fn subtract_magnitude(a: Self, b: Self) -> Self {
-
         // Special handling for infinity
         if a.is_infinite() {
-
             // Subtracting two infinities
             if b.is_infinite() {
                 set_exception_flag(ExceptionFlags::INVALID_OPERATION);
@@ -505,11 +527,13 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     fn multiply(a: Self, b: Self) -> Self {
-
         // Enforce |a| > |b| for easier handling.
-        let (mut a, mut b) = if Self::total_order_magnitude(a, b) == Ordering::Less { (b, a) } else { (a, b) };
+        let (mut a, mut b) =
+            if Self::total_order_magnitude(a, b) == Ordering::Less { (b, a) } else { (a, b) };
 
-        if a.is_nan() { return Self::propagate_nan(a, b) }
+        if a.is_nan() {
+            return Self::propagate_nan(a, b);
+        }
 
         let sign = a.sign() ^ b.sign();
 
@@ -536,22 +560,22 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         // Normalized significand reserve 2 bits for rounding for both significand_a and significand_b
         // and we only need 2 bits, so shift one of them back by 2.
-        let product = CastTo::<Desc::DoubleHolder>::cast_to(significand_a >> 2) *
-                      CastTo::<Desc::DoubleHolder>::cast_to(significand_b);
+        let product = CastTo::<Desc::DoubleHolder>::cast_to(significand_a >> 2)
+            * CastTo::<Desc::DoubleHolder>::cast_to(significand_b);
 
         Self::normalize_and_round(sign, product_exponent, product)
     }
 
     fn divide(a: Self, b: Self) -> Self {
-
         // Handling NaN
-        if a.is_nan() || b.is_nan() { return Self::propagate_nan(a, b) }
+        if a.is_nan() || b.is_nan() {
+            return Self::propagate_nan(a, b);
+        }
 
         let sign = a.sign() ^ b.sign();
 
         // Handling Infinities
         if a.is_infinite() {
-
             // inf / inf = NaN
             if b.is_infinite() {
                 set_exception_flag(ExceptionFlags::INVALID_OPERATION);
@@ -561,13 +585,12 @@ impl<Desc: FpDesc> Fp<Desc> {
             return Self::infinity(sign);
         }
 
-        if b.is_infinite()  {
+        if b.is_infinite() {
             return Self::zero(sign);
         }
 
         // Handling zeroes
         if a.is_zero() {
-
             // 0 / 0 = NaN
             if b.is_zero() {
                 set_exception_flag(ExceptionFlags::INVALID_OPERATION);
@@ -617,7 +640,6 @@ impl<Desc: FpDesc> Fp<Desc> {
             // significand_a - quotient * significand_b >= bit * significand_b <=>
             // (significand_a - quotient * significand_b) / bit >= significand_b <=>
             if remainder_over_bit >= significand_b {
-
                 // we need to update the new value to (significand_a - (quotient + bit) * significand_b) / bit
                 // so decrement by significand_b
                 remainder_over_bit -= significand_b;
@@ -639,7 +661,6 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     pub fn square_root(self) -> Self {
-
         // Handling NaN
         if self.is_nan() {
             if self.is_signaling() {
@@ -651,7 +672,9 @@ impl<Desc: FpDesc> Fp<Desc> {
         }
 
         // Zero always return as is
-        if self.is_zero() { return self }
+        if self.is_zero() {
+            return self;
+        }
 
         // For non-zero negative number, sqrt is not defined
         if self.sign() {
@@ -659,7 +682,9 @@ impl<Desc: FpDesc> Fp<Desc> {
             return Self::quiet_nan();
         }
 
-        if self.is_infinite() { return self }
+        if self.is_infinite() {
+            return self;
+        }
 
         let (mut exponent, mut significand) = self.get_normalized_significand();
 
@@ -702,7 +727,6 @@ impl<Desc: FpDesc> Fp<Desc> {
             // signicand - result ** 2 >= 2 * result * bit + bit ** 2 <=>
             // (signicand - result ** 2) / bit / 2 >= result + bit / 2 <=>
             if half_significand_minus_result_squared_over_bit >= result + half_bit {
-
                 // we need to update the new value to (significand - (result + bit) ** 2) / bit / 2
                 // so decrement by (significand - result**2) / bit / 2 - (significand - (result + bit)**2) / 2 which is
                 // ((result + bit) ** 2 - result ** 2) / bit / 2 = result + bit / 2
@@ -726,18 +750,19 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     pub fn fused_multiply_add(a: Self, b: Self, c: Self) -> Self {
-
         // Enforce |a| > |b| for easier handling.
-        let (a, b) = if Self::total_order_magnitude(a, b) == Ordering::Less { (b, a) } else { (a, b) };
+        let (a, b) =
+            if Self::total_order_magnitude(a, b) == Ordering::Less { (b, a) } else { (a, b) };
 
         // Handle NaNs.
-        if a.is_nan() { return Self::propagate_nan(Self::propagate_nan(a, b), c) }
+        if a.is_nan() {
+            return Self::propagate_nan(Self::propagate_nan(a, b), c);
+        }
 
         let mut sign_product = a.sign() ^ b.sign();
 
         // Handle Infinity cases
         if a.is_infinite() {
-
             // If Infinity * 0, then invalid operation
             if b.is_zero() {
                 set_exception_flag(ExceptionFlags::INVALID_OPERATION);
@@ -745,7 +770,9 @@ impl<Desc: FpDesc> Fp<Desc> {
             }
 
             // Infinity + NaN
-            if c.is_nan() { return Self::propagate_nan(c, c) }
+            if c.is_nan() {
+                return Self::propagate_nan(c, c);
+            }
 
             // Infinity - Infinity
             if c.is_infinite() && c.sign() != sign_product {
@@ -757,13 +784,19 @@ impl<Desc: FpDesc> Fp<Desc> {
         }
 
         // NaN and Infinity handling for the addition
-        if c.is_nan() { return Self::propagate_nan(c, c) }
-        if c.is_infinite() { return c }
+        if c.is_nan() {
+            return Self::propagate_nan(c, c);
+        }
+        if c.is_infinite() {
+            return c;
+        }
 
         // The product gives a zero
         if b.is_zero() {
             // 0 - 0, special treatment
-            if c.is_zero() { return Self::cancellation_zero() }
+            if c.is_zero() {
+                return Self::cancellation_zero();
+            }
             return c;
         }
 
@@ -772,8 +805,8 @@ impl<Desc: FpDesc> Fp<Desc> {
         let (exponent_b, significand_b) = b.get_normalized_significand();
 
         let mut product_exponent = exponent_a + exponent_b - Desc::SIGNIFICAND_WIDTH as i32;
-        let mut product = CastTo::<Desc::DoubleHolder>::cast_to(significand_a >> 2) *
-                          CastTo::<Desc::DoubleHolder>::cast_to(significand_b);
+        let mut product = CastTo::<Desc::DoubleHolder>::cast_to(significand_a >> 2)
+            * CastTo::<Desc::DoubleHolder>::cast_to(significand_b);
 
         // a * b + 0, we can return early.
         if c.is_zero() {
@@ -791,7 +824,8 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         // Align product and c.
         if exponent_c < product_exponent {
-            significand_c = Self::right_shift(significand_c, (product_exponent - exponent_c) as u32);
+            significand_c =
+                Self::right_shift(significand_c, (product_exponent - exponent_c) as u32);
         } else if exponent_c > product_exponent {
             product = Self::right_shift(product, (exponent_c - product_exponent) as u32);
             product_exponent = exponent_c;
@@ -801,7 +835,6 @@ impl<Desc: FpDesc> Fp<Desc> {
         if c.sign() == sign_product {
             product += significand_c;
         } else {
-
             // Cancellation
             if product == significand_c {
                 return Self::cancellation_zero();
@@ -847,7 +880,11 @@ impl<Desc: FpDesc> Fp<Desc> {
         }
     }
 
-    fn convert_to_int<T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>>(&self, positive_max: T, negative_max: T) -> (bool, T) {
+    fn convert_to_int<T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>>(
+        &self,
+        positive_max: T,
+        negative_max: T,
+    ) -> (bool, T) {
         // Round NaN to the maximum value
         if self.is_nan() {
             set_exception_flag(ExceptionFlags::INVALID_OPERATION);
@@ -902,7 +939,9 @@ impl<Desc: FpDesc> Fp<Desc> {
                 }
             };
 
-            if inexact { set_exception_flag(ExceptionFlags::INEXACT) }
+            if inexact {
+                set_exception_flag(ExceptionFlags::INEXACT)
+            }
             return (sign, significand);
         }
 
@@ -916,7 +955,6 @@ impl<Desc: FpDesc> Fp<Desc> {
         // However we added explicit check to hint compiler optimizations (especially in lower optimization modes).
         let remaining_bits = T::bit_width() as i32 - Desc::SIGNIFICAND_WIDTH as i32 + 1;
         if remaining_bits < 0 || effective_exponent > remaining_bits {
-
             // Overflow case.
             set_exception_flag(ExceptionFlags::INVALID_OPERATION);
             return (sign, max);
@@ -935,24 +973,31 @@ impl<Desc: FpDesc> Fp<Desc> {
         (sign, result)
     }
 
-    pub fn convert_to_uint<T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>>(&self) -> T {
+    pub fn convert_to_uint<
+        T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>,
+    >(
+        &self,
+    ) -> T {
         let max = T::max_value();
         self.convert_to_int(max, T::zero()).1
     }
 
-    pub fn convert_to_sint<T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>>(&self) -> T {
+    pub fn convert_to_sint<
+        T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>,
+    >(
+        &self,
+    ) -> T {
         let max = T::max_value() >> 1;
         let min = !max;
         let (sign, value) = self.convert_to_int(max, min);
-        if sign {
-            !value + T::one()
-        } else {
-            value
-        }
+        if sign { !value + T::one() } else { value }
     }
 
     // IEEE 754-2008 5.4.2 formatOf general-computational operations > Conversion operations
-    pub fn convert_format<TDesc: FpDesc>(&self) -> Fp<TDesc> where Desc::Holder: CastTo<TDesc::Holder> {
+    pub fn convert_format<TDesc: FpDesc>(&self) -> Fp<TDesc>
+    where
+        Desc::Holder: CastTo<TDesc::Holder>,
+    {
         // type T = Fp<TDesc>;
 
         // Handle NaN, infinity and zero
@@ -974,7 +1019,11 @@ impl<Desc: FpDesc> Fp<Desc> {
         }
 
         let (exponent, signficand) = self.get_normalized_significand();
-        Fp::<TDesc>::normalize_and_round(sign, exponent - Desc::SIGNIFICAND_WIDTH as i32 + TDesc::SIGNIFICAND_WIDTH as i32, signficand)
+        Fp::<TDesc>::normalize_and_round(
+            sign,
+            exponent - Desc::SIGNIFICAND_WIDTH as i32 + TDesc::SIGNIFICAND_WIDTH as i32,
+            signficand,
+        )
     }
 
     // #endregion
@@ -1024,33 +1073,35 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     pub fn is_zero(&self) -> bool {
-        self.biased_exponent() == 0 &&
-        self.trailing_significand() == Desc::Holder::zero()
+        self.biased_exponent() == 0 && self.trailing_significand() == Desc::Holder::zero()
     }
 
     pub fn is_subnormal(&self) -> bool {
-        self.biased_exponent() == 0 &&
-        self.trailing_significand() != Desc::Holder::zero()
+        self.biased_exponent() == 0 && self.trailing_significand() != Desc::Holder::zero()
     }
 
     pub fn is_infinite(&self) -> bool {
-        self.biased_exponent() == Self::INFINITY_BIASED_EXPONENT &&
-        self.trailing_significand() == Desc::Holder::zero()
+        self.biased_exponent() == Self::INFINITY_BIASED_EXPONENT
+            && self.trailing_significand() == Desc::Holder::zero()
     }
 
     pub fn is_nan(&self) -> bool {
-        self.biased_exponent() == Self::INFINITY_BIASED_EXPONENT &&
-        self.trailing_significand() != Desc::Holder::zero()
+        self.biased_exponent() == Self::INFINITY_BIASED_EXPONENT
+            && self.trailing_significand() != Desc::Holder::zero()
     }
 
     pub fn is_signaling(&self) -> bool {
         // Special exponent for Infinites and NaNs
-        if self.biased_exponent() != Self::INFINITY_BIASED_EXPONENT { return false }
+        if self.biased_exponent() != Self::INFINITY_BIASED_EXPONENT {
+            return false;
+        }
 
         let t = self.trailing_significand();
 
         // t == 0 is Infinity
-        if t == Desc::Holder::zero() { return false }
+        if t == Desc::Holder::zero() {
+            return false;
+        }
 
         // Signaling NaN has MSB = 0, otherwise quiet NaN
         t & (Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH - 1)) == Desc::Holder::zero()
@@ -1070,7 +1121,9 @@ impl<Desc: FpDesc> Fp<Desc> {
         } else if exponent == Self::INFINITY_BIASED_EXPONENT {
             if significand == Desc::Holder::zero() {
                 Class::PositiveInfinity as u32
-            } else if (significand & (Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH - 1))) == Desc::Holder::zero() {
+            } else if (significand & (Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH - 1)))
+                == Desc::Holder::zero()
+            {
                 return Class::SignalingNan;
             } else {
                 return Class::QuietNan;
@@ -1106,11 +1159,7 @@ impl<Desc: FpDesc> Fp<Desc> {
             return (a, a);
         }
 
-        if Self::total_order(a, b) == Ordering::Less {
-            (a, b)
-        } else {
-            (b, a)
-        }
+        if Self::total_order(a, b) == Ordering::Less { (a, b) } else { (b, a) }
     }
 
     pub fn min(a: Self, b: Self) -> Self {
@@ -1126,7 +1175,9 @@ impl<Desc: FpDesc> Fp<Desc> {
         if a.is_nan() || b.is_nan() {
             return None;
         }
-        if a.is_zero() && b.is_zero() { return Some(Ordering::Equal) }
+        if a.is_zero() && b.is_zero() {
+            return Some(Ordering::Equal);
+        }
         Some(Self::total_order(a, b))
     }
 
@@ -1135,18 +1186,16 @@ impl<Desc: FpDesc> Fp<Desc> {
             set_exception_flag(ExceptionFlags::INVALID_OPERATION);
             return None;
         }
-        if a.is_zero() && b.is_zero() { return Some(Ordering::Equal) }
+        if a.is_zero() && b.is_zero() {
+            return Some(Ordering::Equal);
+        }
         Some(Self::total_order(a, b))
     }
 
     pub fn total_order(a: Self, b: Self) -> Ordering {
         if a.sign() == b.sign() {
             let ret = Self::total_order_magnitude(a, b);
-            if a.sign() {
-                ret.reverse()
-            } else {
-                ret
-            }
+            if a.sign() { ret.reverse() } else { ret }
         } else if a.sign() {
             Ordering::Less
         } else {
@@ -1180,11 +1229,16 @@ impl<Desc: FpDesc> core::cmp::PartialOrd for Fp<Desc> {
 impl<Desc: FpDesc> ops::Add<Self> for Fp<Desc> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
-
         // Enforce |a| > |b| for easier handling.
-        let (a, b) = if Self::total_order_magnitude(self, rhs) == Ordering::Less { (rhs, self) } else { (self, rhs) };
+        let (a, b) = if Self::total_order_magnitude(self, rhs) == Ordering::Less {
+            (rhs, self)
+        } else {
+            (self, rhs)
+        };
 
-        if a.is_nan() { return Self::propagate_nan(a, b) }
+        if a.is_nan() {
+            return Self::propagate_nan(a, b);
+        }
 
         if a.sign() == b.sign() {
             Self::add_magnitude(a, b)
