@@ -1,16 +1,14 @@
-
-
-use super::serialize::{Qid, Stat, StatFs, SetAttr};
+use super::serialize::{Qid, SetAttr, Stat, StatFs};
 use super::{FileSystem, Inode};
-use std::path::{Path, PathBuf};
+use std::ffi::CString;
+use std::fs::ReadDir;
+use std::io::Result;
+use std::io::{Read, Seek, Write};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::os::unix::ffi::OsStrExt;
-use std::fs::ReadDir;
-use std::io::{Read, Write, Seek};
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
-use std::ffi::CString;
-use std::io::Result;
 
 pub struct File {
     path: PathBuf,
@@ -21,12 +19,7 @@ pub struct File {
 
 impl Clone for File {
     fn clone(&self) -> Self {
-        File {
-            path: self.path.clone(),
-            meta: self.meta.clone(),
-            fd: None,
-            dir: None,
-        }
+        File { path: self.path.clone(), meta: self.meta.clone(), fd: None, dir: None }
     }
 }
 
@@ -36,15 +29,13 @@ pub struct Passthrough {
 
 impl Passthrough {
     pub fn new(root: &Path) -> std::io::Result<Passthrough> {
-        Ok(Passthrough {
-            root: root.canonicalize()?
-        })
+        Ok(Passthrough { root: root.canonicalize()? })
     }
 }
 
 impl Inode for File {
     fn qid(&mut self) -> Qid {
-        Qid { 
+        Qid {
             r#type: match (self.meta.is_dir(), self.meta.is_file()) {
                 (false, false) => super::serialize::P9_QTSYMLINK,
                 (true, false) => super::serialize::P9_QTDIR,
@@ -63,11 +54,21 @@ impl Inode for File {
 
 fn set_mode(opt: &mut std::fs::OpenOptions, flags: u32) {
     opt.read(true);
-    if flags & 0o1 != 0 { opt.read(false).write(true); }
-    if flags & 0o2 != 0 { opt.write(true); }
-    if flags & 0o100 != 0 { opt.create(true); }
-    if flags & 0o1000 != 0 { opt.truncate(true); }
-    if flags & 0o2000 != 0 { opt.append(true); }
+    if flags & 0o1 != 0 {
+        opt.read(false).write(true);
+    }
+    if flags & 0o2 != 0 {
+        opt.write(true);
+    }
+    if flags & 0o100 != 0 {
+        opt.create(true);
+    }
+    if flags & 0o1000 != 0 {
+        opt.truncate(true);
+    }
+    if flags & 0o2000 != 0 {
+        opt.append(true);
+    }
 }
 
 impl FileSystem for Passthrough {
@@ -80,7 +81,7 @@ impl FileSystem for Passthrough {
             // We use statvfs over statfs because statfs's f_fsid has type fsid_t but we need to
             // return u64.
             if libc::statvfs(path_str_c.as_ptr(), buf.as_mut_ptr()) != 0 {
-                return Err(std::io::Error::last_os_error())
+                return Err(std::io::Error::last_os_error());
             }
             let buf = buf.assume_init();
             Ok(StatFs {
@@ -100,12 +101,7 @@ impl FileSystem for Passthrough {
     fn attach(&mut self) -> std::io::Result<Self::File> {
         let pathbuf = self.root.clone();
         let metadata = std::fs::symlink_metadata(&pathbuf)?;
-        Ok(File{ 
-            path: pathbuf,
-            meta: metadata,
-            fd: None,
-            dir: None,
-        })
+        Ok(File { path: pathbuf, meta: metadata, fd: None, dir: None })
     }
 
     fn readlink(&mut self, file: &mut Self::File) -> Result<String> {
@@ -128,16 +124,11 @@ impl FileSystem for Passthrough {
             ctime: file.meta.created().unwrap_or(SystemTime::UNIX_EPOCH),
         })
     }
-    
+
     fn walk(&mut self, file: &mut Self::File, path: &str) -> std::io::Result<Self::File> {
         let pathbuf = file.path.join(path);
         let metadata = std::fs::symlink_metadata(&pathbuf)?;
-        Ok(File {
-            path: pathbuf,
-            meta: metadata,
-            fd: None,
-            dir: None,
-        })
+        Ok(File { path: pathbuf, meta: metadata, fd: None, dir: None })
     }
 
     fn open(&mut self, file: &mut Self::File, flags: u32) -> std::io::Result<()> {
@@ -153,33 +144,34 @@ impl FileSystem for Passthrough {
         Ok(())
     }
 
-    fn create(&mut self, file: &mut Self::File, name: &str, flags: u32, mode: u32, _gid: u32) -> std::io::Result<Self::File> {
+    fn create(
+        &mut self,
+        file: &mut Self::File,
+        name: &str,
+        flags: u32,
+        mode: u32,
+        _gid: u32,
+    ) -> std::io::Result<Self::File> {
         let pathbuf = file.path.join(name);
         let mut fd = std::fs::OpenOptions::new();
         set_mode(&mut fd, flags);
         fd.mode(mode);
         let fd = fd.open(&pathbuf)?;
         let meta = fd.metadata()?;
-        Ok(File {
-            path: pathbuf,
-            meta,
-            fd: Some(fd),
-            dir: None,
-        })
+        Ok(File { path: pathbuf, meta, fd: Some(fd), dir: None })
     }
 
-    fn readdir(&mut self, file: &mut Self::File, offset: u64) -> std::io::Result<Option<(String, Self::File)>> {
+    fn readdir(
+        &mut self,
+        file: &mut Self::File,
+        offset: u64,
+    ) -> std::io::Result<Option<(String, Self::File)>> {
         if offset == 0 {
-            return Ok(Some((".".to_owned(), file.clone())))
+            return Ok(Some((".".to_owned(), file.clone())));
         } else if offset == 1 {
             let path = file.path.parent().unwrap_or(&file.path).to_owned();
             let meta = std::fs::symlink_metadata(&path)?;
-            return Ok(Some(("..".to_owned(), File {
-                path,
-                meta,
-                fd: None,
-                dir: None
-            })))
+            return Ok(Some(("..".to_owned(), File { path, meta, fd: None, dir: None })));
         }
         // Exclude . and ..
         let offset = offset - 2;
@@ -190,7 +182,7 @@ impl FileSystem for Passthrough {
             dir.1 = 0;
         }
         // Need to skip
-        while offset > dir.1 { 
+        while offset > dir.1 {
             dir.0.next();
             dir.1 += 1;
         }
@@ -202,27 +194,29 @@ impl FileSystem for Passthrough {
         let name = entry.file_name().into_string().unwrap();
         let path = entry.path();
         let meta = entry.metadata()?;
-        Ok(Some((name, File {
-            path,
-            meta,
-            fd: None,
-            dir: None
-        })))
+        Ok(Some((name, File { path, meta, fd: None, dir: None })))
     }
 
-    fn mkdir(&mut self, dir: &mut Self::File, name: &str, _mode: u32, _gid: u32) -> Result<Self::File> {
+    fn mkdir(
+        &mut self,
+        dir: &mut Self::File,
+        name: &str,
+        _mode: u32,
+        _gid: u32,
+    ) -> Result<Self::File> {
         let path = dir.path.join(name);
         std::fs::create_dir(&path)?;
         let meta = std::fs::symlink_metadata(&path)?;
-        Ok(File {
-            path,
-            meta,
-            fd: None,
-            dir: None,
-        })
+        Ok(File { path, meta, fd: None, dir: None })
     }
 
-    fn renameat(&mut self, olddir: &mut Self::File, oldname: &str, newdir: &mut Self::File, newname: &str) -> Result<()> {
+    fn renameat(
+        &mut self,
+        olddir: &mut Self::File,
+        oldname: &str,
+        newdir: &mut Self::File,
+        newname: &str,
+    ) -> Result<()> {
         std::fs::rename(olddir.path.join(oldname), newdir.path.join(newname))
     }
 
@@ -234,8 +228,13 @@ impl FileSystem for Passthrough {
             std::fs::remove_file(&path)
         }
     }
-    
-    fn read(&mut self, file: &mut Self::File, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
+
+    fn read(
+        &mut self,
+        file: &mut Self::File,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> std::io::Result<usize> {
         let fd = file.fd.as_mut().unwrap();
         fd.seek(std::io::SeekFrom::Start(offset))?;
         fd.read(buf)
@@ -272,7 +271,9 @@ impl FileSystem for Passthrough {
                 SystemTime::now()
             } else {
                 file.meta.accessed()?
-            }).duration_since(SystemTime::UNIX_EPOCH).unwrap();
+            })
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
 
             let mtime = (if valid & 0x0000_0100 != 0 {
                 stat.mtime
@@ -280,18 +281,17 @@ impl FileSystem for Passthrough {
                 SystemTime::now()
             } else {
                 file.meta.modified()?
-            }).duration_since(SystemTime::UNIX_EPOCH).unwrap();
+            })
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap();
 
             let path_str_c = CString::new(file.path.as_os_str().as_bytes()).unwrap();
-            let time = [libc::timeval {
-                tv_sec: atime.as_secs() as _,
-                tv_usec: atime.subsec_micros() as _,
-            }, libc::timeval {
-                tv_sec: mtime.as_secs() as _,
-                tv_usec: mtime.subsec_micros() as _,
-            }];
-            if unsafe {libc::utimes(path_str_c.as_ptr(), time.as_ptr())} != 0 {
-                return Err(std::io::Error::last_os_error())
+            let time = [
+                libc::timeval { tv_sec: atime.as_secs() as _, tv_usec: atime.subsec_micros() as _ },
+                libc::timeval { tv_sec: mtime.as_secs() as _, tv_usec: mtime.subsec_micros() as _ },
+            ];
+            if unsafe { libc::utimes(path_str_c.as_ptr(), time.as_ptr()) } != 0 {
+                return Err(std::io::Error::last_os_error());
             }
         }
 

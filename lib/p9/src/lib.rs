@@ -4,14 +4,14 @@ extern crate log;
 extern crate fnv;
 extern crate libc;
 
-pub mod serialize;
 mod passthrough;
+pub mod serialize;
 
 pub use passthrough::Passthrough;
 
-use std::io::Result;
 use fnv::FnvHashMap;
 use serialize::{DirEntry, Fcall};
+use std::io::Result;
 
 pub trait Inode: Clone {
     fn qid(&mut self) -> serialize::Qid;
@@ -31,15 +31,43 @@ pub trait FileSystem {
     fn getattr(&mut self, file: &mut Self::File) -> Result<serialize::Stat>;
     fn walk(&mut self, file: &mut Self::File, path: &str) -> Result<Self::File>;
     fn open(&mut self, file: &mut Self::File, flags: u32) -> Result<()>;
-    fn create(&mut self, file: &mut Self::File, name: &str, flags: u32, mode: u32, gid: u32) -> Result<Self::File>;
-    fn readdir(&mut self, file: &mut Self::File, offset: u64) -> Result<Option<(String, Self::File)>>;
-    fn mkdir(&mut self, dir: &mut Self::File, name: &str, mode: u32, gid: u32) -> Result<Self::File>;
-    fn renameat(&mut self, olddir: &mut Self::File, oldname: &str, newdir: &mut Self::File, newname: &str) -> Result<()>;
+    fn create(
+        &mut self,
+        file: &mut Self::File,
+        name: &str,
+        flags: u32,
+        mode: u32,
+        gid: u32,
+    ) -> Result<Self::File>;
+    fn readdir(
+        &mut self,
+        file: &mut Self::File,
+        offset: u64,
+    ) -> Result<Option<(String, Self::File)>>;
+    fn mkdir(
+        &mut self,
+        dir: &mut Self::File,
+        name: &str,
+        mode: u32,
+        gid: u32,
+    ) -> Result<Self::File>;
+    fn renameat(
+        &mut self,
+        olddir: &mut Self::File,
+        oldname: &str,
+        newdir: &mut Self::File,
+        newname: &str,
+    ) -> Result<()>;
     fn unlinkat(&mut self, file: &mut Self::File, name: &str) -> Result<()>;
     fn read(&mut self, file: &mut Self::File, offset: u64, buf: &mut [u8]) -> Result<usize>;
     fn write(&mut self, file: &mut Self::File, offset: u64, buf: &[u8]) -> Result<usize>;
     fn fsync(&mut self, file: &mut Self::File) -> Result<()>;
-    fn setattr(&mut self, file: &mut Self::File, valid: u32, stat: serialize::SetAttr) -> Result<()>;
+    fn setattr(
+        &mut self,
+        file: &mut Self::File,
+        valid: u32,
+        stat: serialize::SetAttr,
+    ) -> Result<()>;
 }
 
 pub struct P9Handler<T: FileSystem> {
@@ -52,11 +80,7 @@ const O_LARGEFILE: u32 = 0o100000;
 
 impl<T: FileSystem> P9Handler<T> {
     pub fn new(fs: T) -> P9Handler<T> {
-        P9Handler {
-            fs,
-            iounit: 0,
-            fids: FnvHashMap::default(),
-        }
+        P9Handler { fs, iounit: 0, fids: FnvHashMap::default() }
     }
 
     /// Actual fcall processing, returning Result<Fcall> to allow easier error handling.
@@ -65,14 +89,14 @@ impl<T: FileSystem> P9Handler<T> {
             Fcall::Tlopen { fid, flags } => {
                 let file = self.fids.get_mut(&fid).unwrap();
                 // Set O_LARGEFILE to zero
-                self.fs.open(file, flags &! O_LARGEFILE)?;
+                self.fs.open(file, flags & !O_LARGEFILE)?;
                 let qid = file.qid();
                 Fcall::Rlopen { qid, iounit: self.iounit }
             }
             Fcall::Tlcreate { fid, name, flags, mode, gid } => {
                 let file = self.fids.get_mut(&fid).unwrap();
                 // Set O_LARGEFILE to zero
-                let newfile = self.fs.create(file, &name, flags &! O_LARGEFILE, mode, gid)?;
+                let newfile = self.fs.create(file, &name, flags & !O_LARGEFILE, mode, gid)?;
                 *file = newfile;
                 let qid = file.qid();
                 Fcall::Rlcreate { qid, iounit: self.iounit }
@@ -90,14 +114,13 @@ impl<T: FileSystem> P9Handler<T> {
                 let stat = self.fs.getattr(file)?;
                 Fcall::Rgetattr { valid: request_mask, qid: file.qid(), stat }
             }
-            Fcall::Tsetattr { fid, valid, attr} => {
+            Fcall::Tsetattr { fid, valid, attr } => {
                 let file = self.fids.get_mut(&fid).unwrap();
                 self.fs.setattr(file, valid, attr)?;
                 Fcall::Rsetattr {}
             }
             // We don't support xattr yet.
-            Fcall::Txattrwalk { .. } |
-            Fcall::Txattrcreate { .. } => {
+            Fcall::Txattrwalk { .. } | Fcall::Txattrcreate { .. } => {
                 return Err(std::io::Error::from_raw_os_error(libc::ENOTSUP));
             }
             Fcall::Treaddir { fid, offset, count } => {
@@ -111,7 +134,7 @@ impl<T: FileSystem> P9Handler<T> {
                         Some(it) => it,
                     };
                     if cur_len + name.len() + 24 > count as usize {
-                        break
+                        break;
                     }
                     cur_len += name.len() + 24;
                     vec.push(DirEntry {
@@ -150,7 +173,7 @@ impl<T: FileSystem> P9Handler<T> {
                 self.fids.insert(fid, file);
                 Fcall::Rattach { qid }
             }
-            Fcall::Tflush {..} => Fcall::Rflush {},
+            Fcall::Tflush { .. } => Fcall::Rflush {},
             Fcall::Twalk { fid, newfid, wnames } => {
                 let mut file = self.fids.get(&fid).unwrap().clone();
                 let mut qids = Vec::with_capacity(wnames.len());
@@ -193,9 +216,9 @@ impl<T: FileSystem> P9Handler<T> {
     pub fn handle_fcall(&mut self, fcall: Fcall) -> Fcall {
         match self.handle_fcall_internal(fcall) {
             Ok(fcall) => fcall,
-            Err(err) => Fcall::Rlerror { ecode: err.raw_os_error().unwrap_or(libc::ENOTSUP) as u32 },
+            Err(err) => {
+                Fcall::Rlerror { ecode: err.raw_os_error().unwrap_or(libc::ENOTSUP) as u32 }
+            }
         }
     }
 }
-
-
