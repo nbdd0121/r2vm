@@ -14,7 +14,7 @@ impl Csr {
     pub const Cycle: Csr = Csr(0xC00);
     pub const Time: Csr = Csr(0xC01);
     pub const Instret: Csr = Csr(0xC02);
-    
+
     // These CSRs are Rv32I only, and they are considered invalid in RV64I
     pub const Cycleh: Csr = Csr(0xC80);
     pub const Timeh: Csr = Csr(0xC81);

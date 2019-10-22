@@ -6,7 +6,7 @@ pub enum Ordering {
     Relaxed = 0,
     Release = 1,
     Acquire = 2,
-    SeqCst  = 3,
+    SeqCst = 3,
 }
 
 use core::sync::atomic::Ordering as MemOrder;
@@ -26,6 +26,7 @@ impl From<Ordering> for MemOrder {
 /// * Canonical order of extension
 /// * Increasing base opcode number
 /// * Increasing funct3 and then funct7, or their ordering in RISC-V spec
+#[rustfmt::skip]
 #[derive(Clone, Copy)]
 pub enum Op {
     Illegal,
@@ -80,11 +81,11 @@ pub enum Op {
     /* Base Opcode = LUI */
     Lui { rd: u8, imm: i32 },
     /* Base Opcode = OP-32 */
-    Addw { rd: u8, rs1: u8, rs2: u8},
-    Subw { rd: u8, rs1: u8, rs2: u8},
-    Sllw { rd: u8, rs1: u8, rs2: u8},
-    Srlw { rd: u8, rs1: u8, rs2: u8},
-    Sraw { rd: u8, rs1: u8, rs2: u8},
+    Addw { rd: u8, rs1: u8, rs2: u8 },
+    Subw { rd: u8, rs1: u8, rs2: u8 },
+    Sllw { rd: u8, rs1: u8, rs2: u8 },
+    Srlw { rd: u8, rs1: u8, rs2: u8 },
+    Sraw { rd: u8, rs1: u8, rs2: u8 },
     /* Base Opcode = MADD */
     /* Base Opcode = MSUB */
     /* Base Opcode = NMSUB */
@@ -289,17 +290,13 @@ impl Op {
     /// Get the minimal privilege level required to execute the op
     pub fn min_prv_level(self) -> u8 {
         match self {
-            Op::Csrrw { csr, .. } |
-            Op::Csrrs { csr, .. } |
-            Op::Csrrc { csr, .. } |
-            Op::Csrrwi { csr, .. } |
-            Op::Csrrsi { csr, .. } |
-            Op::Csrrci { csr, .. } => {
-                csr.min_prv_level()
-            }
-            Op::Sret |
-            Op::Wfi |
-            Op::SfenceVma {..} => 1,
+            Op::Csrrw { csr, .. }
+            | Op::Csrrs { csr, .. }
+            | Op::Csrrc { csr, .. }
+            | Op::Csrrwi { csr, .. }
+            | Op::Csrrsi { csr, .. }
+            | Op::Csrrci { csr, .. } => csr.min_prv_level(),
+            Op::Sret | Op::Wfi | Op::SfenceVma { .. } => 1,
             _ => 0,
         }
     }

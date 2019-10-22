@@ -35,24 +35,36 @@ pub fn walk_page(satp: u64, vpn: u64, mut read_mem: impl FnMut(u64) -> u64) -> u
         ppn = pte >> 10;
 
         // Check for invalid PTE
-        if pte & PTE_V == 0 { return 0 }
+        if pte & PTE_V == 0 {
+            return 0;
+        }
 
         // Check for malformed PTEs
-        if pte & (PTE_R | PTE_W | PTE_X) == PTE_W { return 0 }
-        if pte & (PTE_R | PTE_W | PTE_X) == PTE_W | PTE_X { return 0 }
+        if pte & (PTE_R | PTE_W | PTE_X) == PTE_W {
+            return 0;
+        }
+        if pte & (PTE_R | PTE_W | PTE_X) == PTE_W | PTE_X {
+            return 0;
+        }
 
         // A global bit will cause the page to be global regardless if this is leaf.
-        if pte & PTE_G != 0 { global = true }
+        if pte & PTE_G != 0 {
+            global = true
+        }
 
         // Not leaf yet
-        if pte & (PTE_R | PTE_W | PTE_X) == 0 { continue }
+        if pte & (PTE_R | PTE_W | PTE_X) == 0 {
+            continue;
+        }
 
         // Check for misaligned huge page
-        if ppn & ((1 << bits_left) - 1) != 0 { return 0 }
+        if ppn & ((1 << bits_left) - 1) != 0 {
+            return 0;
+        }
 
         // Synthesis a 4K PTE
         let ppn = ppn | (vpn & ((1 << bits_left) - 1));
-        return ppn << 10 | pte & ((1 << 10) - 1) | (if global { PTE_G } else { 0 })
+        return ppn << 10 | pte & ((1 << 10) - 1) | (if global { PTE_G } else { 0 });
     }
 
     // Invalid if reached here
@@ -60,25 +72,39 @@ pub fn walk_page(satp: u64, vpn: u64, mut read_mem: impl FnMut(u64) -> u64) -> u
 }
 
 pub fn check_permission(pte: u64, access: AccessType, prv: u8, status: u64) -> Result<(), ()> {
-    if pte & PTE_V == 0 { return Err(()) }
-
-    if prv == 0 {
-        if pte & PTE_U == 0 { return Err(()) }
-    } else {
-        if pte & PTE_U != 0 && status & (1 << 18) == 0 { return Err(()) }
+    if pte & PTE_V == 0 {
+        return Err(());
     }
 
-    if pte & PTE_A == 0 { return Err(()) }
+    if prv == 0 {
+        if pte & PTE_U == 0 {
+            return Err(());
+        }
+    } else {
+        if pte & PTE_U != 0 && status & (1 << 18) == 0 {
+            return Err(());
+        }
+    }
+
+    if pte & PTE_A == 0 {
+        return Err(());
+    }
 
     match access {
         AccessType::Read => {
-            if pte & PTE_R == 0 && (pte & PTE_X == 0 || status & (1 << 19) == 0) { return Err(()) }
+            if pte & PTE_R == 0 && (pte & PTE_X == 0 || status & (1 << 19) == 0) {
+                return Err(());
+            }
         }
         AccessType::Write => {
-            if pte & PTE_W == 0 || pte & PTE_D == 0 { return Err(()) }
+            if pte & PTE_W == 0 || pte & PTE_D == 0 {
+                return Err(());
+            }
         }
         AccessType::Execute => {
-            if pte & PTE_X == 0 { return Err(()) }
+            if pte & PTE_X == 0 {
+                return Err(());
+            }
         }
     }
 
