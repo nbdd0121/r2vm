@@ -1,4 +1,4 @@
-use super::{Op};
+use super::Op;
 use super::Operand;
 use core::fmt;
 
@@ -7,49 +7,49 @@ impl Op {
     /// cmovcc/jcc/setcc instead of actual condition code.
     pub fn mnemonic(&self) -> &'static str {
         match *self {
-            Op::Illegal {..} => "illegal",
-            Op::Adc {..} => "adc",
-            Op::Add {..} => "add",
-            Op::And {..} => "and",
-            Op::Call {..} => "call",
-            Op::Cdqe {..} => "cdqe",
-            Op::Cmovcc {..} => "cmovcc",
-            Op::Cmp {..} => "cmp",
-            Op::Cmpxchg {..} => "cmpxchg",
-            Op::Cdq {..} => "cdq",
-            Op::Cqo {..} => "cqo",
-            Op::Div {..} => "div",
-            Op::Hlt {..} => "hlt",
-            Op::Idiv {..} => "idiv",
-            Op::Imul1 {..} => "imul",
-            Op::Imul2 {..} => "imul",
-            Op::Jcc {..} => "jcc",
-            Op::Jmp {..} => "jmp",
-            Op::Lock {..} => "lock",
-            Op::Lea {..} => "lea",
-            Op::Mfence {..} => "mfence",
-            Op::Mov {..} => "mov",
-            Op::Movabs {..} => "movabs",
-            Op::Movsx {..} => "movsx",
-            Op::Movzx {..} => "movzx",
-            Op::Mul {..} => "mul",
-            Op::Neg {..} => "neg",
-            Op::Nop {..} => "nop",
-            Op::Not {..} => "not",
-            Op::Or {..} => "or",
-            Op::Pop {..} => "pop",
-            Op::Push {..} => "push",
-            Op::Ret {..} => "ret",
-            Op::Sar {..} => "sar",
-            Op::Sbb {..} => "sbb",
-            Op::Setcc {..} => "setcc",
-            Op::Shl {..} => "shl",
-            Op::Shr {..} => "shr",
-            Op::Sub {..} => "sub",
-            Op::Test {..} => "test",
-            Op::Xadd {..} => "xadd",
-            Op::Xchg {..} => "xchg",
-            Op::Xor {..} => "xor",
+            Op::Illegal { .. } => "illegal",
+            Op::Adc { .. } => "adc",
+            Op::Add { .. } => "add",
+            Op::And { .. } => "and",
+            Op::Call { .. } => "call",
+            Op::Cdqe { .. } => "cdqe",
+            Op::Cmovcc { .. } => "cmovcc",
+            Op::Cmp { .. } => "cmp",
+            Op::Cmpxchg { .. } => "cmpxchg",
+            Op::Cdq { .. } => "cdq",
+            Op::Cqo { .. } => "cqo",
+            Op::Div { .. } => "div",
+            Op::Hlt { .. } => "hlt",
+            Op::Idiv { .. } => "idiv",
+            Op::Imul1 { .. } => "imul",
+            Op::Imul2 { .. } => "imul",
+            Op::Jcc { .. } => "jcc",
+            Op::Jmp { .. } => "jmp",
+            Op::Lock { .. } => "lock",
+            Op::Lea { .. } => "lea",
+            Op::Mfence { .. } => "mfence",
+            Op::Mov { .. } => "mov",
+            Op::Movabs { .. } => "movabs",
+            Op::Movsx { .. } => "movsx",
+            Op::Movzx { .. } => "movzx",
+            Op::Mul { .. } => "mul",
+            Op::Neg { .. } => "neg",
+            Op::Nop { .. } => "nop",
+            Op::Not { .. } => "not",
+            Op::Or { .. } => "or",
+            Op::Pop { .. } => "pop",
+            Op::Push { .. } => "push",
+            Op::Ret { .. } => "ret",
+            Op::Sar { .. } => "sar",
+            Op::Sbb { .. } => "sbb",
+            Op::Setcc { .. } => "setcc",
+            Op::Shl { .. } => "shl",
+            Op::Shr { .. } => "shr",
+            Op::Sub { .. } => "sub",
+            Op::Test { .. } => "test",
+            Op::Xadd { .. } => "xadd",
+            Op::Xchg { .. } => "xchg",
+            Op::Xor { .. } => "xor",
         }
     }
 
@@ -64,59 +64,41 @@ impl Op {
         }?;
 
         match self {
-            Op::Illegal |
-            Op::Cdqe |
-            Op::Cdq |
-            Op::Cqo |
-            Op::Hlt |
-            Op::Lock |
-            Op::Mfence => (),
+            Op::Illegal | Op::Cdqe | Op::Cdq | Op::Cqo | Op::Hlt | Op::Lock | Op::Mfence => (),
             Op::Nop => (),
-            Op::Adc(dst, src) |
-            Op::Add(dst, src) |
-            Op::And(dst, src) |
-            Op::Cmp(dst, src) |
-            Op::Mov(dst, src) |
-            Op::Or(dst, src) |
-            Op::Sar(dst, src) |
-            Op::Sbb(dst, src) |
-            Op::Shl(dst, src) |
-            Op::Shr(dst, src) |
-            Op::Sub(dst, src) |
-            Op::Test(dst, src) |
-            Op::Xor(dst, src) => write!(fmt, "{}, {}", dst, src)?,
-            &Op::Call(Operand::Imm(imm)) |
-            &Op::Jmp(Operand::Imm(imm)) => {
-                let (sign, uimm) = if imm < 0 {
-                    ('-', -imm)
-                } else {
-                    ('+', imm)
-                };
+            Op::Adc(dst, src)
+            | Op::Add(dst, src)
+            | Op::And(dst, src)
+            | Op::Cmp(dst, src)
+            | Op::Mov(dst, src)
+            | Op::Or(dst, src)
+            | Op::Sar(dst, src)
+            | Op::Sbb(dst, src)
+            | Op::Shl(dst, src)
+            | Op::Shr(dst, src)
+            | Op::Sub(dst, src)
+            | Op::Test(dst, src)
+            | Op::Xor(dst, src) => write!(fmt, "{}, {}", dst, src)?,
+            &Op::Call(Operand::Imm(imm)) | &Op::Jmp(Operand::Imm(imm)) => {
+                let (sign, uimm) = if imm < 0 { ('-', -imm) } else { ('+', imm) };
                 write!(fmt, "pc {} {:#x}", sign, uimm)?;
                 if let Some(npc) = npc {
                     let target_pc = npc.wrapping_add(imm as u64);
                     write!(fmt, " <{:x}>", target_pc)?;
                 }
             }
-            Op::Call(src) |
-            Op::Jmp(src) |
-            Op::Push(src) => write!(fmt, "{}", src)?,
-            Op::Cmovcc(dst, src, _) |
-            Op::Imul2(dst, src) => write!(fmt, "{}, {}", dst, src)?,
-            Op::Div(dst) |
-            Op::Idiv(dst) |
-            Op::Imul1(dst) |
-            Op::Mul(dst) |
-            Op::Neg(dst) |
-            Op::Not(dst) |
-            Op::Pop(dst) |
-            Op::Setcc(dst, _) => write!(fmt, "{}", dst)?,
+            Op::Call(src) | Op::Jmp(src) | Op::Push(src) => write!(fmt, "{}", src)?,
+            Op::Cmovcc(dst, src, _) | Op::Imul2(dst, src) => write!(fmt, "{}, {}", dst, src)?,
+            Op::Div(dst)
+            | Op::Idiv(dst)
+            | Op::Imul1(dst)
+            | Op::Mul(dst)
+            | Op::Neg(dst)
+            | Op::Not(dst)
+            | Op::Pop(dst)
+            | Op::Setcc(dst, _) => write!(fmt, "{}", dst)?,
             &Op::Jcc(imm, _) => {
-                let (sign, uimm) = if imm < 0 {
-                    ('-', -imm)
-                } else {
-                    ('+', imm)
-                };
+                let (sign, uimm) = if imm < 0 { ('-', -imm) } else { ('+', imm) };
                 write!(fmt, "pc {} {:#x}", sign, uimm)?;
                 if let Some(npc) = npc {
                     let target_pc = npc.wrapping_add(imm as u64);
@@ -125,11 +107,13 @@ impl Op {
             }
             Op::Lea(dst, src) => write!(fmt, "{}, {}", dst, src)?,
             Op::Movabs(dst, src) => write!(fmt, "{}, {}", dst, src)?,
-            Op::Movsx(dst, src) |
-            Op::Movzx(dst, src) => write!(fmt, "{}, {}", dst, src)?,
-            &Op::Ret(pop) => if pop != 0 { write!(fmt, "{}", pop)? }
-            Op::Cmpxchg(dst, src) |
-            Op::Xadd(dst, src) => write!(fmt, "{}, {}", dst, src)?,
+            Op::Movsx(dst, src) | Op::Movzx(dst, src) => write!(fmt, "{}, {}", dst, src)?,
+            &Op::Ret(pop) => {
+                if pop != 0 {
+                    write!(fmt, "{}", pop)?
+                }
+            }
+            Op::Cmpxchg(dst, src) | Op::Xadd(dst, src) => write!(fmt, "{}, {}", dst, src)?,
             Op::Xchg(dst, src) => write!(fmt, "{}, {}", dst, src)?,
         }
 

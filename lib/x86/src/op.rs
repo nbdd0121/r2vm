@@ -1,5 +1,5 @@
-use core::fmt::{self, Write};
 use core::convert::TryFrom;
+use core::fmt::{self, Write};
 
 /// Helper for displaying signed hex
 struct Signed(i64);
@@ -11,7 +11,9 @@ impl fmt::LowerHex for Signed {
             f.write_char('-')?;
             value
         } else {
-            if f.sign_plus() { f.write_char('+')? }
+            if f.sign_plus() {
+                f.write_char('+')?
+            }
             self.0 as u64
         };
         if f.alternate() {
@@ -84,6 +86,7 @@ pub const REG_GPQ: u8 = 0x40;
 // This is for special spl, bpl, sil and dil
 pub const REG_GPB2: u8 = 0x50;
 
+#[rustfmt::skip]
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Register {
@@ -129,7 +132,13 @@ impl Register {
         let id = id & 15;
 
         let mask = match size {
-            Size::Byte => if id >= 4 && id <= 7 { REG_GPB2 } else { REG_GPB },
+            Size::Byte => {
+                if id >= 4 && id <= 7 {
+                    REG_GPB2
+                } else {
+                    REG_GPB
+                }
+            }
             Size::Word => REG_GPW,
             Size::Dword => REG_GPD,
             Size::Qword => REG_GPQ,
@@ -146,6 +155,7 @@ impl Register {
     }
 }
 
+#[rustfmt::skip]
 const REG_NAMES : [&str; 0x51] = [
     "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh",
     "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
@@ -161,7 +171,9 @@ const REG_NAMES : [&str; 0x51] = [
 ];
 
 fn register_name(reg_num: u8) -> &'static str {
-    if reg_num < 0x10 || reg_num >= 0x61 { return "(unknown)" }
+    if reg_num < 0x10 || reg_num >= 0x61 {
+        return "(unknown)";
+    }
     REG_NAMES[(reg_num - 0x10) as usize]
 }
 
@@ -355,20 +367,20 @@ impl fmt::Debug for Operand {
 pub enum ConditionCode {
     Overflow = 0x0,
     NotOverflow = 0x1,
-    Below = 0x2, // Carry = 0x2, NotAboveEqual = 0x2,
+    Below = 0x2,      // Carry = 0x2, NotAboveEqual = 0x2,
     AboveEqual = 0x3, // NotBelow = 0x3, NotCarry = 0x3,
-    Equal = 0x4, // Zero = 0x4,
-    NotEqual = 0x5, // NotZero = 0x5,
+    Equal = 0x4,      // Zero = 0x4,
+    NotEqual = 0x5,   // NotZero = 0x5,
     BelowEqual = 0x6, // NotAbove = 0x6,
-    Above = 0x7, // NotBelowEqual = 0x7,
+    Above = 0x7,      // NotBelowEqual = 0x7,
     Sign = 0x8,
     NotSign = 0x9,
-    Parity = 0xA, // ParityEven = 0xA,
-    NotParity = 0xB, // ParityOdd = 0xB,
-    Less = 0xC, // NotGreaterEqual = 0xC,
+    Parity = 0xA,       // ParityEven = 0xA,
+    NotParity = 0xB,    // ParityOdd = 0xB,
+    Less = 0xC,         // NotGreaterEqual = 0xC,
     GreaterEqual = 0xD, // NotLess = 0xD,
-    LessEqual = 0xE, // NotGreater = 0xE,
-    Greater = 0xF, // NotLessEqual = 0xF,
+    LessEqual = 0xE,    // NotGreater = 0xE,
+    Greater = 0xF,      // NotLessEqual = 0xF,
 }
 
 impl ConditionCode {
@@ -388,11 +400,7 @@ impl ConditionCode {
 impl TryFrom<u8> for ConditionCode {
     type Error = ();
     fn try_from(value: u8) -> Result<Self, ()> {
-        if value <= 0xF {
-            Ok(unsafe { core::mem::transmute(value) })
-        } else {
-            Err(())
-        }
+        if value <= 0xF { Ok(unsafe { core::mem::transmute(value) }) } else { Err(()) }
     }
 }
 
@@ -481,12 +489,7 @@ pub enum Op {
 impl core::ops::Mul<u8> for Register {
     type Output = Memory;
     fn mul(self, rhs: u8) -> Memory {
-        Memory {
-            displacement: 0,
-            base: None,
-            index: Some((self, rhs)),
-            size: Size::Qword,
-        }
+        Memory { displacement: 0, base: None, index: Some((self, rhs)), size: Size::Qword }
     }
 }
 
@@ -503,12 +506,7 @@ impl core::ops::Add<Memory> for Register {
 impl core::ops::Add<Register> for Register {
     type Output = Memory;
     fn add(self, rhs: Register) -> Memory {
-        Memory {
-            displacement: 0,
-            base: Some(self),
-            index: Some((rhs, 1)),
-            size: Size::Qword,
-        }
+        Memory { displacement: 0, base: Some(self), index: Some((rhs, 1)), size: Size::Qword }
     }
 }
 
@@ -516,12 +514,7 @@ impl core::ops::Add<Register> for Register {
 impl core::ops::Add<i32> for Register {
     type Output = Memory;
     fn add(self, rhs: i32) -> Memory {
-        Memory {
-            displacement: rhs,
-            base: Some(self),
-            index: None,
-            size: Size::Qword,
-        }
+        Memory { displacement: rhs, base: Some(self), index: None, size: Size::Qword }
     }
 }
 
@@ -529,12 +522,7 @@ impl core::ops::Add<i32> for Register {
 impl core::ops::Sub<i32> for Register {
     type Output = Memory;
     fn sub(self, rhs: i32) -> Memory {
-        Memory {
-            displacement: -rhs,
-            base: Some(self),
-            index: None,
-            size: Size::Qword,
-        }
+        Memory { displacement: -rhs, base: Some(self), index: None, size: Size::Qword }
     }
 }
 

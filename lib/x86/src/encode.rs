@@ -1,5 +1,5 @@
+use super::op::{ConditionCode, Location, Memory, Op, Operand, Register, Size, REG_GPB2, REG_GPQ};
 use core::convert::TryFrom;
-use super::op::{ConditionCode, Location, Operand, Memory, Register, Op, Size, REG_GPB2, REG_GPQ};
 
 pub struct Encoder<'a> {
     pub emitter: &'a mut dyn FnMut(u8),
@@ -62,7 +62,6 @@ impl<'a> Encoder<'a> {
 // #endregion
 
 impl<'a> Encoder<'a> {
-
     /// Emit REX prefix given r/m operand.
     /// Parameter rex specifies the bits that needs to be true in REX prefix.
     /// It can be 0x00 (no REX needed), 0x08 (need REX.W), or 0x40 (no bits needed, but need prefix)
@@ -87,8 +86,9 @@ impl<'a> Encoder<'a> {
                 }
 
                 // With REX prefix, r/m8 cannot be encoded to access AH, BH, CH, DH
-                assert!(rex == 0 || !(it_num >= Register::AH as u8 &&
-                                    it_num <= Register::BH as u8));
+                assert!(
+                    rex == 0 || !(it_num >= Register::AH as u8 && it_num <= Register::BH as u8)
+                );
 
                 // REX.B
                 if (it_num & 8) != 0 {
@@ -118,7 +118,6 @@ impl<'a> Encoder<'a> {
         }
     }
 
-
     /// Emit ModR/M and SIB given r/m operand.
     /// This assumes 64-bit address size.
     fn emit_modrm(&mut self, op: &Location, reg_num: u8) {
@@ -133,7 +132,6 @@ impl<'a> Encoder<'a> {
 
                 // Sanity check that is valid and sp is not used as index register.
                 if let Some((index, scale)) = it.index {
-
                     assert!(index as u8 & 0xF0 == REG_GPQ);
 
                     // index = RSP is invalid.
@@ -171,8 +169,7 @@ impl<'a> Encoder<'a> {
                     }
 
                     // [RSP/R12 + disp]. We need a SIB byte in this case
-                    (Some(Register::RSP), None) |
-                    (Some(Register::R12), None) => {
+                    (Some(Register::RSP), None) | (Some(Register::R12), None) => {
                         // [RSP/R12]
                         if it.displacement == 0 {
                             self.emit_u8((reg_num << 3) | 0b100);
@@ -254,7 +251,9 @@ impl<'a> Encoder<'a> {
     /// as an escape code.
     fn emit_r_rm(&mut self, op_size: Size, mem: &Location, reg_num: u8, opcode: u32) {
         // Operand size override prefix.
-        if op_size == Size::Word { self.emit_u8(0x66) }
+        if op_size == Size::Word {
+            self.emit_u8(0x66)
+        }
 
         // TODO: If required, emit mandatory prefix here.
 
@@ -262,28 +261,39 @@ impl<'a> Encoder<'a> {
         self.emit_rex(mem, reg_num, if op_size == Size::Qword { 0x08 } else { 0 });
 
         // Emit opcode.
-        if opcode & 0xFF_0000 != 0 { self.emit_u8((opcode >> 16) as u8) }
-        if opcode & 0xFF00 != 0 { self.emit_u8((opcode >> 8) as u8) }
+        if opcode & 0xFF_0000 != 0 {
+            self.emit_u8((opcode >> 16) as u8)
+        }
+        if opcode & 0xFF00 != 0 {
+            self.emit_u8((opcode >> 8) as u8)
+        }
         self.emit_u8(opcode as u8);
 
         // Mod R/M comes last.
         self.emit_modrm(mem, reg_num);
     }
 
-
     /// Generic helper function emitting all instructions that uses format +r, supporting 8, 16, 32 and 64-bit.
     fn emit_plusr(&mut self, op_size: Size, reg: Register, opcode: u32) {
         let reg_num = reg as u8;
 
-        if op_size == Size::Word { self.emit_u8(0x66) }
+        if op_size == Size::Word {
+            self.emit_u8(0x66)
+        }
 
         // TODO: If required, emit mandatory prefix here.
 
         // Emit REX prefix is necessary.
         let mut rex = 0;
-        if op_size == Size::Qword { rex |= 0x08 }
-        if reg_num & 8 != 0 { rex |= 0x01 }
-        if reg_num & 0xF0 == REG_GPB2 { rex |= 0x40 }
+        if op_size == Size::Qword {
+            rex |= 0x08
+        }
+        if reg_num & 8 != 0 {
+            rex |= 0x01
+        }
+        if reg_num & 0xF0 == REG_GPB2 {
+            rex |= 0x40
+        }
 
         if rex != 0 {
             assert!(!(reg_num >= Register::AH as u8 && reg_num <= Register::BH as u8));
@@ -291,8 +301,12 @@ impl<'a> Encoder<'a> {
         }
 
         // Emit opcode.
-        if opcode & 0xFF_0000 != 0 { self.emit_u8((opcode >> 16) as u8) }
-        if opcode & 0xFF00 != 0 { self.emit_u8((opcode >> 8) as u8) }
+        if opcode & 0xFF_0000 != 0 {
+            self.emit_u8((opcode >> 16) as u8)
+        }
+        if opcode & 0xFF00 != 0 {
+            self.emit_u8((opcode >> 8) as u8)
+        }
         self.emit_u8(opcode as u8 | (reg_num & 7));
     }
 
@@ -305,7 +319,6 @@ impl<'a> Encoder<'a> {
         }
         self.emit_r_rm(op_size, &dst, id, opcode);
     }
-
 
     /// Generate code for ALU instructions.
     /// ALU instructions include (ordered by their id): add, or, adc, sbb, and, sub, xor, cmp.
@@ -348,10 +361,18 @@ impl<'a> Encoder<'a> {
 
                 match (dst, src) {
                     // Prefer INST r/m, r to INST r, r/m in case of INST r, r
-                    (dst, Location::Reg(reg)) =>
-                        self.emit_r_rm(op_size, &dst, reg as u8, (id << 3) as u32 | if op_size == Size::Byte { 0x00 } else { 0x01 }),
-                    (Location::Reg(reg), src) =>
-                        self.emit_r_rm(op_size, &src, reg as u8, (id << 3) as u32 | if op_size == Size::Byte { 0x02 } else { 0x03 }),
+                    (dst, Location::Reg(reg)) => self.emit_r_rm(
+                        op_size,
+                        &dst,
+                        reg as u8,
+                        (id << 3) as u32 | if op_size == Size::Byte { 0x00 } else { 0x01 },
+                    ),
+                    (Location::Reg(reg), src) => self.emit_r_rm(
+                        op_size,
+                        &src,
+                        reg as u8,
+                        (id << 3) as u32 | if op_size == Size::Byte { 0x02 } else { 0x03 },
+                    ),
                     // Operands cannot both be memory.
                     _ => unreachable!(),
                 }
@@ -366,10 +387,12 @@ impl<'a> Encoder<'a> {
 
         match src {
             // Shift by CL
-            Operand::Reg(Register::CL) =>
-                self.emit_r_rm(op_size, &dst, id, if op_size == Size::Byte { 0xD2 } else { 0xD3 }),
-            Operand::Imm(1) =>
-                self.emit_r_rm(op_size, &dst, id, if op_size == Size::Byte { 0xD0 } else { 0xD1 }),
+            Operand::Reg(Register::CL) => {
+                self.emit_r_rm(op_size, &dst, id, if op_size == Size::Byte { 0xD2 } else { 0xD3 })
+            }
+            Operand::Imm(1) => {
+                self.emit_r_rm(op_size, &dst, id, if op_size == Size::Byte { 0xD0 } else { 0xD1 })
+            }
             Operand::Imm(imm) => {
                 self.emit_r_rm(op_size, &dst, id, if op_size == Size::Byte { 0xC0 } else { 0xC1 });
                 self.emit_u8(u8::try_from(imm).unwrap());
@@ -389,7 +412,7 @@ impl<'a> Encoder<'a> {
                 self.emit_modrm(&target, 2);
             }
 
-           Err(imm) => {
+            Err(imm) => {
                 assert!(i32::try_from(imm).is_ok());
                 self.emit_u8(0xE8);
                 self.emit_u32(imm as u32);
@@ -420,8 +443,8 @@ impl<'a> Encoder<'a> {
                 self.emit_modrm(&target, 4);
             }
 
-           Err(imm) => {
-               if i8::try_from(imm).is_ok() {
+            Err(imm) => {
+                if i8::try_from(imm).is_ok() {
                     self.emit_u8(0xEB);
                     self.emit_u8(imm as u8);
                 } else {
@@ -448,14 +471,19 @@ impl<'a> Encoder<'a> {
             Err(imm) => {
                 // Special encoding for mov r, imm.
                 if let Location::Reg(reg) = dst {
-
                     // Special optimization for mov: mov rax, uint32 can be optimized to mov eax, uint32.
-                    if op_size == Size::Qword && u32::try_from(imm).is_ok() { op_size = Size::Dword }
+                    if op_size == Size::Qword && u32::try_from(imm).is_ok() {
+                        op_size = Size::Dword
+                    }
 
                     // If the above optimization is not possible, but imm is int32, then it is shorter to encode it using
                     // mod r/m.
                     if op_size != Size::Qword || i32::try_from(imm).is_err() {
-                        self.emit_plusr(op_size, reg, if op_size == Size::Byte { 0xB0 } else { 0xB8 });
+                        self.emit_plusr(
+                            op_size,
+                            reg,
+                            if op_size == Size::Byte { 0xB0 } else { 0xB8 },
+                        );
                         self.emit_imm(op_size, imm);
                         return;
                     }
@@ -472,10 +500,18 @@ impl<'a> Encoder<'a> {
 
                 match (dst, src) {
                     // Prefer INST r/m, r to INST r, r/m in case of INST r, r
-                    (dst, Location::Reg(reg)) =>
-                        self.emit_r_rm(op_size, &dst, reg as u8, if op_size == Size::Byte { 0x88 } else { 0x89 }),
-                    (Location::Reg(reg), src) =>
-                        self.emit_r_rm(op_size, &src, reg as u8, if op_size == Size::Byte { 0x8A } else { 0x8B }),
+                    (dst, Location::Reg(reg)) => self.emit_r_rm(
+                        op_size,
+                        &dst,
+                        reg as u8,
+                        if op_size == Size::Byte { 0x88 } else { 0x89 },
+                    ),
+                    (Location::Reg(reg), src) => self.emit_r_rm(
+                        op_size,
+                        &src,
+                        reg as u8,
+                        if op_size == Size::Byte { 0x8A } else { 0x8B },
+                    ),
                     // Operands cannot both be memory.
                     _ => unreachable!(),
                 }
@@ -523,7 +559,12 @@ impl<'a> Encoder<'a> {
         let dst_size = dst.size();
         let src_size = src.size();
         assert!(dst_size > src_size && src_size != Size::Dword);
-        self.emit_r_rm(dst_size, &src, dst as u8, if src_size == Size::Byte { 0x0FB6 } else { 0x0FB7 });
+        self.emit_r_rm(
+            dst_size,
+            &src,
+            dst as u8,
+            if src_size == Size::Byte { 0x0FB6 } else { 0x0FB7 },
+        );
     }
 
     /// Emit code for pop.
@@ -534,7 +575,9 @@ impl<'a> Encoder<'a> {
         assert!(op_size == Size::Word || op_size == Size::Qword);
 
         // REX.W not needed
-        if op_size == Size::Qword { op_size = Size::Dword }
+        if op_size == Size::Qword {
+            op_size = Size::Dword
+        }
 
         if let Location::Reg(reg) = dst {
             self.emit_plusr(op_size, reg, 0x58);
@@ -566,7 +609,9 @@ impl<'a> Encoder<'a> {
                 assert!(op_size == Size::Word || op_size == Size::Qword);
 
                 // REX.W not needed
-                if op_size == Size::Qword { op_size = Size::Dword }
+                if op_size == Size::Qword {
+                    op_size = Size::Dword
+                }
 
                 if let Location::Reg(reg) = src {
                     self.emit_plusr(op_size, reg, 0x50);
@@ -621,7 +666,12 @@ impl<'a> Encoder<'a> {
 
             Operand::Reg(reg) => {
                 assert_eq!(reg.size(), op_size);
-                self.emit_r_rm(op_size, &dst, reg as u8, if op_size == Size::Byte { 0x84 } else { 0x85 });
+                self.emit_r_rm(
+                    op_size,
+                    &dst,
+                    reg as u8,
+                    if op_size == Size::Byte { 0x84 } else { 0x85 },
+                );
             }
 
             _ => unreachable!(),
@@ -631,8 +681,7 @@ impl<'a> Encoder<'a> {
     fn emit_xchg(&mut self, dst: Location, src: Location) {
         // Normalise to make src always a register
         let (dst, src) = match (dst, src) {
-            (Location::Reg(src), dst) |
-            (dst, Location::Reg(src)) => (dst, src),
+            (Location::Reg(src), dst) | (dst, Location::Reg(src)) => (dst, src),
             _ => unreachable!(),
         };
 
@@ -659,7 +708,7 @@ impl<'a> Encoder<'a> {
         match op {
             // ALU instructions
             Op::Add(dst, src) => self.emit_alu(dst, src, 0),
-            Op::Or (dst, src) => self.emit_alu(dst, src, 1),
+            Op::Or(dst, src) => self.emit_alu(dst, src, 1),
             Op::Adc(dst, src) => self.emit_alu(dst, src, 2),
             Op::Sbb(dst, src) => self.emit_alu(dst, src, 3),
             Op::And(dst, src) => self.emit_alu(dst, src, 4),
@@ -672,9 +721,15 @@ impl<'a> Encoder<'a> {
             Op::Shr(dst, src) => self.emit_shift(dst, src, 5),
             Op::Sar(dst, src) => self.emit_shift(dst, src, 7),
 
-            Op::Illegal => { self.emit_u8(0x0F); self.emit_u8(0x0B); }
+            Op::Illegal => {
+                self.emit_u8(0x0F);
+                self.emit_u8(0x0B);
+            }
             Op::Call(target) => self.emit_call(target),
-            Op::Cdqe => { self.emit_u8(0x48); self.emit_u8(0x98); }
+            Op::Cdqe => {
+                self.emit_u8(0x48);
+                self.emit_u8(0x98);
+            }
             Op::Cmovcc(dst, src, cc) => {
                 let op_size = dst.size();
                 assert_ne!(op_size, Size::Byte);
@@ -685,9 +740,17 @@ impl<'a> Encoder<'a> {
             Op::Cmpxchg(dst, src) => {
                 let op_size = dst.size();
                 assert_eq!(op_size, src.size());
-                self.emit_r_rm(op_size, &dst, src as u8, if op_size == Size::Byte { 0x0FB0 } else { 0x0FB1 });
+                self.emit_r_rm(
+                    op_size,
+                    &dst,
+                    src as u8,
+                    if op_size == Size::Byte { 0x0FB0 } else { 0x0FB1 },
+                );
             }
-            Op::Cqo => { self.emit_u8(0x48); self.emit_u8(0x99) }
+            Op::Cqo => {
+                self.emit_u8(0x48);
+                self.emit_u8(0x99)
+            }
             Op::Div(src) => self.emit_rm(src, 0xF6, 6),
             Op::Hlt => self.emit_u8(0xf4),
             Op::Idiv(src) => self.emit_rm(src, 0xF6, 7),
@@ -705,7 +768,11 @@ impl<'a> Encoder<'a> {
             Op::Lock => self.emit_u8(0xF0),
             Op::Jmp(target) => self.emit_jmp(target),
             Op::Lea(dst, src) => self.emit_lea(dst, src),
-            Op::Mfence => { self.emit_u8(0x0F); self.emit_u8(0xAE); self.emit_u8(0xF0); }
+            Op::Mfence => {
+                self.emit_u8(0x0F);
+                self.emit_u8(0xAE);
+                self.emit_u8(0xF0);
+            }
             Op::Mov(dst, src) => self.emit_mov(dst, src),
             Op::Movabs(dst, src) => self.emit_movabs(dst, src),
             Op::Movsx(dst, src) => self.emit_movsx(dst, src),
@@ -722,7 +789,12 @@ impl<'a> Encoder<'a> {
             Op::Xadd(dst, src) => {
                 let op_size = dst.size();
                 assert_eq!(op_size, src.size());
-                self.emit_r_rm(op_size, &dst, src as u8, if op_size == Size::Byte { 0x0FC0 } else { 0x0FC1 });
+                self.emit_r_rm(
+                    op_size,
+                    &dst,
+                    src as u8,
+                    if op_size == Size::Byte { 0x0FC0 } else { 0x0FC1 },
+                );
             }
             Op::Xchg(dst, src) => self.emit_xchg(dst, src),
         }
