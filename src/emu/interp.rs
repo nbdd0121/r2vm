@@ -1,12 +1,12 @@
-use riscv::{Op, Csr, mmu::*};
-use softfp::{self, F32, F64};
-use std::convert::TryInto;
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicI64, AtomicU64};
-use std::sync::atomic::Ordering as MemOrder;
 use crate::util::AtomicExt;
 use lazy_static::lazy_static;
-use parking_lot::{Mutex, MutexGuard, Condvar};
+use parking_lot::{Condvar, Mutex, MutexGuard};
+use riscv::{mmu::*, Csr, Op};
+use softfp::{self, F32, F64};
 use std::collections::{BTreeMap, BTreeSet};
+use std::convert::TryInto;
+use std::sync::atomic::Ordering as MemOrder;
+use std::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, AtomicU64};
 
 /// A cache line. `{CacheLine}` is composed of atomic variables because we sometimes need cross-
 /// thread invalidation. Note that usually paddr isn't touched, but by keeping tag and paddr
@@ -22,10 +22,7 @@ pub struct CacheLine {
 
 impl Default for CacheLine {
     fn default() -> Self {
-        Self {
-            tag: AtomicU64::new(i64::max_value() as u64),
-            paddr: AtomicU64::new(0),
-        }
+        Self { tag: AtomicU64::new(i64::max_value() as u64), paddr: AtomicU64::new(0) }
     }
 }
 
@@ -145,7 +142,9 @@ impl SharedContext {
     /// Perform a WFI operation. Return after an alarm is fired.
     pub fn wait_alarm(&self) {
         let mut guard = self.wfi_mutex.lock();
-        if self.alarm.load(MemOrder::Relaxed) != 0 { return }
+        if self.alarm.load(MemOrder::Relaxed) != 0 {
+            return;
+        }
         self.wfi_condvar.wait(&mut guard);
     }
 
@@ -179,14 +178,15 @@ impl SharedContext {
 
     pub fn protect_code(&self, page: u64) {
         for line in self.line.iter() {
-            let _ = line.tag.fetch_update_stable(|value| {
-                let paddr = (value >> 1 << CACHE_LINE_LOG2_SIZE) ^ line.paddr.load(MemOrder::Relaxed);
-                if paddr &! 4095 == page {
-                    Some(value | 1)
-                } else {
-                    None
-                }
-            }, MemOrder::Relaxed, MemOrder::Relaxed);
+            let _ = line.tag.fetch_update_stable(
+                |value| {
+                    let paddr =
+                        (value >> 1 << CACHE_LINE_LOG2_SIZE) ^ line.paddr.load(MemOrder::Relaxed);
+                    if paddr & !4095 == page { Some(value | 1) } else { None }
+                },
+                MemOrder::Relaxed,
+                MemOrder::Relaxed,
+            );
         }
     }
 }
@@ -236,7 +236,6 @@ pub struct Context {
 
     pub hartid: u64,
     pub minstret: u64,
-
 }
 
 impl Context {
@@ -244,7 +243,7 @@ impl Context {
         if self.sstatus & 0x6000 == 0 {
             self.scause = 2;
             self.stval = 0;
-            return Err(())
+            return Err(());
         }
         self.sstatus |= 0x6000;
         Ok(())
@@ -252,7 +251,11 @@ impl Context {
 
     /// Obtaining a bitmask of pending interrupts
     pub fn interrupt_pending(&mut self) -> u64 {
-        if (self.sstatus & 0x2) != 0 { self.shared.sip.load(MemOrder::Relaxed) & self.sie } else { 0 }
+        if (self.sstatus & 0x2) != 0 {
+            self.shared.sip.load(MemOrder::Relaxed) & self.sie
+        } else {
+            0
+        }
     }
 }
 
@@ -284,7 +287,9 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
         Csr::Sstatus => {
             let mut value = ctx.sstatus;
             // SSTATUS.FS = dirty, also set SD
-            if value & 0x6000 == 0x6000 { value |= 0x8000000000000000 }
+            if value & 0x6000 == 0x6000 {
+                value |= 0x8000000000000000
+            }
             // Hard-wire UXL to 0b10, i.e. 64-bit.
             value |= 0x200000000;
             value
@@ -302,7 +307,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
             error!("read illegal csr {:x}", csr.0);
             ctx.scause = 2;
             ctx.stval = 0;
-            return Err(())
+            return Err(());
         }
     })
 }
@@ -329,12 +334,16 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
         Csr::Sstatus => {
             // Mask-out non-writable bits
             ctx.sstatus = value & 0xC6122;
-            if ctx.interrupt_pending() !=0 { ctx.shared.alert() }
+            if ctx.interrupt_pending() != 0 {
+                ctx.shared.alert()
+            }
             // XXX: When MXR or SUM is changed, also clear local cache
         }
         Csr::Sie => {
             ctx.sie = value;
-            if ctx.interrupt_pending() != 0 { ctx.shared.alert() }
+            if ctx.interrupt_pending() != 0 {
+                ctx.shared.alert()
+            }
         }
         Csr::Stvec => {
             // We support MODE 0 only at the moment
@@ -344,7 +353,7 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
         }
         Csr::Scounteren => (),
         Csr::Sscratch => ctx.sscratch = value,
-        Csr::Sepc => ctx.sepc = value &! 1,
+        Csr::Sepc => ctx.sepc = value & !1,
         Csr::Scause => ctx.scause = value,
         Csr::Stval => ctx.stval = value,
         Csr::Sip => {
@@ -371,15 +380,15 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
             error!("write illegal csr {:x} = {:x}", csr.0, value);
             ctx.scause = 2;
             ctx.stval = 0;
-            return Err(())
+            return Err(());
         }
     }
     Ok(())
 }
 
 pub fn icache_invalidate(start: usize, end: usize) {
-    let start = (start &! 4095) as u64;
-    let end = ((end + 4095) &! 4095) as u64;
+    let start = (start & !4095) as u64;
+    let end = ((end + 4095) & !4095) as u64;
 
     let mut prot = CODE_PROT.lock();
 
@@ -400,12 +409,12 @@ pub fn icache_invalidate(start: usize, end: usize) {
             // before the software expects a coherence instruction cache.
             crate::shared_context(i).run_on(move || {
                 let mut icache = icache(i as u64);
-                let keys: Vec<u64> = icache.s_map.range(start .. end).map(|(k,_)|*k).collect();
+                let keys: Vec<u64> = icache.s_map.range(start..end).map(|(k, _)| *k).collect();
                 for key in keys {
                     let blk = icache.s_map.remove(&key).unwrap();
                     unsafe { *(blk.1 as *mut u8) = 0xC3 }
                 }
-                let keys: Vec<u64> = icache.u_map.range(start .. end).map(|(k,_)|*k).collect();
+                let keys: Vec<u64> = icache.u_map.range(start..end).map(|(k, _)| *k).collect();
                 for key in keys {
                     let blk = icache.u_map.remove(&key).unwrap();
                     unsafe { *(blk.1 as *mut u8) = 0xC3 }
@@ -417,7 +426,9 @@ pub fn icache_invalidate(start: usize, end: usize) {
 
 fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, ()> {
     // MMU off
-    if (ctx.satp >> 60) == 0 { return Ok(addr) }
+    if (ctx.satp >> 60) == 0 {
+        return Ok(addr);
+    }
 
     let pte = walk_page(ctx.satp, addr >> 12, |addr| crate::emu::read_memory(addr as usize));
     match check_permission(pte, access, ctx.prv as u8, ctx.sstatus) {
@@ -462,12 +473,14 @@ fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
 #[export_name = "translate_cache_miss"]
 fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let out = translate(ctx, addr, if write { AccessType::Write} else { AccessType::Read })?;
+    let out = translate(ctx, addr, if write { AccessType::Write } else { AccessType::Read })?;
     let line: &CacheLine = &ctx.shared.line[(idx & 1023) as usize];
     let tag = (idx << 1) | if write { 0 } else { 1 };
     line.tag.store(tag, MemOrder::Relaxed);
     line.paddr.store(out ^ addr, MemOrder::Relaxed);
-    if write { icache_invalidate(out as usize, out as usize + 1); }
+    if write {
+        icache_invalidate(out as usize, out as usize + 1);
+    }
     Ok(out)
 }
 
@@ -545,7 +558,7 @@ impl ICache {
         unsafe {
             std::slice::from_raw_parts_mut(
                 (self.heap_offset + self.heap_start) as *mut u8,
-                HEAP_SIZE - self.heap_offset
+                HEAP_SIZE - self.heap_offset,
             )
         }
     }
@@ -625,7 +638,9 @@ pub fn icache_reset() {
 /// Broadcast sfence
 fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
     for i in 0..crate::core_count() {
-        if mask & (1 << i) == 0 { continue }
+        if mask & (1 << i) == 0 {
+            continue;
+        }
         let ctx = crate::shared_context(i);
 
         ctx.clear_local_cache();
@@ -639,9 +654,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             ctx.timecmp = arg0;
             ctx.shared.deassert(32);
             let shared_ctx = unsafe { &*(&ctx.shared as *const SharedContext) };
-            crate::event_loop().queue_time(arg0, Box::new(move || {
-                shared_ctx.alert()
-            }));
+            crate::event_loop().queue_time(arg0, Box::new(move || shared_ctx.alert()));
             0
         }
         1 => {
@@ -654,9 +667,12 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             0
         }
         4 => {
-            let mask: u64 = crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize);
+            let mask: u64 =
+                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize);
             for i in 0..crate::core_count() {
-                if mask & (1 << i) == 0 { continue }
+                if mask & (1 << i) == 0 {
+                    continue;
+                }
                 crate::shared_context(i).assert(2);
             }
             0
@@ -668,7 +684,9 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
                 crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize)
             };
             for i in 0..crate::core_count() {
-                if mask & (1 << i) == 0 { continue }
+                if mask & (1 << i) == 0 {
+                    continue;
+                }
                 crate::shared_context(i).clear_local_icache();
             }
             0
@@ -688,7 +706,11 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             } else {
                 crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize)
             };
-            global_sfence(mask, Some(arg3 as u16), if arg2 == 4096 { Some(arg1 >> 12) } else { None });
+            global_sfence(
+                mask,
+                Some(arg3 as u16),
+                if arg2 == 4096 { Some(arg1 >> 12) } else { None },
+            );
             0
         }
         8 => {
@@ -730,70 +752,92 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     macro_rules! read_reg {
         ($rs: expr) => {{
             let rs = $rs as usize;
-            if rs >= 32 { unsafe { std::hint::unreachable_unchecked() } }
+            if rs >= 32 {
+                unsafe { std::hint::unreachable_unchecked() }
+            }
             ctx.registers[rs]
-        }}
+        }};
     }
     macro_rules! read_32 {
         ($rs: expr) => {{
             let rs = $rs as usize;
-            if rs >= 32 { unsafe { std::hint::unreachable_unchecked() } }
+            if rs >= 32 {
+                unsafe { std::hint::unreachable_unchecked() }
+            }
             ctx.registers[rs] as u32
-        }}
+        }};
     }
     macro_rules! write_reg {
         ($rd: expr, $expression:expr) => {{
             let rd = $rd as usize;
             let value: u64 = $expression;
-            if rd >= 32 { unsafe { std::hint::unreachable_unchecked() } }
-            if rd != 0 { ctx.registers[rd] = value }
-        }}
+            if rd >= 32 {
+                unsafe { std::hint::unreachable_unchecked() }
+            }
+            if rd != 0 {
+                ctx.registers[rd] = value
+            }
+        }};
     }
     macro_rules! write_32 {
         ($rd: expr, $expression:expr) => {{
             let rd = $rd as usize;
             let value: u32 = $expression;
-            if rd >= 32 { unsafe { std::hint::unreachable_unchecked() } }
-            if rd != 0 { ctx.registers[rd] = value as i32 as u64 }
-        }}
+            if rd >= 32 {
+                unsafe { std::hint::unreachable_unchecked() }
+            }
+            if rd != 0 {
+                ctx.registers[rd] = value as i32 as u64
+            }
+        }};
     }
     macro_rules! read_fs {
         ($rs: expr) => {{
             let rs = $rs as usize;
-            if rs >= 32 { unsafe { std::hint::unreachable_unchecked() } }
+            if rs >= 32 {
+                unsafe { std::hint::unreachable_unchecked() }
+            }
             F32::new(ctx.fp_registers[rs] as u32)
-        }}
+        }};
     }
     macro_rules! read_fd {
         ($rs: expr) => {{
             let rs = $rs as usize;
-            if rs >= 32 { unsafe { std::hint::unreachable_unchecked() } }
+            if rs >= 32 {
+                unsafe { std::hint::unreachable_unchecked() }
+            }
             F64::new(ctx.fp_registers[rs])
-        }}
+        }};
     }
     macro_rules! write_fs {
         ($frd: expr, $expression:expr) => {{
             let frd = $frd as usize;
             let value: F32 = $expression;
-            if frd >= 32 { unsafe { std::hint::unreachable_unchecked() } }
+            if frd >= 32 {
+                unsafe { std::hint::unreachable_unchecked() }
+            }
             ctx.fp_registers[frd] = value.0 as u64 | 0xffffffff00000000
-        }}
+        }};
     }
     macro_rules! write_fd {
         ($frd: expr, $expression:expr) => {{
             let frd = $frd as usize;
             let value: F64 = $expression;
-            if frd >= 32 { unsafe { std::hint::unreachable_unchecked() } }
+            if frd >= 32 {
+                unsafe { std::hint::unreachable_unchecked() }
+            }
             ctx.fp_registers[frd] = value.0
-        }}
+        }};
     }
     macro_rules! set_rm {
         ($rm: expr) => {{
             ctx.test_and_set_fs()?;
             let rm = if $rm == 0b111 { ctx.frm } else { $rm as u32 };
-            if rm >= 5 { trap!(2, 0) };
+            if rm >= 5 {
+                trap!(2, 0)
+            };
             ctx.shared.rm.store(rm, MemOrder::Relaxed);
-        }}
+        }};
     }
     macro_rules! clear_flags {
         () => {};
@@ -805,8 +849,8 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         ($cause: expr, $tval: expr) => {{
             ctx.scause = $cause;
             ctx.stval = $tval;
-            return Err(())
-        }}
+            return Err(());
+        }};
     }
 
     match *op {
@@ -1717,7 +1761,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
             Ok(v) => v,
             Err(bits) => {
                 compiler.end_cross(bits);
-                break
+                break;
             }
         };
         if crate::get_flags().disassemble {
@@ -1726,17 +1770,19 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
         phys_pc_end += if c { 2 } else { 4 };
 
         // We must not emit code for protected ops
-        if (prv as u8) < op.min_prv_level() { op = Op::Illegal }
+        if (prv as u8) < op.min_prv_level() {
+            op = Op::Illegal
+        }
 
         // The way we generate code is a bit slow for branches. The mini-optimisation here
         // captures conditional execution patterns.
         match op {
-            Op::Beq { imm: 6, .. } |
-            Op::Bne { imm: 6, .. } |
-            Op::Blt { imm: 6, .. } |
-            Op::Bge { imm: 6, .. } |
-            Op::Bltu { imm: 6, .. } |
-            Op::Bgeu { imm: 6, .. } => {
+            Op::Beq { imm: 6, .. }
+            | Op::Bne { imm: 6, .. }
+            | Op::Blt { imm: 6, .. }
+            | Op::Bge { imm: 6, .. }
+            | Op::Bltu { imm: 6, .. }
+            | Op::Bgeu { imm: 6, .. } => {
                 if let Ok((next_op, true, bits)) = read_insn(phys_pc_end as usize) {
                     // Currently we require the conditional executed instruction to not change
                     // control flow.
@@ -1747,17 +1793,17 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
                     compiler.compile_cond_op(&op, c, &next_op, true);
                     if phys_pc_end & 4095 == 0 {
                         compiler.end();
-                        break
+                        break;
                     }
                     continue;
                 }
             }
-            Op::Beq { imm: 8, .. } |
-            Op::Bne { imm: 8, .. } |
-            Op::Blt { imm: 8, .. } |
-            Op::Bge { imm: 8, .. } |
-            Op::Bltu { imm: 8, .. } |
-            Op::Bgeu { imm: 8, .. } => {
+            Op::Beq { imm: 8, .. }
+            | Op::Bne { imm: 8, .. }
+            | Op::Blt { imm: 8, .. }
+            | Op::Bge { imm: 8, .. }
+            | Op::Bltu { imm: 8, .. }
+            | Op::Bgeu { imm: 8, .. } => {
                 if let Ok((next_op, false, bits)) = read_insn(phys_pc_end as usize) {
                     // Currently we require the conditional executed instruction to not change
                     // control flow.
@@ -1768,7 +1814,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
                     compiler.compile_cond_op(&op, c, &next_op, false);
                     if phys_pc_end & 4095 == 0 {
                         compiler.end();
-                        break
+                        break;
                     }
                     continue;
                 }
@@ -1777,21 +1823,21 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
         }
 
         match op {
-            Op::Beq { .. } |
-            Op::Bne { .. } |
-            Op::Blt { .. } |
-            Op::Bge { .. } |
-            Op::Bltu { .. } |
-            Op::Bgeu { .. } => {
+            Op::Beq { .. }
+            | Op::Bne { .. }
+            | Op::Blt { .. }
+            | Op::Bge { .. }
+            | Op::Bltu { .. }
+            | Op::Bgeu { .. } => {
                 compiler.compile_op(&op, c, bits);
                 compiler.end();
-                break
+                break;
             }
             op => {
                 compiler.compile_op(&op, c, bits);
                 if op.can_change_control_flow() {
                     compiler.end_unreachable();
-                    break
+                    break;
                 }
             }
         }
@@ -1799,7 +1845,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
         // Need to stop when crossing page boundary
         if phys_pc_end & 4095 == 0 {
             compiler.end();
-            break
+            break;
         }
     }
 
@@ -1840,7 +1886,7 @@ extern "C" fn find_block(ctx: &mut Context) -> (usize, usize) {
             if prot.insert(phys_pc >> 12) {
                 trace!(target: "CodeProt", "protecting {:x} to {:x}", phys_pc &! 4095, (phys_pc &! 4095) + 4096);
                 for i in 0..crate::core_count() {
-                    crate::shared_context(i).protect_code(phys_pc &! 4095);
+                    crate::shared_context(i).protect_code(phys_pc & !4095);
                 }
             }
             std::mem::drop(prot);
@@ -1856,7 +1902,7 @@ pub fn check_interrupt(ctx: &mut Context) -> Result<(), ()> {
     let alarm = ctx.shared.alarm.swap(0, MemOrder::Acquire);
 
     if alarm & 2 != 0 {
-        return Err(())
+        return Err(());
     }
 
     {
@@ -1873,7 +1919,9 @@ pub fn check_interrupt(ctx: &mut Context) -> Result<(), ()> {
     // Find out which interrupts can be taken
     let interrupt_mask = ctx.interrupt_pending();
     // No interrupt pending
-    if interrupt_mask == 0 { return Ok(()) }
+    if interrupt_mask == 0 {
+        return Ok(());
+    }
     // Find the highest priority interrupt
     let pending = 63 - interrupt_mask.leading_zeros() as u64;
     // Interrupts have the highest bit set
@@ -1892,8 +1940,10 @@ pub fn trap(ctx: &mut Context) {
         for i in (2..32).step_by(2) {
             eprintln!(
                 "{:-3} = {:16x}  {:-3} = {:16x}",
-                riscv::register_name(i as u8), ctx.registers[i],
-                riscv::register_name(i as u8), ctx.registers[i + 1]
+                riscv::register_name(i as u8),
+                ctx.registers[i],
+                riscv::register_name(i as u8),
+                ctx.registers[i + 1]
             );
         }
         std::process::exit(1);
@@ -1905,7 +1955,7 @@ pub fn trap(ctx: &mut Context) {
     if ctx.prv != 0 {
         ctx.sstatus |= 0x100;
     } else {
-        ctx.sstatus &=! 0x100;
+        ctx.sstatus &= !0x100;
         // Switch from U-mode to S-mode, clear local cache
         ctx.shared.clear_local_cache();
         ctx.shared.clear_local_icache();
@@ -1914,7 +1964,7 @@ pub fn trap(ctx: &mut Context) {
     if (ctx.sstatus & 0x2) != 0 {
         ctx.sstatus |= 0x20;
     } else {
-        ctx.sstatus &=! 0x20;
+        ctx.sstatus &= !0x20;
     }
     // Clear SIE
     ctx.sstatus &= !0x2;

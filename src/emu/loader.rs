@@ -1,16 +1,16 @@
-use std::path::Path;
-use std::fs::File;
-use std::os::unix::io::{IntoRawFd, AsRawFd, FromRawFd};
-use std::ffi::CStr;
-use rand::RngCore;
 use super::abi;
 use super::interp::Context;
+use rand::RngCore;
+use std::ffi::CStr;
+use std::fs::File;
+use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
+use std::path::Path;
 
-const PF_R    : u32 = 0x4;
-const PF_W    : u32 = 0x2;
-const PF_X    : u32 = 0x1;
-const ET_EXEC : libc::Elf64_Half = 2;
-const ET_DYN  : libc::Elf64_Half = 3;
+const PF_R: u32 = 0x4;
+const PF_W: u32 = 0x2;
+const PF_X: u32 = 0x1;
+const ET_EXEC: libc::Elf64_Half = 2;
+const ET_DYN: libc::Elf64_Half = 3;
 const EM_RISCV: libc::Elf64_Half = 243;
 
 #[repr(C)]
@@ -38,7 +38,9 @@ impl<'a> Iterator for PhdrIter<'a> {
         if self.i == self.ehdr.e_phnum as usize {
             None
         } else {
-            let ptr = self.ehdr as *const _ as usize + self.ehdr.e_phoff as usize + self.ehdr.e_phentsize as usize * self.i;
+            let ptr = self.ehdr as *const _ as usize
+                + self.ehdr.e_phoff as usize
+                + self.ehdr.e_phentsize as usize * self.i;
             self.i += 1;
             Some(unsafe { &*(ptr as *const libc::Elf64_Phdr) })
         }
@@ -63,15 +65,20 @@ impl Loader {
         // Get the size of the file.
         let file_size = file.metadata()?.len();
         // Map the file to memory.
-        let memory = unsafe { libc::mmap(std::ptr::null_mut(), file_size as usize, libc::PROT_READ, libc::MAP_PRIVATE, file.as_raw_fd(), 0) };
+        let memory = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                file_size as usize,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE,
+                file.as_raw_fd(),
+                0,
+            )
+        };
         if memory == libc::MAP_FAILED {
-            return Err(std::io::Error::last_os_error())
+            return Err(std::io::Error::last_os_error());
         }
-        Ok(Loader {
-            fd: file.into_raw_fd(),
-            file_size,
-            memory
-        })
+        Ok(Loader { fd: file.into_raw_fd(), file_size, memory })
     }
 
     pub fn is_elf(&self) -> bool {
@@ -79,7 +86,7 @@ impl Loader {
 
         // Check the ELF magic numbers
         if &header.e_ident[0..4] != "\x7FELF".as_bytes() {
-            return false
+            return false;
         }
 
         true
@@ -111,10 +118,20 @@ impl Loader {
         let header = unsafe { &*(self.memory as *const libc::Elf64_Ehdr) };
 
         for i in 0..(header.e_phnum as usize) {
-            let h = unsafe { &*((self.memory as usize + header.e_phoff as usize + header.e_phentsize as usize * i) as *const libc::Elf64_Phdr) };
+            let h = unsafe {
+                &*((self.memory as usize
+                    + header.e_phoff as usize
+                    + header.e_phentsize as usize * i)
+                    as *const libc::Elf64_Phdr)
+            };
 
             if h.p_type == libc::PT_INTERP {
-                let content = unsafe {std::slice::from_raw_parts((self.memory as usize + h.p_offset as usize) as *const u8, h.p_filesz as usize)};
+                let content = unsafe {
+                    std::slice::from_raw_parts(
+                        (self.memory as usize + h.p_offset as usize) as *const u8,
+                        h.p_filesz as usize,
+                    )
+                };
                 return Some(CStr::from_bytes_with_nul(content).unwrap().to_str().unwrap());
             }
         }
@@ -134,15 +151,18 @@ impl Loader {
             }
         }
 
-        loaddr &=! 4095;
-        hiaddr = (hiaddr + 4095) &! 4095;
+        loaddr &= !4095;
+        hiaddr = (hiaddr + 4095) & !4095;
 
         // For dynamic binaries, we need to allocate a location for it.
         let bias = if ehdr.e_type == ET_DYN {
             let map = libc::mmap(
                 std::ptr::null_mut(),
                 (hiaddr - loaddr) as _,
-                libc::PROT_NONE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
             );
             if map == libc::MAP_FAILED {
                 panic!("mmap failed while loading");
@@ -152,7 +172,10 @@ impl Loader {
             let map = libc::mmap(
                 loaddr as usize as _,
                 (hiaddr - loaddr) as _,
-                libc::PROT_NONE, libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED, -1 ,0
+                libc::PROT_NONE,
+                libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED,
+                -1,
+                0,
             );
             if map == libc::MAP_FAILED {
                 panic!("mmap failed while loading");
@@ -170,14 +193,20 @@ impl Loader {
                 let vaddr_map_end = h.p_vaddr + h.p_filesz;
                 let vaddr_end = h.p_vaddr + h.p_memsz;
                 let mut file_offset = h.p_offset;
-                let page_start = h.p_vaddr &! 4095;
-                let map_end = vaddr_map_end &! 4095;
-                let page_end = (vaddr_end + 4095) &! 4095;
+                let page_start = h.p_vaddr & !4095;
+                let map_end = vaddr_map_end & !4095;
+                let page_end = (vaddr_end + 4095) & !4095;
 
                 let mut prot = 0;
-                if (h.p_flags & PF_R) != 0 { prot |= libc::PROT_READ };
-                if (h.p_flags & PF_W) != 0 { prot |= libc::PROT_WRITE };
-                if (h.p_flags & PF_X) != 0 { prot |= libc::PROT_READ };
+                if (h.p_flags & PF_R) != 0 {
+                    prot |= libc::PROT_READ
+                };
+                if (h.p_flags & PF_W) != 0 {
+                    prot |= libc::PROT_WRITE
+                };
+                if (h.p_flags & PF_X) != 0 {
+                    prot |= libc::PROT_READ
+                };
 
                 // First page is not aligned, we need t adjust it so that it is aligned.
                 if h.p_vaddr != page_start {
@@ -189,7 +218,10 @@ impl Loader {
                     let map = libc::mmap(
                         (bias + page_start) as usize as _,
                         (map_end - page_start) as _,
-                        prot, libc::MAP_PRIVATE | libc::MAP_FIXED, self.fd, file_offset as _
+                        prot,
+                        libc::MAP_PRIVATE | libc::MAP_FIXED,
+                        self.fd,
+                        file_offset as _,
                     );
                     if map == libc::MAP_FAILED {
                         panic!("mmap failed while loading");
@@ -202,13 +234,19 @@ impl Loader {
                     let rem_ptr = (bias + map_end) as usize as _;
 
                     // Make it writable.
-                    libc::mprotect(rem_ptr, (page_end - map_end) as usize, libc::PROT_READ | libc::PROT_WRITE);
+                    libc::mprotect(
+                        rem_ptr,
+                        (page_end - map_end) as usize,
+                        libc::PROT_READ | libc::PROT_WRITE,
+                    );
 
                     // Copy across.
                     libc::memcpy(
                         rem_ptr,
-                        (self.memory as usize + file_offset as usize + (map_end - page_start) as usize) as _,
-                        (vaddr_map_end - map_end) as usize
+                        (self.memory as usize
+                            + file_offset as usize
+                            + (map_end - page_start) as usize) as _,
+                        (vaddr_map_end - map_end) as usize,
                     );
 
                     // Change protection if it shouldn't be writable.
@@ -226,7 +264,7 @@ impl Loader {
 
         // Return information needed by the caller.
         *load_addr = bias + loaddr;
-        *brk = bias + ((*brk + 4095) &! 4095);
+        *brk = bias + ((*brk + 4095) & !4095);
         bias + ehdr.e_entry
     }
 
@@ -241,8 +279,8 @@ impl Loader {
             }
         }
 
-        loaddr &=! 4095;
-        hiaddr = (hiaddr + 4095) &! 4095;
+        loaddr &= !4095;
+        hiaddr = (hiaddr + 4095) & !4095;
 
         for h in self.phdr() {
             if h.p_type == libc::PT_LOAD {
@@ -255,14 +293,14 @@ impl Loader {
                 libc::memcpy(
                     (h.p_vaddr - loaddr + load_addr) as usize as _,
                     (self.memory as usize + h.p_offset as usize) as _,
-                    h.p_filesz as usize
+                    h.p_filesz as usize,
                 );
 
                 // Zero-out the rest
                 libc::memset(
                     (h.p_vaddr + h.p_filesz - loaddr + load_addr) as usize as _,
                     0,
-                    (h.p_memsz - h.p_filesz) as usize
+                    (h.p_memsz - h.p_filesz) as usize,
                 );
             }
         }
@@ -291,7 +329,7 @@ impl Loader {
         }
 
         // Setup brk.
-        brk = (brk + 4095) &! 4095;
+        brk = (brk + 4095) & !4095;
         super::syscall::init_brk(brk);
 
         let mut push = |value: u64| {
@@ -324,14 +362,21 @@ impl Loader {
     }
 }
 
-pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>, ctxs: &mut [&mut Context]) {
+pub unsafe fn load(
+    file: &Loader,
+    args: &mut dyn Iterator<Item = String>,
+    ctxs: &mut [&mut Context],
+) {
     if crate::get_flags().user_only {
         // Set sp to be the highest possible address.
         let mut sp: u64 = 0x7fff0000;
         let map = libc::mmap(
             (sp - 0x800000) as usize as _,
             0x800000,
-            libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED, -1, 0
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED,
+            -1,
+            0,
         );
         if map == libc::MAP_FAILED {
             panic!("mmap failed while loading");
@@ -402,11 +447,15 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>, ctxs: &m
 
         // fill in environ, last is nullptr
         push(&mut sp, 0);
-        for v in env_pointers.into_iter().rev() { push(&mut sp, v) };
+        for v in env_pointers.into_iter().rev() {
+            push(&mut sp, v)
+        }
 
         // fill in argv, last is nullptr
         push(&mut sp, 0);
-        for &v in arg_pointers.iter().rev() { push(&mut sp, v) };
+        for &v in arg_pointers.iter().rev() {
+            push(&mut sp, v)
+        }
 
         // set argc
         push(&mut sp, arg_pointers.len() as _);
@@ -427,7 +476,8 @@ pub unsafe fn load(file: &Loader, args: &mut dyn Iterator<Item=String>, ctxs: &m
         };
 
         let device_tree = fdt::encode(&crate::emu::device_tree());
-        let target = std::slice::from_raw_parts_mut((0x40000000 + size) as *mut u8, device_tree.len());
+        let target =
+            std::slice::from_raw_parts_mut((0x40000000 + size) as *mut u8, device_tree.len());
         target.copy_from_slice(&device_tree[..]);
 
         for ctx in ctxs {

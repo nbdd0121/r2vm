@@ -1,4 +1,4 @@
-use x86::{Register, Operand, Memory, Op, Location, Size};
+use x86::{Location, Memory, Op, Operand, Register, Size};
 
 const REG_RAX: usize = libc::REG_RAX as usize;
 const REG_RDX: usize = libc::REG_RDX as usize;
@@ -6,16 +6,28 @@ const REG_RSP: usize = libc::REG_RSP as usize;
 const REG_RIP: usize = libc::REG_RIP as usize;
 
 const REG_LIST: [usize; 16] = [
-    REG_RAX, libc::REG_RCX as usize, REG_RDX, libc::REG_RBX as usize,
-    REG_RSP, libc::REG_RBP as usize, libc::REG_RSI as usize, libc::REG_RDI as usize,
-    libc::REG_R8  as usize, libc::REG_R9  as usize, libc::REG_R10 as usize, libc::REG_R11 as usize,
-    libc::REG_R12 as usize, libc::REG_R13 as usize, libc::REG_R14 as usize, libc::REG_R15 as usize,
+    REG_RAX,
+    libc::REG_RCX as usize,
+    REG_RDX,
+    libc::REG_RBX as usize,
+    REG_RSP,
+    libc::REG_RBP as usize,
+    libc::REG_RSI as usize,
+    libc::REG_RDI as usize,
+    libc::REG_R8 as usize,
+    libc::REG_R9 as usize,
+    libc::REG_R10 as usize,
+    libc::REG_R11 as usize,
+    libc::REG_R12 as usize,
+    libc::REG_R13 as usize,
+    libc::REG_R14 as usize,
+    libc::REG_R15 as usize,
 ];
 
 struct MemReader(usize);
 
 impl MemReader {
-    fn iter_func<'a>(&'a mut self) -> impl FnMut()->u8 + 'a {
+    fn iter_func<'a>(&'a mut self) -> impl FnMut() -> u8 + 'a {
         move || {
             let ptr = self.0;
             self.0 += 1;
@@ -29,10 +41,13 @@ fn eval_memory_location(ctx: &libc::ucontext_t, mem: &Memory) -> usize {
     // Sign-extend displacement to 64-bit.
     let mut address = mem.displacement as u64;
     if let Some(base) = mem.base {
-        address = address.wrapping_add(ctx.uc_mcontext.gregs[REG_LIST[(base as u8 & 15) as usize]] as u64);
+        address = address
+            .wrapping_add(ctx.uc_mcontext.gregs[REG_LIST[(base as u8 & 15) as usize]] as u64);
     }
     if let Some((index, scale)) = mem.index {
-        address = address.wrapping_add(ctx.uc_mcontext.gregs[REG_LIST[(index as u8 & 15) as usize]] as u64) * scale as u64;
+        address = address
+            .wrapping_add(ctx.uc_mcontext.gregs[REG_LIST[(index as u8 & 15) as usize]] as u64)
+            * scale as u64;
     }
     address as usize
 }
@@ -46,11 +61,13 @@ unsafe fn read_location(ctx: &libc::ucontext_t, loc: &Location) -> u64 {
                 Size::Qword => value,
                 Size::Dword => value as u32 as u64,
                 Size::Word => value as u16 as u64,
-                Size::Byte => (if (reg as u8) >= Register::AH as u8 && (reg as u8) <= Register::BH as u8 {
-                    (ctx.uc_mcontext.gregs[REG_LIST[(reg as u8 & 7) as usize]] >> 8) as u8
-                } else {
-                    value as u8
-                }) as u64,
+                Size::Byte => {
+                    (if (reg as u8) >= Register::AH as u8 && (reg as u8) <= Register::BH as u8 {
+                        (ctx.uc_mcontext.gregs[REG_LIST[(reg as u8 & 7) as usize]] >> 8) as u8
+                    } else {
+                        value as u8
+                    }) as u64
+                }
             }
         }
         Location::Mem(mem) => {
@@ -75,13 +92,15 @@ unsafe fn write_location(ctx: &mut libc::ucontext_t, loc: &Location, value: u64)
                 // zero-extend when writing dword
                 Size::Dword => *slot = value as u32 as i64,
                 // do not alter higher values when writing word/byte
-                Size::Word => *slot = (*slot &! 0xFFFF) | (value as i64 & 0xFFFF),
-                Size::Byte => if (reg as u8) >= Register::AH as u8 && (reg as u8) <= Register::BH as u8 {
-                    let slot = &mut ctx.uc_mcontext.gregs[REG_LIST[(reg as u8 & 7) as usize]];
-                    *slot = (*slot &! 0xFF00) | (value as i64 & 0xFF) << 8
-                } else {
-                    *slot = (*slot &! 0xFF) | (value as i64 & 0xFF)
-                },
+                Size::Word => *slot = (*slot & !0xFFFF) | (value as i64 & 0xFFFF),
+                Size::Byte => {
+                    if (reg as u8) >= Register::AH as u8 && (reg as u8) <= Register::BH as u8 {
+                        let slot = &mut ctx.uc_mcontext.gregs[REG_LIST[(reg as u8 & 7) as usize]];
+                        *slot = (*slot & !0xFF00) | (value as i64 & 0xFF) << 8
+                    } else {
+                        *slot = (*slot & !0xFF) | (value as i64 & 0xFF)
+                    }
+                }
             }
         }
         Location::Mem(mem) => {
@@ -96,7 +115,11 @@ unsafe fn write_location(ctx: &mut libc::ucontext_t, loc: &Location, value: u64)
     }
 }
 
-unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &mut libc::ucontext_t) {
+unsafe extern "C" fn handle_fpe(
+    _: libc::c_int,
+    _: &mut libc::siginfo_t,
+    ctx: &mut libc::ucontext_t,
+) {
     let current_ip = ctx.uc_mcontext.gregs[REG_RIP];
 
     // Decode the faulting instruction
@@ -104,8 +127,7 @@ unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &m
     let op = x86::decode(&mut reader.iter_func());
 
     let opr = match op {
-        Op::Div(opr) |
-        Op::Idiv(opr) => opr,
+        Op::Div(opr) | Op::Idiv(opr) => opr,
         _ => unimplemented!(),
     };
 
@@ -115,11 +137,14 @@ unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &m
 
     // Retrive dividend. Note that technically RDX is also dividend, but we assume it is always sign/zero-extended.
     let mut dividend = ctx.uc_mcontext.gregs[REG_RAX] as u64;
-    if opsize == Size::Dword { dividend = dividend as u32 as u64 }
+    if opsize == Size::Dword {
+        dividend = dividend as u32 as u64
+    }
 
     if divisor == 0 {
         // For divide by zero, per RISC-V we set quotient to -1 and remainder to dividend.
-        ctx.uc_mcontext.gregs[REG_RAX] = if opsize == Size::Qword { -1 } else { -1i32 as u32 as i64 };
+        ctx.uc_mcontext.gregs[REG_RAX] =
+            if opsize == Size::Qword { -1 } else { -1i32 as u32 as i64 };
         ctx.uc_mcontext.gregs[REG_RDX] = dividend as i64;
     } else {
         // Integer division overflow. Per RISC-V we set quotient to dividend and remainder to 0.
@@ -131,7 +156,11 @@ unsafe extern "C" fn handle_fpe(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &m
     ctx.uc_mcontext.gregs[REG_RIP] = reader.0 as i64;
 }
 
-unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &mut libc::ucontext_t) {
+unsafe extern "C" fn handle_segv(
+    _: libc::c_int,
+    _: &mut libc::siginfo_t,
+    ctx: &mut libc::ucontext_t,
+) {
     let current_ip = ctx.uc_mcontext.gregs[REG_RIP];
 
     // Decode the faulting instruction
@@ -140,8 +169,7 @@ unsafe extern "C" fn handle_segv(_: libc::c_int, _: &mut libc::siginfo_t, ctx: &
 
     // Replay the read/write, as if they are accessing directly to guest physical memory
     match op {
-        Op::Mov(Location::Reg(reg), Operand::Mem(mem)) |
-        Op::Movzx(reg, Location::Mem(mem)) => {
+        Op::Mov(Location::Reg(reg), Operand::Mem(mem)) | Op::Movzx(reg, Location::Mem(mem)) => {
             let address = eval_memory_location(ctx, &mem);
             let data = crate::emu::io_read(address, mem.size.bytes() as u32);
             write_location(ctx, &Location::Reg(reg), data);

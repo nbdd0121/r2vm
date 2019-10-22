@@ -1,9 +1,9 @@
 //! This module handles event-driven simulation
 
+use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::collections::BinaryHeap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use parking_lot::{Mutex, MutexGuard, Condvar};
 
 struct Entry {
     time: u64,
@@ -50,7 +50,7 @@ pub struct EventLoop {
     shutdown: AtomicBool,
 }
 
-extern {
+extern "C" {
     // See also `event.s` for this function
     fn event_loop_wait();
 }
@@ -82,7 +82,12 @@ impl EventLoop {
             // Calculate number of micros since now. We can only round-up as cycle shouldn't go back.
             let micro = (self.cycle() + 99) / 100;
             // No need to worry about data race here due to mode difference.
-            unsafe { crate::util::RoCell::replace(&self.epoch, Instant::now() - Duration::from_micros(micro)) };
+            unsafe {
+                crate::util::RoCell::replace(
+                    &self.epoch,
+                    Instant::now() - Duration::from_micros(micro),
+                )
+            };
         }
         std::mem::drop(guard);
 
@@ -105,10 +110,7 @@ impl EventLoop {
     /// dequeued and triggered as soon as `cycle` increments for the next time.
     pub fn queue(&self, cycle: u64, handler: Box<dyn FnOnce() + Send>) {
         let mut guard = self.events.lock();
-        guard.push(Entry {
-            time: cycle,
-            handler,
-        });
+        guard.push(Entry { time: cycle, handler });
 
         if crate::threaded() {
             // If the event just queued is the next event, we need to wake the event loop up.
@@ -117,10 +119,13 @@ impl EventLoop {
             }
         } else {
             // It's okay to be relaxed because guard's release op will order it.
-            self.next_event.store(match guard.peek() {
-                Some(it) => it.time,
-                None => u64::max_value(),
-            }, Ordering::Relaxed);
+            self.next_event.store(
+                match guard.peek() {
+                    Some(it) => it.time,
+                    None => u64::max_value(),
+                },
+                Ordering::Relaxed,
+            );
         }
     }
 
@@ -141,7 +146,7 @@ impl EventLoop {
                 Some(v) => v.time,
             };
             if time > cycle {
-                return Some(time)
+                return Some(time);
             }
             let entry = guard.pop().unwrap();
             (entry.handler)();
@@ -168,9 +173,7 @@ impl EventLoop {
                 }
             } else {
                 self.next_event.store(result.unwrap_or(u64::max_value()), Ordering::Relaxed);
-                MutexGuard::unlocked(&mut guard, || {
-                    unsafe { event_loop_wait() }
-                });
+                MutexGuard::unlocked(&mut guard, || unsafe { event_loop_wait() });
             }
         }
     }

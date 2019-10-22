@@ -1,15 +1,15 @@
-use std::fmt::{self, Write};
-use std::ffi::{CStr, CString};
-use std::borrow::Cow;
-use std::path::{Path, PathBuf};
 use crate::util::RoCell;
+use std::borrow::Cow;
+use std::ffi::{CStr, CString};
+use std::fmt::{self, Write};
+use std::path::{Path, PathBuf};
 
 use super::abi;
 
 static mut ORIGINAL_BRK: u64 = 0;
-static mut BRK         : u64 = 0;
-static mut HEAP_START  : u64 = 0;
-static mut HEAP_END    : u64 = 0;
+static mut BRK: u64 = 0;
+static mut HEAP_START: u64 = 0;
+static mut HEAP_END: u64 = 0;
 
 /// A flag to determine whether to trace all system calls. If true then all guest system calls will be logged.
 pub static STRACE: RoCell<bool> = RoCell::new(false);
@@ -24,15 +24,14 @@ pub static SYSROOT: RoCell<PathBuf> = unsafe { RoCell::new_uninit() };
 /// Initialise brk when program is being loaded. Should not be called after execution has started.
 pub unsafe fn init_brk(brk: u64) {
     ORIGINAL_BRK = brk;
-    BRK          = brk;
-    HEAP_START   = brk;
-    HEAP_END     = brk;
+    BRK = brk;
+    HEAP_START = brk;
+    HEAP_END = brk;
 }
 
 struct Escape<'a>(&'a [u8]);
 
 impl<'a> fmt::Display for Escape<'a> {
-
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut start = 0;
         let end = std::cmp::min(self.0.len(), 64);
@@ -44,7 +43,9 @@ impl<'a> fmt::Display for Escape<'a> {
             let ch: char = code.into();
 
             // Skip printable ASCII characters.
-            if code <= 0x7F && (ch != '"' && ch != '\\' && !ch.is_ascii_control()) { continue }
+            if code <= 0x7F && (ch != '"' && ch != '\\' && !ch.is_ascii_control()) {
+                continue;
+            }
 
             // Print out all unprinted normal characters.
             if i != start {
@@ -68,7 +69,9 @@ impl<'a> fmt::Display for Escape<'a> {
         }
 
         f.write_char('"')?;
-        if self.0.len() > 64 { f.write_str("...")? }
+        if self.0.len() > 64 {
+            f.write_str("...")?
+        }
 
         Ok(())
     }
@@ -78,15 +81,12 @@ struct Pointer(u64);
 
 impl fmt::Display for Pointer {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.0 != 0 {
-            write!(f, "{:#x}", self.0)
-        } else {
-            f.write_str("NULL")
-        }
+        if self.0 != 0 { write!(f, "{:#x}", self.0) } else { f.write_str("NULL") }
     }
 }
 
 #[allow(unreachable_patterns)]
+#[rustfmt::skip]
 fn convert_errno_from_host(number: libc::c_int) -> abi::c_int {
     match number {
         libc::EPERM           => abi::EPERM          ,
@@ -230,6 +230,7 @@ fn convert_errno_from_host(number: libc::c_int) -> abi::c_int {
     }
 }
 
+#[rustfmt::skip]
 fn convert_open_flags_to_host(flags: abi::c_int) -> libc::c_int {
     let mut ret = 0;
     if flags & 0o1 != 0 { ret |= libc::O_WRONLY }
@@ -243,6 +244,7 @@ fn convert_open_flags_to_host(flags: abi::c_int) -> libc::c_int {
     ret
 }
 
+#[rustfmt::skip]
 fn convert_stat_from_host(guest_stat: &mut abi::stat, host_stat: &libc::stat) {
     guest_stat.st_dev        = host_stat.st_dev;
     guest_stat.st_ino        = host_stat.st_ino;
@@ -263,12 +265,10 @@ fn convert_stat_from_host(guest_stat: &mut abi::stat, host_stat: &libc::stat) {
 }
 
 fn convert_iovec_to_host(guest_iov: &abi::iovec) -> libc::iovec {
-    libc::iovec {
-        iov_base: guest_iov.iov_base as _,
-        iov_len : guest_iov.iov_len as _,
-    }
+    libc::iovec { iov_base: guest_iov.iov_base as _, iov_len: guest_iov.iov_len as _ }
 }
 
+#[rustfmt::skip]
 fn convert_mmap_prot_to_host(prot: abi::c_int) -> libc::c_int {
     let mut ret = 0;
     if (prot & abi::PROT_READ) != 0 { ret |= libc::PROT_READ }
@@ -278,6 +278,7 @@ fn convert_mmap_prot_to_host(prot: abi::c_int) -> libc::c_int {
     ret
 }
 
+#[rustfmt::skip]
 fn convert_mmap_flags_to_host(flags: abi::c_int) -> libc::c_int {
     let mut ret = 0;
     if (flags & abi::MAP_SHARED) != 0 { ret |= libc::MAP_SHARED }
@@ -292,7 +293,9 @@ fn convert_mmap_flags_to_host(flags: abi::c_int) -> libc::c_int {
 /// Helper for converting library functions which use state variable `errno` to carry error
 /// information to a linux syscall style which returns a negative value representing the errno.
 fn return_errno(val: i64) -> i64 {
-    if val != -1 { return val }
+    if val != -1 {
+        return val;
+    }
     -convert_errno_from_host(unsafe { *libc::__errno_location() }) as _
 }
 
@@ -308,7 +311,7 @@ fn is_proc_self(path: &CStr) -> Option<&Path> {
         Ok(v) => v,
     };
     if let Ok(v) = path.strip_prefix("self") {
-        return Some(v)
+        return Some(v);
     }
     // We still need to check /proc/pid
     let pid = format!("{}", std::process::id());
@@ -320,9 +323,13 @@ fn is_proc_self(path: &CStr) -> Option<&Path> {
 
 pub fn translate_path(path: &Path) -> Cow<Path> {
     // We assume relative paths cannot point to sysroot
-    if path.is_relative() { return Cow::Borrowed(path) }
+    if path.is_relative() {
+        return Cow::Borrowed(path);
+    }
     let newpath = SYSROOT.join(path.strip_prefix("/").unwrap());
-    if !newpath.exists() { return Cow::Borrowed(path) }
+    if !newpath.exists() {
+        return Cow::Borrowed(path);
+    }
     if *STRACE {
         eprintln!("Translate {} to {}", path.display(), newpath.display());
     }
@@ -339,11 +346,21 @@ fn translate_path_cstr(pathname: &CStr) -> Cow<CStr> {
     };
     match translate_path(path) {
         Cow::Borrowed(_) => Cow::Borrowed(pathname),
-        Cow::Owned(v) => Cow::Owned(CString::new(v.into_os_string().into_string().unwrap()).unwrap()),
+        Cow::Owned(v) => {
+            Cow::Owned(CString::new(v.into_os_string().into_string().unwrap()).unwrap())
+        }
     }
 }
 
-pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
+pub unsafe fn syscall(
+    nr: u64,
+    arg0: u64,
+    arg1: u64,
+    arg2: u64,
+    arg3: u64,
+    arg4: u64,
+    arg5: u64,
+) -> u64 {
     let ret: i64 = match nr as i64 {
         abi::SYS_getcwd => {
             let buffer = arg0 as *mut i8;
@@ -366,10 +383,18 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let arg0 = arg0 as abi::c_int;
             let dirfd: i32 = if arg0 == abi::AT_FDCWD { libc::AT_FDCWD } else { arg0 as _ };
             let pathname = CStr::from_ptr(arg1 as usize as _);
-            let ret = return_errno(libc::unlinkat(dirfd, translate_path_cstr(pathname).as_ptr(), arg2 as _) as _);
+            let ret = return_errno(libc::unlinkat(
+                dirfd,
+                translate_path_cstr(pathname).as_ptr(),
+                arg2 as _,
+            ) as _);
             if *STRACE {
                 eprintln!(
-                    "unlinkat({}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, ret
+                    "unlinkat({}, {}, {}) = {}",
+                    arg0,
+                    Escape(pathname.to_bytes()),
+                    arg2,
+                    ret
                 );
             }
             ret
@@ -382,11 +407,16 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 dirfd,
                 translate_path_cstr(pathname).as_ptr(),
                 arg2 as _,
-                arg3 as _
+                arg3 as _,
             ) as _);
             if *STRACE {
                 eprintln!(
-                    "faccessat({}, {}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret
+                    "faccessat({}, {}, {}, {}) = {}",
+                    arg0,
+                    Escape(pathname.to_bytes()),
+                    arg2,
+                    arg3,
+                    ret
                 );
             }
             ret
@@ -402,22 +432,28 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 Some(v) if v == std::ffi::OsStr::new("exe") => {
                     libc::openat(dirfd, EXEC_PATH.as_ptr(), flags, arg3) as _
                 }
-                _ => return_errno(libc::openat(dirfd, translate_path_cstr(pathname).as_ptr(), flags, arg3) as _),
+                _ => return_errno(libc::openat(
+                    dirfd,
+                    translate_path_cstr(pathname).as_ptr(),
+                    flags,
+                    arg3,
+                ) as _),
             };
             if *STRACE {
                 eprintln!(
-                    "openat({}, {}, {}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret
+                    "openat({}, {}, {}, {}) = {}",
+                    arg0,
+                    Escape(pathname.to_bytes()),
+                    arg2,
+                    arg3,
+                    ret
                 );
             }
             ret
         }
         abi::SYS_close => {
             // Handle standard IO specially, pretending close is sucessful.
-            let ret = if arg0 <= 2 {
-                0
-            } else {
-                return_errno(libc::close(arg0 as _) as _)
-            };
+            let ret = if arg0 <= 2 { 0 } else { return_errno(libc::close(arg0 as _) as _) };
             if *STRACE {
                 eprintln!("close({}) = {}", arg0, ret);
             }
@@ -434,9 +470,13 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let buffer = arg1 as usize as _;
             let ret = return_errno(libc::read(arg0 as _, buffer, arg2 as _) as _);
             if *STRACE {
-                eprintln!("read({}, {}, {}) = {}",
+                eprintln!(
+                    "read({}, {}, {}) = {}",
                     arg0,
-                    Escape(std::slice::from_raw_parts(buffer as _, if ret >= 0 { ret as usize } else { arg2 as usize })),
+                    Escape(std::slice::from_raw_parts(
+                        buffer as _,
+                        if ret >= 0 { ret as usize } else { arg2 as usize }
+                    )),
                     arg2,
                     ret
                 );
@@ -447,7 +487,8 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let buffer = arg1 as usize as _;
             let ret = return_errno(libc::write(arg0 as _, buffer, arg2 as _) as _);
             if *STRACE {
-                eprintln!("write({}, {}, {}) = {}",
+                eprintln!(
+                    "write({}, {}, {}) = {}",
                     arg0,
                     Escape(std::slice::from_raw_parts(buffer as _, arg2 as usize)),
                     arg2,
@@ -457,16 +498,12 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             ret
         }
         abi::SYS_writev => {
-            let guest_iov = std::slice::from_raw_parts(arg1 as usize as *const abi::iovec, arg2 as _);
+            let guest_iov =
+                std::slice::from_raw_parts(arg1 as usize as *const abi::iovec, arg2 as _);
             let host_iov: Vec<_> = guest_iov.iter().map(convert_iovec_to_host).collect();
             let ret = return_errno(libc::writev(arg0 as _, host_iov.as_ptr(), arg2 as _) as _);
             if *STRACE {
-                eprintln!("writev({}, {}, {}) = {}",
-                    arg0,
-                    arg1,
-                    arg2,
-                    ret
-                );
+                eprintln!("writev({}, {}, {}) = {}", arg0, arg1, arg2, ret);
             }
             ret
         }
@@ -488,7 +525,12 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                         ret as i64
                     }
                 }
-                _ => return_errno(libc::readlinkat(dirfd, translate_path_cstr(pathname).as_ptr(), buffer, arg3 as _) as _)
+                _ => return_errno(libc::readlinkat(
+                    dirfd,
+                    translate_path_cstr(pathname).as_ptr(),
+                    buffer,
+                    arg3 as _,
+                ) as _),
             };
             if *STRACE {
                 if ret > 0 {
@@ -496,10 +538,19 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                         "readlinkat({}, {}, {}, {}) = {}",
                         arg0,
                         Escape(pathname.to_bytes()),
-                        Escape(CStr::from_ptr(buffer).to_bytes()), arg3, ret
+                        Escape(CStr::from_ptr(buffer).to_bytes()),
+                        arg3,
+                        ret
                     );
                 } else {
-                    eprintln!("readlinkat({}, {}, {:#x}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret);
+                    eprintln!(
+                        "readlinkat({}, {}, {:#x}, {}) = {}",
+                        arg0,
+                        Escape(pathname.to_bytes()),
+                        arg2,
+                        arg3,
+                        ret
+                    );
                 }
             }
             ret
@@ -514,7 +565,7 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 dirfd,
                 translate_path_cstr(pathname).as_ptr(),
                 host_stat.as_mut_ptr(),
-                arg3 as _
+                arg3 as _,
             ) as _);
 
             // When success, convert stat format to guest format.
@@ -528,10 +579,21 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                     let host_stat = host_stat.assume_init();
                     eprintln!(
                         "fstatat({}, {}, {{st_mode={:#o}, st_size={}, ...}}, {}) = 0",
-                        arg0, Escape(pathname.to_bytes()), host_stat.st_mode, host_stat.st_size, arg3
+                        arg0,
+                        Escape(pathname.to_bytes()),
+                        host_stat.st_mode,
+                        host_stat.st_size,
+                        arg3
                     );
                 } else {
-                    eprintln!("fstatat({}, {}, {:#x}, {}) = {}", arg0, Escape(pathname.to_bytes()), arg2, arg3, ret);
+                    eprintln!(
+                        "fstatat({}, {}, {:#x}, {}) = {}",
+                        arg0,
+                        Escape(pathname.to_bytes()),
+                        arg2,
+                        arg3,
+                        ret
+                    );
                 }
             }
             ret
@@ -549,7 +611,10 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             if *STRACE {
                 if ret == 0 {
                     let host_stat = host_stat.assume_init();
-                    eprintln!("fstat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0", arg0, host_stat.st_mode, host_stat.st_size);
+                    eprintln!(
+                        "fstat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0",
+                        arg0, host_stat.st_mode, host_stat.st_size
+                    );
                 } else {
                     eprintln!("fstat({}, {:#x}) = {}", arg0, arg1, ret);
                 }
@@ -584,7 +649,11 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             guest_tv.tv_sec = time.as_secs() as _;
             guest_tv.tv_usec = time.subsec_micros() as _;
             if *STRACE {
-                eprintln!("gettimeofday({{{}, {}}}, NULL) = 0", time.as_secs(), time.subsec_micros());
+                eprintln!(
+                    "gettimeofday({{{}, {}}}, NULL) = 0",
+                    time.as_secs(),
+                    time.subsec_micros()
+                );
             }
             0
         }
@@ -639,14 +708,16 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                 }
                 BRK = arg0;
             } else {
-                let new_heap_end = std::cmp::max(HEAP_START, (arg0 + 4095) &! 4095);
+                let new_heap_end = std::cmp::max(HEAP_START, (arg0 + 4095) & !4095);
 
                 // The heap needs to be expanded
                 let addr = libc::mmap(
-                    HEAP_END as _, (new_heap_end - HEAP_END) as _,
+                    HEAP_END as _,
+                    (new_heap_end - HEAP_END) as _,
                     libc::PROT_READ | libc::PROT_WRITE,
                     libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED,
-                    -1, 0
+                    -1,
+                    0,
                 ) as isize as i64;
 
                 if addr == -1 {
@@ -681,9 +752,19 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
             let prot = convert_mmap_prot_to_host(arg2 as _);
             let flags = convert_mmap_flags_to_host(arg3 as _);
             let arg4 = arg4 as _;
-            let ret = return_errno(libc::mmap(arg0 as _, arg1 as _, prot, flags, arg4, arg5 as _) as _);
+            let ret =
+                return_errno(libc::mmap(arg0 as _, arg1 as _, prot, flags, arg4, arg5 as _) as _);
             if *STRACE {
-                eprintln!("mmap({}, {}, {}, {}, {}, {}) = {:#x}", Pointer(arg0), arg1, arg2, arg3, arg4, arg5, ret);
+                eprintln!(
+                    "mmap({}, {}, {}, {}, {}, {}) = {:#x}",
+                    Pointer(arg0),
+                    arg1,
+                    arg2,
+                    arg3,
+                    arg4,
+                    arg5,
+                    ret
+                );
             }
             ret
         }
@@ -698,7 +779,11 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         abi::SYS_open => {
             let pathname = CStr::from_ptr(arg0 as usize as _);
             let flags = convert_open_flags_to_host(arg1 as _);
-            let ret = return_errno(libc::open(translate_path_cstr(pathname).as_ptr(), flags, arg2 as libc::mode_t) as _);
+            let ret = return_errno(libc::open(
+                translate_path_cstr(pathname).as_ptr(),
+                flags,
+                arg2 as libc::mode_t,
+            ) as _);
             if *STRACE {
                 eprintln!("open({}, {}, {}) = {}", Escape(pathname.to_bytes()), arg1, arg2, ret);
             }
@@ -715,7 +800,10 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
         abi::SYS_stat => {
             let pathname = CStr::from_ptr(arg0 as usize as _);
             let mut host_stat = std::mem::MaybeUninit::uninit();
-            let ret = return_errno(libc::stat(translate_path_cstr(pathname).as_ptr(), host_stat.as_mut_ptr()) as _);
+            let ret = return_errno(libc::stat(
+                translate_path_cstr(pathname).as_ptr(),
+                host_stat.as_mut_ptr(),
+            ) as _);
 
             // When success, convert stat format to guest format.
             if ret == 0 {
@@ -728,7 +816,9 @@ pub unsafe fn syscall(nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64, arg4:
                     let host_stat = host_stat.assume_init();
                     eprintln!(
                         "stat({}, {{st_mode={:#o}, st_size={}, ...}}) = 0",
-                        Escape(pathname.to_bytes()), host_stat.st_mode, host_stat.st_size,
+                        Escape(pathname.to_bytes()),
+                        host_stat.st_mode,
+                        host_stat.st_size,
                     );
                 } else {
                     eprintln!("stat({}, {:#x}) = {}", Escape(pathname.to_bytes()), arg1, ret);

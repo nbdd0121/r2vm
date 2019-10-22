@@ -1,25 +1,26 @@
 use std::collections::BTreeMap;
 
-use crate::io::IoMemorySync;
 use crate::io::plic::Plic;
-use crate::io::virtio::{Mmio, Block, Rng, P9, Console};
 use crate::io::rtc::Rtc;
-use parking_lot::Mutex;
+use crate::io::virtio::{Block, Console, Mmio, Rng, P9};
+use crate::io::IoMemorySync;
 use lazy_static::lazy_static;
+use parking_lot::Mutex;
 use std::sync::Arc;
 
 #[cfg(feature = "slirp")]
-use crate::io::virtio::Network;
-#[cfg(feature = "slirp")]
 use crate::io::network::Slirp;
+#[cfg(feature = "slirp")]
+use crate::io::virtio::Network;
 
 pub mod interp;
+#[rustfmt::skip]
 mod abi;
-mod event;
-pub mod syscall;
 mod dbt;
-pub mod signal;
+mod event;
 pub mod loader;
+pub mod signal;
+pub mod syscall;
 pub use event::EventLoop;
 pub use syscall::syscall;
 
@@ -90,8 +91,9 @@ impl IoSystem {
 
     /// Add a virtio device
     pub fn add_virtio<T>(&mut self, f: impl FnOnce(u32) -> T)
-        where T: crate::io::virtio::Device + Send + 'static {
-
+    where
+        T: crate::io::virtio::Device + Send + 'static,
+    {
         let irq = self.next_irq;
         self.next_irq += 1;
 
@@ -112,11 +114,7 @@ impl IoSystem {
     pub fn find_io_mem<'a>(&'a self, ptr: usize) -> Option<(usize, &'a dyn IoMemorySync)> {
         if let Some((k, v)) = self.map.range(..=ptr).next_back() {
             let last_end = *k + v.0;
-            if ptr >= last_end {
-                None
-            } else {
-                Some((*k, &*v.1))
-            }
+            if ptr >= last_end { None } else { Some((*k, &*v.1)) }
         } else {
             None
         }
@@ -143,7 +141,9 @@ lazy_static! {
 fn init_network(sys: &mut IoSystem) {
     for config in crate::CONFIG.network.iter() {
         sys.add_virtio(|irq| {
-            let mac = eui48::MacAddress::parse_str(&config.mac).expect("unexpected mac address").to_array();
+            let mac = eui48::MacAddress::parse_str(&config.mac)
+                .expect("unexpected mac address")
+                .to_array();
             Network::new(irq, Slirp::new(), mac)
         });
     }
@@ -155,10 +155,10 @@ fn init_network(_sys: &mut IoSystem) {}
 fn init_virtio(sys: &mut IoSystem) {
     for config in crate::CONFIG.drive.iter() {
         let file = std::fs::OpenOptions::new()
-                                        .read(true)
-                                        .write(!config.shadow)
-                                        .open(&config.path)
-                                        .unwrap();
+            .read(true)
+            .write(!config.shadow)
+            .open(&config.path)
+            .unwrap();
         let file: Box<dyn crate::io::block::Block + Send> = if config.shadow {
             Box::new(crate::io::block::Shadow::new(file))
         } else {
@@ -168,11 +168,9 @@ fn init_virtio(sys: &mut IoSystem) {
     }
 
     for config in crate::CONFIG.random.iter() {
-        sys.add_virtio(|irq| {
-            match config.r#type {
-                crate::config::RandomType::Pseudo => Rng::new_seeded(irq, config.seed),
-                crate::config::RandomType::OS => Rng::new_os(irq),
-            }
+        sys.add_virtio(|irq| match config.r#type {
+            crate::config::RandomType::Pseudo => Rng::new_seeded(irq, config.seed),
+            crate::config::RandomType::OS => Rng::new_os(irq),
         });
     }
 
@@ -225,20 +223,20 @@ pub fn init() {
 
         // First allocate physical memory region, without making them accessible
         let result = libc::mmap(
-            0x200000 as _, (phys_limit - 0x200000) as _,
+            0x200000 as _,
+            (phys_limit - 0x200000) as _,
             libc::PROT_NONE,
             libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_FIXED,
-            -1, 0
+            -1,
+            0,
         );
         if result == libc::MAP_FAILED {
             panic!("mmap failed while initing");
         }
 
         // Allocate wanted memory
-        let result = libc::mprotect(
-            0x40000000 as _, phys_size as _,
-            libc::PROT_READ | libc::PROT_WRITE
-        );
+        let result =
+            libc::mprotect(0x40000000 as _, phys_size as _, libc::PROT_READ | libc::PROT_WRITE);
         if result != 0 {
             panic!("mmap failed while initing");
         }
