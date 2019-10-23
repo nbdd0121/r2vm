@@ -18,11 +18,11 @@ extern "C" {
     fn g_free(ptr: *mut std::ffi::c_void);
 }
 
-pub struct Network<C> {
-    context: Arc<Mutex<Inner<C>>>,
+pub struct Network {
+    context: Arc<Mutex<Inner>>,
 }
 
-impl<C> Drop for Network<C> {
+impl Drop for Network {
     fn drop(&mut self) {
         self.context.lock().stop = true;
     }
@@ -30,16 +30,16 @@ impl<C> Drop for Network<C> {
 
 /// The inner representation of the Network.
 /// This type must be pinned on heap because we cannot move SlirpCb.
-/// All operations on `Inner<C>` need a `&mut self`, which guarantees that only one single
+/// All operations on `Inner` need a `&mut self`, which guarantees that only one single
 /// thread can operate on slirp at a given time. Callbacks are allowed to retrieve `&mut self` from
 /// opaque pointers because they are called by slirp, and is known to be on the same thread.
-struct Inner<C> {
+struct Inner {
     callbacks: SlirpCb,
-    context: C,
+    context: Box<dyn Context + Send>,
     slirp: *mut Slirp,
-    /// A pointer to Mutex<Inner<C>> which allows reconstruction of `Arc<Mutex<Inner<C>>>`
-    /// by only having `&mut Inner<C>`.
-    weak: Weak<Mutex<Inner<C>>>,
+    /// A pointer to Mutex<Inner> which allows reconstruction of `Arc<Mutex<Inner>>`
+    /// by only having `&mut Inner`.
+    weak: Weak<Mutex<Inner>>,
     /// Packets yet to be received,
     packet: VecDeque<Vec<u8>>,
     /// Waker to call when a new packet arrives.
@@ -50,9 +50,9 @@ struct Inner<C> {
 }
 
 /// Inner can be Send between threads, but is not Sync.
-unsafe impl<C: Send> Send for Inner<C> {}
+unsafe impl Send for Inner {}
 
-impl<C> Drop for Inner<C> {
+impl Drop for Inner {
     fn drop(&mut self) {
         unsafe {
             slirp_cleanup(self.slirp);
@@ -61,24 +61,20 @@ impl<C> Drop for Inner<C> {
 }
 
 /// The timer instance to be used by slirp.
-struct Timer<C> {
-    inner: Weak<Mutex<Inner<C>>>,
+struct Timer {
+    inner: Weak<Mutex<Inner>>,
     cb: SlirpTimerCb,
     cb_opaque: *mut c_void,
     task: Mutex<crate::util::ReplaceableTask>,
 }
 
-unsafe impl<C: Send> Send for Timer<C> {}
-unsafe impl<C: Send> Sync for Timer<C> {}
+unsafe impl Send for Timer {}
+unsafe impl Sync for Timer {}
 
 pub trait Handler {}
 
-extern "C" fn send_packet<C: Context>(
-    buf: *const c_void,
-    len: usize,
-    opaque: *mut c_void,
-) -> isize {
-    let inner = unsafe { &mut *(opaque as *mut Inner<C>) };
+extern "C" fn send_packet(buf: *const c_void, len: usize, opaque: *mut c_void) -> isize {
+    let inner = unsafe { &mut *(opaque as *mut Inner) };
     let slice = unsafe { slice::from_raw_parts(buf as *const u8, len) };
     // Too many packets queued, discard
     if inner.packet.len() > 1024 {
@@ -90,22 +86,22 @@ extern "C" fn send_packet<C: Context>(
     len as isize
 }
 
-extern "C" fn guest_error<C: Context>(msg: *const c_char, _opaque: *mut c_void) {
+extern "C" fn guest_error(msg: *const c_char, _opaque: *mut c_void) {
     let msg = str::from_utf8(unsafe { CStr::from_ptr(msg) }.to_bytes()).unwrap_or("");
     error!(target: "slirp", "{}", msg);
 }
 
-extern "C" fn clock_get_ns<C: Context>(opaque: *mut c_void) -> i64 {
-    let inner = unsafe { &mut *(opaque as *mut Inner<C>) };
+extern "C" fn clock_get_ns(opaque: *mut c_void) -> i64 {
+    let inner = unsafe { &mut *(opaque as *mut Inner) };
     inner.context.now() as i64
 }
 
-extern "C" fn timer_new<C: Context>(
+extern "C" fn timer_new(
     cb: SlirpTimerCb,
     cb_opaque: *mut c_void,
     opaque: *mut c_void,
 ) -> *mut c_void {
-    let inner = unsafe { &mut *(opaque as *mut Inner<C>) };
+    let inner = unsafe { &mut *(opaque as *mut Inner) };
 
     let (task, to_spawn) = crate::util::ReplaceableTask::new();
     inner.context.spawn(Box::pin(to_spawn));
@@ -115,17 +111,13 @@ extern "C" fn timer_new<C: Context>(
     Arc::into_raw(timer) as *mut c_void
 }
 
-extern "C" fn timer_free<C: Context>(timer: *mut c_void, _opaque: *mut c_void) {
+extern "C" fn timer_free(timer: *mut c_void, _opaque: *mut c_void) {
     unsafe { Arc::from_raw(timer) };
 }
 
-extern "C" fn timer_mod<C: Context + Send + 'static>(
-    timer: *mut c_void,
-    expire_time: i64,
-    opaque: *mut c_void,
-) {
-    let inner = unsafe { &mut *(opaque as *mut Inner<C>) };
-    let timer = unsafe { Arc::from_raw(timer as *mut Timer<C>) };
+extern "C" fn timer_mod(timer: *mut c_void, expire_time: i64, opaque: *mut c_void) {
+    let inner = unsafe { &mut *(opaque as *mut Inner) };
+    let timer = unsafe { Arc::from_raw(timer as *mut Timer) };
 
     // Calculate the deadline for scheduling a timer.
     let time = inner.context.now() + expire_time as u64 * 1000000;
@@ -157,14 +149,18 @@ extern "C" fn timer_mod<C: Context + Send + 'static>(
     Arc::into_raw(timer);
 }
 
-extern "C" fn register_poll_fd<C: Context>(_fd: c_int, _opaque: *mut c_void) {}
+extern "C" fn register_poll_fd(_fd: c_int, _opaque: *mut c_void) {}
 
-extern "C" fn unregister_poll_fd<C: Context>(_fd: c_int, _opaque: *mut c_void) {}
+extern "C" fn unregister_poll_fd(_fd: c_int, _opaque: *mut c_void) {}
 
-extern "C" fn notify<C: Context>(_opaque: *mut c_void) {}
+extern "C" fn notify(_opaque: *mut c_void) {}
 
-impl<C: Context + Send + 'static> Network<C> {
-    pub fn new(config: &crate::Config, context: C) -> Self {
+impl Network {
+    pub fn new(config: &crate::Config, context: impl Context + Send + 'static) -> Self {
+        Self::new_internal(config, Box::new(context))
+    }
+
+    fn new_internal(config: &crate::Config, context: Box<dyn Context + Send>) -> Self {
         let (ipv4_enabled, vnetwork, vnetmask, vhost, vdhcp_start, vnameserver) = match config.ipv4
         {
             None => (
@@ -211,15 +207,15 @@ impl<C: Context + Send + 'static> Network<C> {
         // Create inner. `Arc<Mutex<Inner>>` is enough to pin Inner.
         let inner = Arc::new(Mutex::new(Inner {
             callbacks: SlirpCb {
-                send_packet: Some(send_packet::<C>),
-                guest_error: Some(guest_error::<C>),
-                clock_get_ns: Some(clock_get_ns::<C>),
-                timer_new: Some(timer_new::<C>),
-                timer_free: Some(timer_free::<C>),
-                timer_mod: Some(timer_mod::<C>),
-                register_poll_fd: Some(register_poll_fd::<C>),
-                unregister_poll_fd: Some(unregister_poll_fd::<C>),
-                notify: Some(notify::<C>),
+                send_packet: Some(send_packet),
+                guest_error: Some(guest_error),
+                clock_get_ns: Some(clock_get_ns),
+                timer_new: Some(timer_new),
+                timer_free: Some(timer_free),
+                timer_mod: Some(timer_mod),
+                register_poll_fd: Some(register_poll_fd),
+                unregister_poll_fd: Some(unregister_poll_fd),
+                notify: Some(notify),
             },
             context,
             slirp: std::ptr::null_mut(),
@@ -234,7 +230,7 @@ impl<C: Context + Send + 'static> Network<C> {
         // when initing.
         lock.weak = Arc::downgrade(&inner);
         let callback = &lock.callbacks as *const _;
-        let ptr = &*lock as *const Inner<C> as *mut c_void;
+        let ptr = &*lock as *const Inner as *mut c_void;
         drop(lock);
 
         let context = unsafe {
@@ -275,7 +271,7 @@ impl<C: Context + Send + 'static> Network<C> {
     }
 }
 
-impl<C> Inner<C> {
+impl Inner {
     fn pollfds_fill(&mut self, timeout: &mut u32, fds: &mut Vec<libc::pollfd>) {
         extern "C" fn callback(fd: c_int, events: c_int, opaque: *mut c_void) -> c_int {
             let fds = unsafe { &mut *(opaque as *mut Vec<libc::pollfd>) };
@@ -340,7 +336,7 @@ impl<C> Inner<C> {
     }
 }
 
-impl<C> Network<C> {
+impl Network {
     /// Send a packet.
     pub async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
         unsafe {
@@ -351,9 +347,9 @@ impl<C> Network<C> {
 
     /// Receive a packet
     pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-        struct RecvFuture<'a, C>(&'a Network<C>, &'a mut [u8]);
+        struct RecvFuture<'a>(&'a Network, &'a mut [u8]);
 
-        impl<'a, C> Future for RecvFuture<'a, C> {
+        impl<'a> Future for RecvFuture<'a> {
             type Output = std::io::Result<usize>;
 
             fn poll(
@@ -376,7 +372,7 @@ impl<C> Network<C> {
             }
         }
 
-        impl<'a, C> Drop for RecvFuture<'a, C> {
+        impl<'a> Drop for RecvFuture<'a> {
             fn drop(&mut self) {
                 self.0.context.lock().waker = None;
             }
@@ -461,7 +457,7 @@ impl<C> Network<C> {
 }
 
 /// The main poll loop for an Inner.
-fn poll_loop<C: Context>(inner: Arc<Mutex<Inner<C>>>) {
+fn poll_loop(inner: Arc<Mutex<Inner>>) {
     let mut inner = inner.lock();
     loop {
         let mut vec = Vec::new();
@@ -479,7 +475,7 @@ fn poll_loop<C: Context>(inner: Arc<Mutex<Inner<C>>>) {
     }
 }
 
-impl<C> fmt::Debug for Network<C> {
+impl fmt::Debug for Network {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let ptr = unsafe { slirp_connection_info(self.context.lock().slirp) };
         let ret = write!(fmt, "{}", unsafe { CStr::from_ptr(ptr) }.to_string_lossy());
