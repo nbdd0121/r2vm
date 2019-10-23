@@ -1,0 +1,489 @@
+use libslirp_sys::*;
+use std::io::{Read, Write};
+
+use crate::Context;
+use log::{error, warn};
+use parking_lot::Mutex;
+use std::collections::VecDeque;
+use std::ffi::{CStr, CString};
+use std::future::Future;
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::os::raw::{c_char, c_int, c_void};
+use std::pin::Pin;
+use std::sync::{Arc, Weak};
+use std::task::{Poll, Waker};
+use std::{fmt, slice, str};
+
+extern "C" {
+    fn g_free(ptr: *mut std::ffi::c_void);
+}
+
+pub struct Network<C> {
+    context: Arc<Mutex<Inner<C>>>,
+}
+
+impl<C> Drop for Network<C> {
+    fn drop(&mut self) {
+        self.context.lock().stop = true;
+    }
+}
+
+/// The inner representation of the Network.
+/// This type must be pinned on heap because we cannot move SlirpCb.
+/// All operations on `Inner<C>` need a `&mut self`, which guarantees that only one single
+/// thread can operate on slirp at a given time. Callbacks are allowed to retrieve `&mut self` from
+/// opaque pointers because they are called by slirp, and is known to be on the same thread.
+struct Inner<C> {
+    callbacks: SlirpCb,
+    context: C,
+    slirp: *mut Slirp,
+    /// A pointer to Mutex<Inner<C>> which allows reconstruction of `Arc<Mutex<Inner<C>>>`
+    /// by only having `&mut Inner<C>`.
+    weak: Weak<Mutex<Inner<C>>>,
+    /// Packets yet to be received,
+    packet: VecDeque<Vec<u8>>,
+    /// Waker to call when a new packet arrives.
+    waker: Option<Waker>,
+    /// Indicate that the `Network` for this slirp is dropped, but by doing so it only signals to
+    /// poll stop, and we perform cleanup only until all Arc references to Inner are dropped.
+    stop: bool,
+}
+
+/// Inner can be Send between threads, but is not Sync.
+unsafe impl<C: Send> Send for Inner<C> {}
+
+impl<C> Drop for Inner<C> {
+    fn drop(&mut self) {
+        unsafe {
+            slirp_cleanup(self.slirp);
+        }
+    }
+}
+
+/// The timer instance to be used by slirp.
+struct Timer<C> {
+    inner: Weak<Mutex<Inner<C>>>,
+    cb: SlirpTimerCb,
+    cb_opaque: *mut c_void,
+    task: Mutex<crate::util::ReplaceableTask>,
+}
+
+unsafe impl<C: Send> Send for Timer<C> {}
+unsafe impl<C: Send> Sync for Timer<C> {}
+
+pub trait Handler {}
+
+extern "C" fn send_packet<C: Context>(
+    buf: *const c_void,
+    len: usize,
+    opaque: *mut c_void,
+) -> isize {
+    let inner = unsafe { &mut *(opaque as *mut Inner<C>) };
+    let slice = unsafe { slice::from_raw_parts(buf as *const u8, len) };
+    // Too many packets queued, discard
+    if inner.packet.len() > 1024 {
+        warn!(target: "slirp", "recv queue full, discarding packets");
+        return -1;
+    }
+    inner.packet.push_back(slice.to_owned());
+    inner.waker.take().map(|x| x.wake());
+    len as isize
+}
+
+extern "C" fn guest_error<C: Context>(msg: *const c_char, _opaque: *mut c_void) {
+    let msg = str::from_utf8(unsafe { CStr::from_ptr(msg) }.to_bytes()).unwrap_or("");
+    error!(target: "slirp", "{}", msg);
+}
+
+extern "C" fn clock_get_ns<C: Context>(opaque: *mut c_void) -> i64 {
+    let inner = unsafe { &mut *(opaque as *mut Inner<C>) };
+    inner.context.now() as i64
+}
+
+extern "C" fn timer_new<C: Context>(
+    cb: SlirpTimerCb,
+    cb_opaque: *mut c_void,
+    opaque: *mut c_void,
+) -> *mut c_void {
+    let inner = unsafe { &mut *(opaque as *mut Inner<C>) };
+
+    let (task, to_spawn) = crate::util::ReplaceableTask::new();
+    inner.context.spawn(Box::pin(to_spawn));
+    let timer =
+        Arc::new(Timer { inner: inner.weak.clone(), cb, cb_opaque, task: Mutex::new(task) });
+
+    Arc::into_raw(timer) as *mut c_void
+}
+
+extern "C" fn timer_free<C: Context>(timer: *mut c_void, _opaque: *mut c_void) {
+    unsafe { Arc::from_raw(timer) };
+}
+
+extern "C" fn timer_mod<C: Context + Send + 'static>(
+    timer: *mut c_void,
+    expire_time: i64,
+    opaque: *mut c_void,
+) {
+    let inner = unsafe { &mut *(opaque as *mut Inner<C>) };
+    let timer = unsafe { Arc::from_raw(timer as *mut Timer<C>) };
+
+    // Calculate the deadline for scheduling a timer.
+    let time = inner.context.now() + expire_time as u64 * 1000000;
+
+    // Replace the task
+    let future = inner.context.create_timer(time);
+    let timer_clone = Arc::downgrade(&timer);
+    timer.task.lock().replace(Box::pin(async move {
+        future.await;
+        let timer = match timer_clone.upgrade() {
+            // Timer is dropped, abort
+            None => return,
+            Some(v) => v,
+        };
+        let inner = match timer.inner.upgrade() {
+            // Slirp is dropped, abort
+            None => return,
+            Some(v) => v,
+        };
+        // We must execute callback while no other threads are performing slirp tasks.
+        // So lock the inner.
+        let _guard = inner.lock();
+        // Execute callback
+        if let Some(cb) = timer.cb {
+            unsafe { cb(timer.cb_opaque) }
+        }
+    }));
+
+    Arc::into_raw(timer);
+}
+
+extern "C" fn register_poll_fd<C: Context>(_fd: c_int, _opaque: *mut c_void) {}
+
+extern "C" fn unregister_poll_fd<C: Context>(_fd: c_int, _opaque: *mut c_void) {}
+
+extern "C" fn notify<C: Context>(_opaque: *mut c_void) {}
+
+impl<C: Context + Send + 'static> Network<C> {
+    pub fn new(config: &crate::Config, context: C) -> Self {
+        let (ipv4_enabled, vnetwork, vnetmask, vhost, vdhcp_start, vnameserver) = match config.ipv4
+        {
+            None => (
+                false,
+                Ipv4Addr::new(0, 0, 0, 0),
+                Ipv4Addr::new(0, 0, 0, 0),
+                Ipv4Addr::new(0, 0, 0, 0),
+                Ipv4Addr::new(0, 0, 0, 0),
+                Ipv4Addr::new(0, 0, 0, 0),
+            ),
+            Some(ref ipv4) => (true, ipv4.net, ipv4.mask, ipv4.host, ipv4.dhcp_start, ipv4.dns),
+        };
+
+        let (ipv6_enabled, vprefix_addr6, vprefix_len, vhost6, vnameserver6) = match config.ipv6 {
+            None => (
+                false,
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0),
+                0,
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0),
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0),
+            ),
+            Some(ref ipv6) => (true, ipv6.prefix, ipv6.prefix_len, ipv6.host, ipv6.dns),
+        };
+
+        let (tftp_server_name, tftp_path, tftp_bootfile) = match config.tftp {
+            None => (None, None, None),
+            Some(ref tftp) => (tftp.name.as_ref(), Some(tftp.root.clone()), tftp.bootfile.as_ref()),
+        };
+
+        // Convert options to FFI types
+        let cstr_vdns: Vec<_> =
+            config.dns_suffixes.iter().map(|arg| CString::new(arg.as_bytes()).unwrap()).collect();
+        let mut p_vdns: Vec<_> =
+            cstr_vdns.iter().map(|arg| arg.as_ptr() as *const c_char).collect();
+        p_vdns.push(std::ptr::null());
+
+        let as_ptr = |p: &Option<CString>| p.as_ref().map_or(std::ptr::null(), |s| s.as_ptr());
+        let tftp_path = tftp_path.and_then(|s| CString::new(s.to_string_lossy().into_owned()).ok());
+        let vhostname = config.hostname.as_ref().and_then(|s| CString::new(s.as_bytes()).ok());
+        let tftp_server_name = tftp_server_name.and_then(|s| CString::new(s.as_bytes()).ok());
+        let tftp_bootfile = tftp_bootfile.and_then(|s| CString::new(s.as_bytes()).ok());
+        let vdomainname = config.domainname.as_ref().and_then(|s| CString::new(s.as_bytes()).ok());
+
+        // Create inner. `Arc<Mutex<Inner>>` is enough to pin Inner.
+        let inner = Arc::new(Mutex::new(Inner {
+            callbacks: SlirpCb {
+                send_packet: Some(send_packet::<C>),
+                guest_error: Some(guest_error::<C>),
+                clock_get_ns: Some(clock_get_ns::<C>),
+                timer_new: Some(timer_new::<C>),
+                timer_free: Some(timer_free::<C>),
+                timer_mod: Some(timer_mod::<C>),
+                register_poll_fd: Some(register_poll_fd::<C>),
+                unregister_poll_fd: Some(unregister_poll_fd::<C>),
+                notify: Some(notify::<C>),
+            },
+            context,
+            slirp: std::ptr::null_mut(),
+            weak: Weak::new(),
+            packet: VecDeque::new(),
+            waker: None,
+            stop: false,
+        }));
+
+        let mut lock = inner.lock();
+        // Assign weak pointer. This must be done before slirp_init as timer_create may be called
+        // when initing.
+        lock.weak = Arc::downgrade(&inner);
+        let callback = &lock.callbacks as *const _;
+        let ptr = &*lock as *const Inner<C> as *mut c_void;
+        drop(lock);
+
+        let context = unsafe {
+            slirp_init(
+                config.restricted as i32,
+                ipv4_enabled,
+                vnetwork.into(),
+                vnetmask.into(),
+                vhost.into(),
+                ipv6_enabled,
+                vprefix_addr6.into(),
+                vprefix_len,
+                vhost6.into(),
+                as_ptr(&vhostname),
+                as_ptr(&tftp_server_name),
+                as_ptr(&tftp_path),
+                as_ptr(&tftp_bootfile),
+                vdhcp_start.into(),
+                vnameserver.into(),
+                vnameserver6.into(),
+                p_vdns.as_mut_ptr(),
+                as_ptr(&vdomainname),
+                callback,
+                ptr,
+            )
+        };
+        inner.lock().slirp = context;
+
+        // Start the poll loop for this slirp
+        let arc_clone = inner.clone();
+        std::thread::Builder::new()
+            .name("slirp".to_owned())
+            .spawn(move || poll_loop(arc_clone))
+            .unwrap();
+
+        assert!(!context.is_null());
+        Network { context: inner }
+    }
+}
+
+impl<C> Inner<C> {
+    fn pollfds_fill(&mut self, timeout: &mut u32, fds: &mut Vec<libc::pollfd>) {
+        extern "C" fn callback(fd: c_int, events: c_int, opaque: *mut c_void) -> c_int {
+            let fds = unsafe { &mut *(opaque as *mut Vec<libc::pollfd>) };
+
+            let mut poll = 0;
+            if events & SLIRP_POLL_IN != 0 {
+                poll |= libc::POLLIN;
+            }
+            if events & SLIRP_POLL_OUT != 0 {
+                poll |= libc::POLLOUT;
+            }
+            if events & SLIRP_POLL_ERR != 0 {
+                poll |= libc::POLLERR;
+            }
+            if events & SLIRP_POLL_HUP != 0 {
+                poll |= libc::POLLHUP;
+            }
+            if events & SLIRP_POLL_PRI != 0 {
+                poll |= libc::POLLPRI;
+            }
+            fds.push(libc::pollfd { fd, events: poll, revents: 0 });
+            (fds.len() - 1) as i32
+        }
+
+        unsafe {
+            slirp_pollfds_fill(self.slirp, timeout, Some(callback), fds as *mut _ as *mut c_void);
+        }
+    }
+
+    fn pollfds_poll(&mut self, error: bool, fds: &[libc::pollfd]) {
+        extern "C" fn callback(idx: c_int, opaque: *mut c_void) -> c_int {
+            let fds = unsafe { *(opaque as *const &[libc::pollfd]) };
+
+            let revents = fds[idx as usize].revents;
+            let mut ret = 0;
+            if revents & libc::POLLIN != 0 {
+                ret |= SLIRP_POLL_IN;
+            }
+            if revents & libc::POLLOUT != 0 {
+                ret |= SLIRP_POLL_OUT;
+            }
+            if revents & libc::POLLERR != 0 {
+                ret |= SLIRP_POLL_ERR;
+            }
+            if revents & libc::POLLHUP != 0 {
+                ret |= SLIRP_POLL_HUP;
+            }
+            if revents & libc::POLLPRI != 0 {
+                ret |= SLIRP_POLL_PRI;
+            }
+            ret
+        }
+
+        unsafe {
+            slirp_pollfds_poll(
+                self.slirp,
+                error as i32,
+                Some(callback),
+                &fds as *const &[libc::pollfd] as *mut c_void,
+            );
+        }
+    }
+}
+
+impl<C> Network<C> {
+    /// Send a packet.
+    pub async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
+        unsafe {
+            slirp_input(self.context.lock().slirp, buf.as_ptr(), buf.len() as i32);
+        }
+        Ok(buf.len())
+    }
+
+    /// Receive a packet
+    pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        struct RecvFuture<'a, C>(&'a Network<C>, &'a mut [u8]);
+
+        impl<'a, C> Future for RecvFuture<'a, C> {
+            type Output = std::io::Result<usize>;
+
+            fn poll(
+                mut self: Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> Poll<Self::Output> {
+                let mut guard = self.0.context.lock();
+                match guard.packet.pop_front() {
+                    Some(buf) => {
+                        drop(guard);
+                        let len = self.1.len().min(buf.len());
+                        self.1[..len].copy_from_slice(&buf[..len]);
+                        Poll::Ready(Ok(len))
+                    }
+                    None => {
+                        guard.waker = Some(cx.waker().clone());
+                        Poll::Pending
+                    }
+                }
+            }
+        }
+
+        impl<'a, C> Drop for RecvFuture<'a, C> {
+            fn drop(&mut self) {
+                self.0.context.lock().waker = None;
+            }
+        }
+
+        RecvFuture(self, buf).await
+    }
+
+    /// Serialise the current state to a `Write` stream.
+    pub fn save_state(&self, writer: &mut dyn Write) -> std::io::Result<usize> {
+        let version: i32 = unsafe { slirp_state_version() };
+        writer.write_all(&version.to_be_bytes())?;
+
+        let mut res = Ok(4);
+        let mut pair = (&mut res, writer);
+
+        extern "C" fn callback(buf: *const c_void, len: usize, opaque: *mut c_void) -> isize {
+            let pair =
+                unsafe { &mut *(opaque as *mut (&mut std::io::Result<usize>, &mut dyn Write)) };
+            let slice = unsafe { slice::from_raw_parts(buf as *const u8, len) };
+
+            match pair.1.write(slice) {
+                Ok(n) => {
+                    *pair.0 = Ok(*pair.0.as_ref().unwrap() + n);
+                    n as isize
+                }
+                Err(e) => {
+                    *pair.0 = Err(e);
+                    -1
+                }
+            }
+        }
+
+        unsafe {
+            slirp_state_save(
+                self.context.lock().slirp,
+                Some(callback),
+                &mut pair as *mut _ as *mut c_void,
+            );
+        }
+
+        res
+    }
+
+    /// Deserialise the state from a `Read` stream.
+    pub fn load_state(&self, reader: &mut dyn Read) -> std::io::Result<usize> {
+        let mut version = [0; 4];
+        reader.read_exact(&mut version)?;
+        let version_id = i32::from_be_bytes(version);
+
+        let mut res = Ok(0);
+        let mut pair = (&mut res, reader);
+
+        extern "C" fn callback(buf: *mut c_void, len: usize, opaque: *mut c_void) -> isize {
+            let pair =
+                unsafe { &mut *(opaque as *mut (&mut std::io::Result<usize>, &mut dyn Read)) };
+            let slice = unsafe { slice::from_raw_parts_mut(buf as *mut u8, len) };
+
+            match pair.1.read(slice) {
+                Ok(n) => {
+                    *pair.0 = Ok(*pair.0.as_ref().unwrap() + n);
+                    n as isize
+                }
+                Err(e) => {
+                    *pair.0 = Err(e);
+                    -1
+                }
+            }
+        }
+
+        unsafe {
+            slirp_state_load(
+                self.context.lock().slirp,
+                version_id,
+                Some(callback),
+                &mut pair as *mut _ as *mut c_void,
+            );
+        }
+
+        res
+    }
+}
+
+/// The main poll loop for an Inner.
+fn poll_loop<C: Context>(inner: Arc<Mutex<Inner<C>>>) {
+    let mut inner = inner.lock();
+    loop {
+        let mut vec = Vec::new();
+        let mut timeout = i32::max_value() as u32;
+        inner.pollfds_fill(&mut timeout, &mut vec);
+
+        let err = parking_lot::MutexGuard::unlocked(&mut inner, || unsafe {
+            libc::poll(vec.as_mut_ptr(), vec.len() as _, timeout as _)
+        });
+
+        if inner.stop {
+            return;
+        }
+        inner.pollfds_poll(err == -1, &vec);
+    }
+}
+
+impl<C> fmt::Debug for Network<C> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let ptr = unsafe { slirp_connection_info(self.context.lock().slirp) };
+        let ret = write!(fmt, "{}", unsafe { CStr::from_ptr(ptr) }.to_string_lossy());
+        unsafe { g_free(ptr as _) }
+        ret
+    }
+}
