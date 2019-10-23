@@ -9,8 +9,9 @@ use super::int::{CastFrom, CastTo, Int, UInt};
 // #region Rounding mode constant
 //
 
+/// Floating point rounding modes.
 #[repr(u32)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RoundingMode {
     TiesToEven = 0b000,
     TowardZero = 0b001,
@@ -32,6 +33,7 @@ impl TryFrom<u32> for RoundingMode {
 // #region Exception flags constant
 
 bitflags! {
+    /// Floating point exception flags, as bit masks.
     pub struct ExceptionFlags: u32 {
         const INEXACT           = 1;
         const UNDERFLOW         = 2;
@@ -75,8 +77,9 @@ pub fn register_set_exception_flag(f: fn(ExceptionFlags)) {
     SET_EXCEPTION_FLAG.store(f as usize, MemOrder::Relaxed);
 }
 
+/// Floating point classification result.
 #[repr(u32)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Class {
     NegativeInfinity = 0,
     NegativeNormal = 1,
@@ -97,7 +100,8 @@ impl TryFrom<u32> for Class {
     }
 }
 
-pub trait FpDesc: Copy {
+#[doc(hidden)]
+pub trait FpDesc {
     const EXPONENT_WIDTH: u32;
     const SIGNIFICAND_WIDTH: u32;
 
@@ -125,7 +129,14 @@ pub trait FpDesc: Copy {
     type DoubleHolder: UInt + CastTo<Self::Holder>;
 }
 
-#[derive(Clone, Copy)]
+/// Generic type for software floating point operations.
+///
+/// For [`F32`], the holder will be a [`u32`], and for [`F64`], the holder will be [`u64`].
+/// ```
+/// # use softfp::*;
+/// assert_eq!(F32::zero(false).0, 0);
+/// assert_eq!(F64::zero(false).0, 0);
+/// ```
 pub struct Fp<Desc: FpDesc>(pub Desc::Holder);
 
 impl<Desc: FpDesc> Fp<Desc> {
@@ -137,6 +148,12 @@ impl<Desc: FpDesc> Fp<Desc> {
     const MINIMUM_EXPONENT: i32 = 1 - Self::EXPONENT_BIAS;
     const MAXIMUM_EXPONENT: i32 = Self::MAXIMUM_BIASED_EXPONENT as i32 - Self::EXPONENT_BIAS;
 
+    /// Create a new [`Fp`] from underlying representation.
+    ///
+    /// ```
+    /// # use softfp::*;
+    /// assert!(F32::new(0) == F32::zero(false));
+    /// ```
     #[inline]
     pub fn new(value: Desc::Holder) -> Self {
         Fp(value)
@@ -145,6 +162,12 @@ impl<Desc: FpDesc> Fp<Desc> {
     // #region Special constants values
     //
 
+    /// Get the quiet nan constant for this type.
+    ///
+    /// ```
+    /// # use softfp::*;
+    /// assert_eq!(F32::quiet_nan().classify(), Class::QuietNan);
+    /// ```
     pub fn quiet_nan() -> Self {
         let mut value = Self(Desc::Holder::zero());
         value.set_biased_exponent(Self::INFINITY_BIASED_EXPONENT);
@@ -152,6 +175,14 @@ impl<Desc: FpDesc> Fp<Desc> {
         value
     }
 
+    /// Get a infinity constant for this type. If `sign` indicates whether the value should be
+    /// negative.
+    ///
+    /// ```
+    /// # use softfp::*;
+    /// assert_eq!(F32::infinity(false).classify(), Class::PositiveInfinity);
+    /// assert_eq!(F32::infinity(true).classify(), Class::NegativeInfinity);
+    /// ```
     pub fn infinity(sign: bool) -> Self {
         let mut value = Self(Desc::Holder::zero());
         value.set_sign(sign);
@@ -159,6 +190,14 @@ impl<Desc: FpDesc> Fp<Desc> {
         value
     }
 
+    /// Get a zero constant for this type. If `sign` indicates whether the value should be
+    /// negative.
+    ///
+    /// ```
+    /// # use softfp::*;
+    /// assert_eq!(F32::zero(false).classify(), Class::PositiveZero);
+    /// assert_eq!(F32::zero(true).classify(), Class::NegativeZero);
+    /// ```
     pub fn zero(sign: bool) -> Self {
         let mut value = Self(Desc::Holder::zero());
         value.set_sign(sign);
@@ -660,6 +699,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         Self::round(sign, quotient_exponent, quotient)
     }
 
+    /// Calculate the sqaure root of `self`.
     pub fn square_root(self) -> Self {
         // Handling NaN
         if self.is_nan() {
@@ -749,6 +789,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         Self::round(false, exponent / 2, result)
     }
 
+    /// Calculate `a * b + c` without rounding intermediate results.
     pub fn fused_multiply_add(a: Self, b: Self, c: Self) -> Self {
         // Enforce |a| > |b| for easier handling.
         let (a, b) =
@@ -866,10 +907,12 @@ impl<Desc: FpDesc> Fp<Desc> {
         Self::normalize_and_round(sign, Desc::SIGNIFICAND_WIDTH as i32 + 2, value)
     }
 
+    /// Convert an unsigned integer to this type.
     pub fn convert_from_uint<T: UInt + CastTo<Desc::Holder>>(value: T) -> Self {
         Self::convert_from_int_with_sign(false, value)
     }
 
+    /// Convert a signed integer to this type.
     pub fn convert_from_sint<T: UInt + CastTo<Desc::Holder>>(value: T) -> Self {
         // Check the sign bit
         if value >> (T::bit_width() - 1) != T::zero() {
@@ -973,6 +1016,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         (sign, result)
     }
 
+    /// Convert this type to an unsigned integer.
     pub fn convert_to_uint<
         T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>,
     >(
@@ -982,6 +1026,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         self.convert_to_int(max, T::zero()).1
     }
 
+    /// Convert this type to an signed integer.
     pub fn convert_to_sint<
         T: UInt + CastFrom<Desc::Holder> + core::convert::TryFrom<Desc::Holder>,
     >(
@@ -994,6 +1039,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     // IEEE 754-2008 5.4.2 formatOf general-computational operations > Conversion operations
+    /// Convert this type to another software floating point type.
     pub fn convert_format<TDesc: FpDesc>(&self) -> Fp<TDesc>
     where
         Desc::Holder: CastTo<TDesc::Holder>,
@@ -1032,26 +1078,31 @@ impl<Desc: FpDesc> Fp<Desc> {
     // IEEE 754-2008 5.5.1 Quiet-computational operations > Sign bit operations
     //
 
+    /// Calculate the absolute value of `self`.
     pub fn abs(mut self) -> Self {
         self.set_sign(false);
         self
     }
 
+    /// Calculate the negation of `self`.
     pub fn negate(mut self) -> Self {
         self.set_sign(!self.sign());
         self
     }
 
+    /// Calculate `abs(self) * sgn(another)`.
     pub fn copy_sign(mut self, another: Self) -> Self {
         self.set_sign(another.sign());
         self
     }
 
+    /// Calculate `abs(self) * -sgn(another)`.
     pub fn copy_sign_negated(mut self, another: Self) -> Self {
         self.set_sign(!another.sign());
         self
     }
 
+    /// Calculate `self * sgn(another)`.
     pub fn copy_sign_xored(mut self, another: Self) -> Self {
         self.set_sign(self.sign() ^ another.sign());
         self
@@ -1063,33 +1114,40 @@ impl<Desc: FpDesc> Fp<Desc> {
     // #region Classification
     //
 
+    /// Check if `self` is normal.
     pub fn is_normal(&self) -> bool {
         let exponent = self.biased_exponent();
         exponent != 0 && exponent != Self::INFINITY_BIASED_EXPONENT
     }
 
+    /// Check if `self` is finite.
     pub fn is_finite(&self) -> bool {
         self.biased_exponent() != Self::INFINITY_BIASED_EXPONENT
     }
 
+    /// Check if `self` is zero.
     pub fn is_zero(&self) -> bool {
         self.biased_exponent() == 0 && self.trailing_significand() == Desc::Holder::zero()
     }
 
+    /// Check if `self` is subnormal.
     pub fn is_subnormal(&self) -> bool {
         self.biased_exponent() == 0 && self.trailing_significand() != Desc::Holder::zero()
     }
 
+    /// Check if `self` is infinite.
     pub fn is_infinite(&self) -> bool {
         self.biased_exponent() == Self::INFINITY_BIASED_EXPONENT
             && self.trailing_significand() == Desc::Holder::zero()
     }
 
+    /// Check if `self` is NaN.
     pub fn is_nan(&self) -> bool {
         self.biased_exponent() == Self::INFINITY_BIASED_EXPONENT
             && self.trailing_significand() != Desc::Holder::zero()
     }
 
+    /// Check if `self` is a signaling NaN.
     pub fn is_signaling(&self) -> bool {
         // Special exponent for Infinites and NaNs
         if self.biased_exponent() != Self::INFINITY_BIASED_EXPONENT {
@@ -1108,6 +1166,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     }
 
     /* IEEE 754-2008 5.7.2 Non-computation operations > General operations */
+    /// Classify `self`.
     pub fn classify(&self) -> Class {
         let sign = self.sign();
         let exponent = self.biased_exponent();
@@ -1142,6 +1201,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     //
 
     /* IEEE 754-2008 5.3.1 Homogeneous general-computational operations > General operations */
+    /// Compare two numbers and return `(min, max)`.
     pub fn min_max(a: Self, b: Self) -> (Self, Self) {
         if a.is_nan() || b.is_nan() {
             if a.is_signaling() || b.is_signaling() {
@@ -1162,15 +1222,18 @@ impl<Desc: FpDesc> Fp<Desc> {
         if Self::total_order(a, b) == Ordering::Less { (a, b) } else { (b, a) }
     }
 
+    /// Compare two numbers and return the smaller one.
     pub fn min(a: Self, b: Self) -> Self {
         Self::min_max(a, b).0
     }
 
+    /// Compare two numbers and return the greater one.
     pub fn max(a: Self, b: Self) -> Self {
         Self::min_max(a, b).1
     }
 
     /* IEEE 754-2008 5.6.1 Signaling-computational operations > Comparisions */
+    /// Compare two numbers without triggering floating point exceptions when NaN is encountered.
     pub fn compare_quiet(a: Self, b: Self) -> Option<Ordering> {
         if a.is_nan() || b.is_nan() {
             return None;
@@ -1181,6 +1244,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         Some(Self::total_order(a, b))
     }
 
+    /// Compare two numbers, triggering floating point exceptions when NaN is encountered.
     pub fn compare_signaling(a: Self, b: Self) -> Option<Ordering> {
         if a.is_nan() || b.is_nan() {
             set_exception_flag(ExceptionFlags::INVALID_OPERATION);
@@ -1192,6 +1256,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         Some(Self::total_order(a, b))
     }
 
+    /// Compare the total order between two numbers.
     pub fn total_order(a: Self, b: Self) -> Ordering {
         if a.sign() == b.sign() {
             let ret = Self::total_order_magnitude(a, b);
@@ -1203,7 +1268,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         }
     }
 
-    /// Compare the total order between abs(a) and abs(b)
+    /// Compare the total order between `abs(a)` and `abs(b)`
     pub fn total_order_magnitude(mut a: Self, mut b: Self) -> Ordering {
         a.set_sign(false);
         b.set_sign(false);
@@ -1213,6 +1278,15 @@ impl<Desc: FpDesc> Fp<Desc> {
     //
     // #endregion
 }
+
+impl<Desc: FpDesc> Clone for Fp<Desc> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Fp(self.0)
+    }
+}
+
+impl<Desc: FpDesc> Copy for Fp<Desc> {}
 
 impl<Desc: FpDesc> core::cmp::PartialEq for Fp<Desc> {
     fn eq(&self, other: &Self) -> bool {
@@ -1276,6 +1350,7 @@ impl<Desc: FpDesc> ops::Neg for Fp<Desc> {
     }
 }
 
+#[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct F32Desc;
 
@@ -1286,6 +1361,7 @@ impl FpDesc for F32Desc {
     type DoubleHolder = u64;
 }
 
+#[doc(hidden)]
 #[derive(Clone, Copy)]
 pub struct F64Desc;
 
