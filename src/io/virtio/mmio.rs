@@ -232,6 +232,9 @@ impl IoMemory for Mmio {
             ADDR_STATUS => {
                 if value == 0 {
                     self.device.reset();
+                    for queue in self.queues.iter() {
+                        queue.lock().reset();
+                    }
                     self.queue_sel = 0;
                     self.device_features_sel = false;
                     self.driver_features_sel = false;

@@ -13,6 +13,8 @@ const VIRTQ_DESC_F_WRITE: u16 = 2;
 #[allow(dead_code)]
 const VIRTQ_DESC_F_INDIRECT: u16 = 4;
 
+pub struct QueueNotReady;
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct VirtqDesc {
@@ -30,13 +32,26 @@ pub(super) struct QueueInner {
     pub desc_addr: u64,
     pub avail_addr: u64,
     pub used_addr: u64,
+    pub last_avail_idx: u16,
+    pub last_used_idx: u16,
     pub waker: Option<Waker>,
+}
+
+impl QueueInner {
+    pub fn reset(&mut self) {
+        self.ready = false;
+        self.num = self.num_max;
+        self.desc_addr = 0;
+        self.avail_addr = 0;
+        self.used_addr = 0;
+        self.waker = None;
+        self.last_avail_idx = 0;
+        self.last_used_idx = 0;
+    }
 }
 
 pub struct Queue {
     pub(super) inner: Arc<Mutex<QueueInner>>,
-    last_avail_idx: u16,
-    last_used_idx: u16,
 }
 
 impl Queue {
@@ -53,30 +68,20 @@ impl Queue {
             avail_addr: 0,
             used_addr: 0,
             waker: None,
+            last_avail_idx: 0,
+            last_used_idx: 0,
         }));
-        Queue { inner, last_avail_idx: 0, last_used_idx: 0 }
-    }
-
-    pub fn reset(&mut self) {
-        let mut inner = self.inner.lock();
-        inner.ready = false;
-        inner.num = inner.num_max;
-        inner.desc_addr = 0;
-        inner.avail_addr = 0;
-        inner.used_addr = 0;
-        inner.waker = None;
-        self.last_avail_idx = 0;
-        self.last_used_idx = 0;
+        Queue { inner }
     }
 
     /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
     /// returned.
-    pub fn try_take(&mut self) -> Option<Buffer> {
-        let inner = self.inner.lock();
+    pub fn try_take(&mut self) -> Result<Option<Buffer>, QueueNotReady> {
+        let mut inner = self.inner.lock();
 
         // If the queue is not ready, trying to take item from it can cause segfault.
         if !inner.ready {
-            return None;
+            return Err(QueueNotReady);
         }
 
         let avail_idx_ptr = unsafe { &*((inner.avail_addr + 2) as usize as *const AtomicU16) };
@@ -85,18 +90,18 @@ impl Queue {
         let avail_idx = avail_idx_ptr.load(Ordering::Acquire);
 
         // No extra elements in this queue
-        if self.last_avail_idx == avail_idx {
-            return None;
+        if inner.last_avail_idx == avail_idx {
+            return Ok(None);
         }
 
         // Obtain the corresponding descriptor index for a given index of available ring.
         // Each index is 2 bytes, and there are flags and idx (2 bytes each) before the ring, so
         // we have + 4 here.
-        let idx_ptr = inner.avail_addr + 4 + (self.last_avail_idx & (inner.num - 1)) as u64 * 2;
+        let idx_ptr = inner.avail_addr + 4 + (inner.last_avail_idx & (inner.num - 1)) as u64 * 2;
         let mut idx = unsafe { *(idx_ptr as usize as *const u16) };
 
         // Now we have obtained this descriptor, increment the index to skip over this.
-        self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
+        inner.last_avail_idx = inner.last_avail_idx.wrapping_add(1);
 
         let mut avail = Buffer { idx, bytes_written: 0, read: Vec::new(), write: Vec::new() };
 
@@ -129,25 +134,28 @@ impl Queue {
             idx = desc.next;
         }
 
-        Some(avail)
+        Ok(Some(avail))
     }
 
     // This is to be changed to async fn once 1.39 arrives.
-    pub fn take(&mut self) -> impl Future<Output = Buffer> + '_ {
+    pub fn take(&mut self) -> impl Future<Output = Result<Buffer, QueueNotReady>> + '_ {
         /// The future returned for calling async `wake` function of `Queue`.
         struct Take<'a> {
             queue: &'a mut Queue,
         }
 
         impl Future for Take<'_> {
-            type Output = Buffer;
+            type Output = Result<Buffer, QueueNotReady>;
 
-            fn poll(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Buffer> {
-                if let Some(v) = self.queue.try_take() {
-                    return Poll::Ready(v);
+            fn poll(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Self::Output> {
+                match self.queue.try_take() {
+                    Err(v) => Poll::Ready(Err(v)),
+                    Ok(Some(v)) => Poll::Ready(Ok(v)),
+                    Ok(None) => {
+                        self.queue.inner.lock().waker = Some(ctx.waker().clone());
+                        Poll::Pending
+                    }
                 }
-                self.queue.inner.lock().waker = Some(ctx.waker().clone());
-                Poll::Pending
             }
         }
 
@@ -157,7 +165,7 @@ impl Queue {
     /// Put back a buffer to the ring. This function is unsafe because there is no guarantee that
     /// the buffer to put back comes from this queue.
     pub unsafe fn put(&mut self, avail: Buffer) {
-        let inner = self.inner.lock();
+        let mut inner = self.inner.lock();
         let used_idx_ptr = &*((inner.used_addr + 2) as usize as *const AtomicU16);
 
         // Write requires invalidating icache
@@ -167,12 +175,12 @@ impl Queue {
             crate::emu::interp::icache_invalidate(start, end);
         }
 
-        let elem_ptr = inner.used_addr + 4 + (self.last_used_idx & (inner.num - 1)) as u64 * 8;
+        let elem_ptr = inner.used_addr + 4 + (inner.last_used_idx & (inner.num - 1)) as u64 * 8;
         *(elem_ptr as usize as *mut u32) = avail.idx as u32;
         *((elem_ptr + 4) as usize as *mut u32) = avail.bytes_written as u32;
-        self.last_used_idx = self.last_used_idx.wrapping_add(1);
+        inner.last_used_idx = inner.last_used_idx.wrapping_add(1);
 
-        used_idx_ptr.store(self.last_used_idx, Ordering::Release);
+        used_idx_ptr.store(inner.last_used_idx, Ordering::Release);
     }
 }
 

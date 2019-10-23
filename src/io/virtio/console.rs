@@ -26,7 +26,7 @@ pub struct Console {
 
 fn put(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
     let mut queue = queue.lock();
-    if let Some(mut buffer) = queue.try_take() {
+    if let Ok(Some(mut buffer)) = queue.try_take() {
         let mut writer = buffer.writer();
         writer.write_all(buf).unwrap();
         unsafe { queue.put(buffer) };
@@ -130,8 +130,6 @@ impl Device for Console {
     }
     fn reset(&mut self) {
         self.status = 0;
-        self.rx.lock().reset();
-        self.tx.reset();
         // TODO: If thread is running, we should terminate it before return here
     }
     fn notify(&mut self, idx: usize) {
@@ -139,7 +137,7 @@ impl Device for Console {
             eprintln!("Filling receving queue");
             return;
         }
-        while let Some(buffer) = self.tx.try_take() {
+        while let Ok(Some(buffer)) = self.tx.try_take() {
             let mut reader = buffer.reader();
 
             let mut io_buffer = Vec::with_capacity(reader.len());
