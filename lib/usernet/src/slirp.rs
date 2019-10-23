@@ -18,6 +18,7 @@ extern "C" {
     fn g_free(ptr: *mut std::ffi::c_void);
 }
 
+/// Emulated network interface.
 pub struct Network {
     context: Arc<Mutex<Inner>>,
 }
@@ -155,7 +156,73 @@ extern "C" fn unregister_poll_fd(_fd: c_int, _opaque: *mut c_void) {}
 
 extern "C" fn notify(_opaque: *mut c_void) {}
 
+impl Inner {
+    fn pollfds_fill(&mut self, timeout: &mut u32, fds: &mut Vec<libc::pollfd>) {
+        extern "C" fn callback(fd: c_int, events: c_int, opaque: *mut c_void) -> c_int {
+            let fds = unsafe { &mut *(opaque as *mut Vec<libc::pollfd>) };
+
+            let mut poll = 0;
+            if events & SLIRP_POLL_IN != 0 {
+                poll |= libc::POLLIN;
+            }
+            if events & SLIRP_POLL_OUT != 0 {
+                poll |= libc::POLLOUT;
+            }
+            if events & SLIRP_POLL_ERR != 0 {
+                poll |= libc::POLLERR;
+            }
+            if events & SLIRP_POLL_HUP != 0 {
+                poll |= libc::POLLHUP;
+            }
+            if events & SLIRP_POLL_PRI != 0 {
+                poll |= libc::POLLPRI;
+            }
+            fds.push(libc::pollfd { fd, events: poll, revents: 0 });
+            (fds.len() - 1) as i32
+        }
+
+        unsafe {
+            slirp_pollfds_fill(self.slirp, timeout, Some(callback), fds as *mut _ as *mut c_void);
+        }
+    }
+
+    fn pollfds_poll(&mut self, error: bool, fds: &[libc::pollfd]) {
+        extern "C" fn callback(idx: c_int, opaque: *mut c_void) -> c_int {
+            let fds = unsafe { *(opaque as *const &[libc::pollfd]) };
+
+            let revents = fds[idx as usize].revents;
+            let mut ret = 0;
+            if revents & libc::POLLIN != 0 {
+                ret |= SLIRP_POLL_IN;
+            }
+            if revents & libc::POLLOUT != 0 {
+                ret |= SLIRP_POLL_OUT;
+            }
+            if revents & libc::POLLERR != 0 {
+                ret |= SLIRP_POLL_ERR;
+            }
+            if revents & libc::POLLHUP != 0 {
+                ret |= SLIRP_POLL_HUP;
+            }
+            if revents & libc::POLLPRI != 0 {
+                ret |= SLIRP_POLL_PRI;
+            }
+            ret
+        }
+
+        unsafe {
+            slirp_pollfds_poll(
+                self.slirp,
+                error as i32,
+                Some(callback),
+                &fds as *const &[libc::pollfd] as *mut c_void,
+            );
+        }
+    }
+}
+
 impl Network {
+    /// Create a new instance of [`Network`], with supplied configuration and context.
     pub fn new(config: &crate::Config, context: impl Context + Send + 'static) -> Self {
         Self::new_internal(config, Box::new(context))
     }
@@ -269,75 +336,11 @@ impl Network {
         assert!(!context.is_null());
         Network { context: inner }
     }
-}
 
-impl Inner {
-    fn pollfds_fill(&mut self, timeout: &mut u32, fds: &mut Vec<libc::pollfd>) {
-        extern "C" fn callback(fd: c_int, events: c_int, opaque: *mut c_void) -> c_int {
-            let fds = unsafe { &mut *(opaque as *mut Vec<libc::pollfd>) };
-
-            let mut poll = 0;
-            if events & SLIRP_POLL_IN != 0 {
-                poll |= libc::POLLIN;
-            }
-            if events & SLIRP_POLL_OUT != 0 {
-                poll |= libc::POLLOUT;
-            }
-            if events & SLIRP_POLL_ERR != 0 {
-                poll |= libc::POLLERR;
-            }
-            if events & SLIRP_POLL_HUP != 0 {
-                poll |= libc::POLLHUP;
-            }
-            if events & SLIRP_POLL_PRI != 0 {
-                poll |= libc::POLLPRI;
-            }
-            fds.push(libc::pollfd { fd, events: poll, revents: 0 });
-            (fds.len() - 1) as i32
-        }
-
-        unsafe {
-            slirp_pollfds_fill(self.slirp, timeout, Some(callback), fds as *mut _ as *mut c_void);
-        }
-    }
-
-    fn pollfds_poll(&mut self, error: bool, fds: &[libc::pollfd]) {
-        extern "C" fn callback(idx: c_int, opaque: *mut c_void) -> c_int {
-            let fds = unsafe { *(opaque as *const &[libc::pollfd]) };
-
-            let revents = fds[idx as usize].revents;
-            let mut ret = 0;
-            if revents & libc::POLLIN != 0 {
-                ret |= SLIRP_POLL_IN;
-            }
-            if revents & libc::POLLOUT != 0 {
-                ret |= SLIRP_POLL_OUT;
-            }
-            if revents & libc::POLLERR != 0 {
-                ret |= SLIRP_POLL_ERR;
-            }
-            if revents & libc::POLLHUP != 0 {
-                ret |= SLIRP_POLL_HUP;
-            }
-            if revents & libc::POLLPRI != 0 {
-                ret |= SLIRP_POLL_PRI;
-            }
-            ret
-        }
-
-        unsafe {
-            slirp_pollfds_poll(
-                self.slirp,
-                error as i32,
-                Some(callback),
-                &fds as *const &[libc::pollfd] as *mut c_void,
-            );
-        }
-    }
-}
-
-impl Network {
-    /// Send a packet.
+    /// Send a packet to the interface.
+    ///
+    /// # Result
+    /// The number of bytes transmitted is returned.
     pub async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
         unsafe {
             slirp_input(self.context.lock().slirp, buf.as_ptr(), buf.len() as i32);
@@ -345,7 +348,11 @@ impl Network {
         Ok(buf.len())
     }
 
-    /// Receive a packet
+    /// Receive a packet from the interface. If the buffer is not large enough, the packet gets
+    /// truncated.
+    ///
+    /// # Result
+    /// The number of bytes copied into the buffer is returned.
     pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
         struct RecvFuture<'a>(&'a Network, &'a mut [u8]);
 
@@ -381,7 +388,13 @@ impl Network {
         RecvFuture(self, buf).await
     }
 
-    /// Serialise the current state to a `Write` stream.
+    /// Serialise the current state to a [`Write`] stream. The bytes written into `writer` are
+    /// intended only for [`load_state`](#method.load_state). This method is provided for
+    /// serialisation and migration, and the content should not be interpreted or modified
+    /// otherwise.
+    ///
+    /// # Result
+    /// Upon successful serialisation, the number of bytes written is returned.
     pub fn save_state(&self, writer: &mut dyn Write) -> std::io::Result<usize> {
         let version: i32 = unsafe { slirp_state_version() };
         writer.write_all(&version.to_be_bytes())?;
@@ -417,7 +430,12 @@ impl Network {
         res
     }
 
-    /// Deserialise the state from a `Read` stream.
+    /// Deserialise the state from a [`Read`] stream. The data should be previously serialised
+    /// using [`save_state`](#method.save_state). It should saved from the same or an earlier,
+    /// semver-compatible version of this library.
+    ///
+    /// # Result
+    /// Upon successful deserialisation, the number of bytes read is returned.
     pub fn load_state(&self, reader: &mut dyn Read) -> std::io::Result<usize> {
         let mut version = [0; 4];
         reader.read_exact(&mut version)?;
@@ -443,13 +461,20 @@ impl Network {
             }
         }
 
-        unsafe {
+        let ret = unsafe {
             slirp_state_load(
                 self.context.lock().slirp,
                 version_id,
                 Some(callback),
                 &mut pair as *mut _ as *mut c_void,
-            );
+            )
+        };
+
+        if ret < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "cannot deserialise the state",
+            ));
         }
 
         res
