@@ -22,6 +22,7 @@ pub enum RoundingMode {
 
 impl TryFrom<u32> for RoundingMode {
     type Error = ();
+    #[inline]
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         if value >= 5 { Err(()) } else { Ok(unsafe { core::mem::transmute(value) }) }
     }
@@ -95,6 +96,7 @@ pub enum Class {
 
 impl TryFrom<u32> for Class {
     type Error = ();
+    #[inline]
     fn try_from(value: u32) -> Result<Self, Self::Error> {
         if value >= 10 { Err(()) } else { Ok(unsafe { core::mem::transmute(value) }) }
     }
@@ -168,6 +170,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     /// # use softfp::*;
     /// assert_eq!(F32::quiet_nan().classify(), Class::QuietNan);
     /// ```
+    #[inline]
     pub fn quiet_nan() -> Self {
         let mut value = Self(Desc::Holder::zero());
         value.set_biased_exponent(Self::INFINITY_BIASED_EXPONENT);
@@ -183,6 +186,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     /// assert_eq!(F32::infinity(false).classify(), Class::PositiveInfinity);
     /// assert_eq!(F32::infinity(true).classify(), Class::NegativeInfinity);
     /// ```
+    #[inline]
     pub fn infinity(sign: bool) -> Self {
         let mut value = Self(Desc::Holder::zero());
         value.set_sign(sign);
@@ -198,6 +202,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     /// assert_eq!(F32::zero(false).classify(), Class::PositiveZero);
     /// assert_eq!(F32::zero(true).classify(), Class::NegativeZero);
     /// ```
+    #[inline]
     pub fn zero(sign: bool) -> Self {
         let mut value = Self(Desc::Holder::zero());
         value.set_sign(sign);
@@ -397,10 +402,12 @@ impl<Desc: FpDesc> Fp<Desc> {
     // #region Component accessors
     //
 
+    #[inline]
     fn sign(&self) -> bool {
         self.0 >> (Desc::EXPONENT_WIDTH + Desc::SIGNIFICAND_WIDTH) != Desc::Holder::zero()
     }
 
+    #[inline]
     fn set_sign(&mut self, sign: bool) {
         let mask = Desc::Holder::one() << (Desc::EXPONENT_WIDTH + Desc::SIGNIFICAND_WIDTH);
         if sign {
@@ -410,6 +417,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         }
     }
 
+    #[inline]
     fn biased_exponent(&self) -> u32 {
         let mask = (Desc::Holder::one() << Desc::EXPONENT_WIDTH) - Desc::Holder::one();
         CastTo::<u32>::cast_to((self.0 >> Desc::SIGNIFICAND_WIDTH) & mask)
@@ -417,6 +425,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
     /// Set the biased exponent of the floating pointer number.
     /// Only up to exponent_width bits are respected and all other bits are ignored.
+    #[inline]
     fn set_biased_exponent(&mut self, exp: u32) {
         let mask = ((Desc::Holder::one() << Desc::EXPONENT_WIDTH) - Desc::Holder::one())
             << Desc::SIGNIFICAND_WIDTH;
@@ -424,6 +433,7 @@ impl<Desc: FpDesc> Fp<Desc> {
             | ((CastTo::<Desc::Holder>::cast_to(exp) << Desc::SIGNIFICAND_WIDTH) & mask);
     }
 
+    #[inline]
     fn trailing_significand(&self) -> Desc::Holder {
         let mask = (Desc::Holder::one() << Desc::SIGNIFICAND_WIDTH) - Desc::Holder::one();
         self.0 & mask
@@ -431,6 +441,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
     // Set the trailing significand of the floating pointer number.
     // Only up to significand_width bits are respected and all other bits are ignored.
+    #[inline]
     fn set_trailing_significand(&mut self, value: Desc::Holder) {
         let mask = (Desc::Holder::one() << Desc::SIGNIFICAND_WIDTH) - Desc::Holder::one();
         self.0 = (self.0 & !mask) | (value & mask);
@@ -1079,30 +1090,35 @@ impl<Desc: FpDesc> Fp<Desc> {
     //
 
     /// Calculate the absolute value of `self`.
+    #[inline]
     pub fn abs(mut self) -> Self {
         self.set_sign(false);
         self
     }
 
     /// Calculate the negation of `self`.
+    #[inline]
     pub fn negate(mut self) -> Self {
         self.set_sign(!self.sign());
         self
     }
 
     /// Calculate `abs(self) * sgn(another)`.
+    #[inline]
     pub fn copy_sign(mut self, another: Self) -> Self {
         self.set_sign(another.sign());
         self
     }
 
     /// Calculate `abs(self) * -sgn(another)`.
+    #[inline]
     pub fn copy_sign_negated(mut self, another: Self) -> Self {
         self.set_sign(!another.sign());
         self
     }
 
     /// Calculate `self * sgn(another)`.
+    #[inline]
     pub fn copy_sign_xored(mut self, another: Self) -> Self {
         self.set_sign(self.sign() ^ another.sign());
         self
@@ -1115,33 +1131,39 @@ impl<Desc: FpDesc> Fp<Desc> {
     //
 
     /// Check if `self` is normal.
+    #[inline]
     pub fn is_normal(&self) -> bool {
         let exponent = self.biased_exponent();
         exponent != 0 && exponent != Self::INFINITY_BIASED_EXPONENT
     }
 
     /// Check if `self` is finite.
+    #[inline]
     pub fn is_finite(&self) -> bool {
         self.biased_exponent() != Self::INFINITY_BIASED_EXPONENT
     }
 
     /// Check if `self` is zero.
+    #[inline]
     pub fn is_zero(&self) -> bool {
         self.biased_exponent() == 0 && self.trailing_significand() == Desc::Holder::zero()
     }
 
     /// Check if `self` is subnormal.
+    #[inline]
     pub fn is_subnormal(&self) -> bool {
         self.biased_exponent() == 0 && self.trailing_significand() != Desc::Holder::zero()
     }
 
     /// Check if `self` is infinite.
+    #[inline]
     pub fn is_infinite(&self) -> bool {
         self.biased_exponent() == Self::INFINITY_BIASED_EXPONENT
             && self.trailing_significand() == Desc::Holder::zero()
     }
 
     /// Check if `self` is NaN.
+    #[inline]
     pub fn is_nan(&self) -> bool {
         self.biased_exponent() == Self::INFINITY_BIASED_EXPONENT
             && self.trailing_significand() != Desc::Holder::zero()
@@ -1345,6 +1367,7 @@ impl<Desc: FpDesc> ops::Div<Self> for Fp<Desc> {
 
 impl<Desc: FpDesc> ops::Neg for Fp<Desc> {
     type Output = Self;
+    #[inline]
     fn neg(self) -> Self {
         self.negate()
     }

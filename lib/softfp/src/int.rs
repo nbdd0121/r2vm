@@ -27,42 +27,53 @@ pub trait Int:
     fn zero() -> Self;
     fn one() -> Self;
     fn max_value() -> Self;
+
+    #[inline]
     fn bit_width() -> u32 {
         core::mem::size_of::<Self>() as u32 * 8
     }
 }
 
 impl Int for u32 {
+    #[inline]
     fn zero() -> u32 {
         0
     }
+    #[inline]
     fn one() -> u32 {
         1
     }
+    #[inline]
     fn max_value() -> u32 {
         u32::max_value()
     }
 }
 
 impl Int for u64 {
+    #[inline]
     fn zero() -> u64 {
         0
     }
+    #[inline]
     fn one() -> u64 {
         1
     }
+    #[inline]
     fn max_value() -> u64 {
         u64::max_value()
     }
 }
 
 impl Int for u128 {
+    #[inline]
     fn zero() -> u128 {
         0
     }
+    #[inline]
     fn one() -> u128 {
         1
     }
+    #[inline]
     fn max_value() -> u128 {
         u128::max_value()
     }
@@ -74,18 +85,21 @@ pub trait UInt: Int {
 }
 
 impl UInt for u32 {
+    #[inline]
     fn log2_floor(self) -> u32 {
         31 - self.leading_zeros()
     }
 }
 
 impl UInt for u64 {
+    #[inline]
     fn log2_floor(self) -> u32 {
         63 - self.leading_zeros()
     }
 }
 
 impl UInt for u128 {
+    #[inline]
     fn log2_floor(self) -> u32 {
         127 - self.leading_zeros()
     }
@@ -97,54 +111,63 @@ pub trait CastFrom<T> {
 }
 
 impl<T: Int> CastFrom<T> for T {
+    #[inline]
     fn cast_from(value: Self) -> Self {
         value
     }
 }
 
 impl CastFrom<u64> for u8 {
+    #[inline]
     fn cast_from(value: u64) -> u8 {
         value as u8
     }
 }
 
 impl CastFrom<u64> for u16 {
+    #[inline]
     fn cast_from(value: u64) -> u16 {
         value as u16
     }
 }
 
 impl CastFrom<u64> for u32 {
+    #[inline]
     fn cast_from(value: u64) -> u32 {
         value as u32
     }
 }
 
 impl CastFrom<u128> for u32 {
+    #[inline]
     fn cast_from(value: u128) -> u32 {
         value as u32
     }
 }
 
 impl CastFrom<u32> for u64 {
+    #[inline]
     fn cast_from(value: u32) -> u64 {
         value as u64
     }
 }
 
 impl CastFrom<u128> for u64 {
+    #[inline]
     fn cast_from(value: u128) -> u64 {
         value as u64
     }
 }
 
 impl CastFrom<u32> for u128 {
+    #[inline]
     fn cast_from(value: u32) -> u128 {
         value as u128
     }
 }
 
 impl CastFrom<u64> for u128 {
+    #[inline]
     fn cast_from(value: u64) -> u128 {
         value as u128
     }
@@ -156,6 +179,7 @@ pub trait CastTo<T> {
 }
 
 impl<T, U: CastFrom<T>> CastTo<U> for T {
+    #[inline]
     fn cast_to(self) -> U {
         U::cast_from(self)
     }
