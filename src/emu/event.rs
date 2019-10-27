@@ -2,8 +2,12 @@
 
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::collections::BinaryHeap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::task::{Context, Poll};
 
 struct Entry {
     time: u64,
@@ -129,6 +133,29 @@ impl EventLoop {
         }
     }
 
+    /// Create a future that resolves after the specified cycle.
+    pub fn on_cycle(&self, cycle: u64) -> impl Future<Output = ()> + Send + 'static {
+        struct Timer(u64, bool);
+        impl Future for Timer {
+            type Output = ();
+
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+                // Needed to have a 'static lifetime, which is more useful fore user.
+                let event_loop = crate::event_loop();
+                if event_loop.cycle() >= self.0 {
+                    return Poll::Ready(());
+                }
+                if !self.1 {
+                    self.1 = true;
+                    let waker = cx.waker().clone();
+                    event_loop.queue(self.0, Box::new(move || waker.wake()));
+                }
+                Poll::Pending
+            }
+        }
+        Timer(cycle, false)
+    }
+
     /// Query the current time (we pretend to be operating at 100MHz at the moment)
     pub fn time(&self) -> u64 {
         self.cycle() / 100
@@ -138,8 +165,16 @@ impl EventLoop {
         self.queue(time * 100, handler);
     }
 
+    pub fn on_time(&self, time: u64) -> impl Future<Output = ()> + Send + 'static {
+        self.on_cycle(time * 100)
+    }
+
     /// Handle all events at or before `cycle`, and return the cycle of next event if any.
-    fn handle_events(&self, guard: &mut MutexGuard<BinaryHeap<Entry>>, cycle: u64) -> Option<u64> {
+    fn handle_events(
+        &self,
+        mut guard: &mut MutexGuard<BinaryHeap<Entry>>,
+        cycle: u64,
+    ) -> Option<u64> {
         loop {
             let time = match guard.peek() {
                 None => return None,
@@ -149,7 +184,9 @@ impl EventLoop {
                 return Some(time);
             }
             let entry = guard.pop().unwrap();
-            (entry.handler)();
+            MutexGuard::unlocked(&mut guard, || {
+                (entry.handler)();
+            });
         }
     }
 
@@ -176,5 +213,47 @@ impl EventLoop {
                 MutexGuard::unlocked(&mut guard, || unsafe { event_loop_wait() });
             }
         }
+    }
+
+    /// Spawn a [`Future`] on this event loop.
+    pub fn spawn(&self, future: impl Future<Output = ()> + Send + 'static) {
+        use futures::task::ArcWake;
+
+        struct Task<F> {
+            future: Mutex<Option<F>>,
+        }
+
+        impl<F: Future<Output = ()> + Send + 'static> ArcWake for Task<F> {
+            fn wake_by_ref(arc_self: &Arc<Self>) {
+                arc_self.clone().wake();
+            }
+
+            fn wake(self: Arc<Self>) {
+                // We're a bit lazy here without capturing `self`. But as we will only have 1
+                // single event loop, so this is probably okay.
+                let event_loop = crate::event_loop();
+                // Schedule an event to poll the task again
+                event_loop.queue(
+                    0,
+                    Box::new(move || {
+                        let waker_ref = futures::task::waker_ref(&self);
+                        let mut context = Context::from_waker(&waker_ref);
+
+                        let mut lock = self.future.lock();
+                        if let Some(ref mut future) = *lock {
+                            // This is safe because we are pinned by Arc.
+                            let poll = unsafe { Pin::new_unchecked(future) }.poll(&mut context);
+                            if poll.is_ready() {
+                                // When we polled a context to ready, drop the Future.
+                                *lock = None;
+                            }
+                        }
+                    }),
+                );
+            }
+        }
+
+        let task = Arc::new(Task { future: Mutex::new(Some(future)) });
+        task.wake();
     }
 }

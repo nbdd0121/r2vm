@@ -25,6 +25,7 @@ libslirp = { path = "lib/libslirp-rs", optional = true }
 eui48 = "0.4"
 lock_api = "0.3"
 parking_lot = "0.9"
+futures-preview = "0.3.0-alpha.19"
 softfp = { path = "lib/softfp" }
 p9 = { path = "lib/p9" }
 x86 = { path = "lib/x86" }
