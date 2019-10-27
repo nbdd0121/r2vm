@@ -14,7 +14,6 @@ fn size_to_config(col: u16, row: u16) -> [u8; 4] {
 /// A virtio entropy source device.
 pub struct Console {
     status: u32,
-    tx: Queue,
     irq: u32,
     /// Whether sizing feature should be available. We allow it to be turned off because sometimes
     /// STDIN is not tty.
@@ -23,33 +22,44 @@ pub struct Console {
     config: Arc<Mutex<([u8; 4], bool)>>,
 }
 
-fn put(queue: &mut Queue, buf: &[u8], irq: u32) {
-    if let Ok(Some(mut buffer)) = queue.try_take() {
-        let mut writer = buffer.writer();
-        writer.write_all(buf).unwrap();
-        unsafe { queue.put(buffer) };
+fn start_rx(mut rx: Queue, irq: u32) {
+    crate::event_loop().spawn(async move {
+        let mut buffer = [0; 2048];
+        loop {
+            let len = crate::io::console::CONSOLE.recv(&mut buffer).await.unwrap();
+            if let Ok(Some(mut dma_buffer)) = rx.try_take() {
+                let mut writer = dma_buffer.writer();
+                writer.write_all(&buffer[..len]).unwrap();
+                unsafe { rx.put(dma_buffer) };
 
-        crate::emu::PLIC.lock().trigger(irq);
-    } else {
-        info!(
-            target: "VirtioConsole",
-            "discard packet of size {:x} because there is no buffer in receiver queue",
-            buf.len()
-        );
-    }
+                crate::emu::PLIC.lock().trigger(irq);
+            } else {
+                info!(
+                    target: "VirtioConsole",
+                    "discard packet of size {:x} because there is no buffer in receiver queue",
+                    len
+                );
+            }
+        }
+    });
 }
 
-fn thread_run(mut queue: Queue, irq: u32) {
-    std::thread::Builder::new()
-        .name("virtio-console".to_owned())
-        .spawn(move || {
-            let mut buffer = [0; 2048];
-            loop {
-                let len = crate::io::console::CONSOLE.recv(&mut buffer).unwrap();
-                put(&mut queue, &buffer[..len], irq);
+fn start_tx(mut tx: Queue, irq: u32) {
+    crate::event_loop().spawn(async move {
+        while let Ok(buffer) = tx.take().await {
+            let mut reader = buffer.reader();
+
+            let mut io_buffer = Vec::with_capacity(reader.len());
+            unsafe { io_buffer.set_len(io_buffer.capacity()) };
+            reader.read_exact(&mut io_buffer).unwrap();
+            unsafe {
+                tx.put(buffer);
             }
-        })
-        .unwrap();
+
+            crate::io::console::CONSOLE.send(&io_buffer).unwrap();
+            crate::emu::PLIC.lock().trigger(irq);
+        }
+    });
 }
 
 impl Drop for Console {
@@ -97,7 +107,7 @@ impl Console {
             crate::io::console::CONSOLE.on_size_change(Some(callback));
         }
 
-        Console { status: 0, tx: Queue::new(), irq, resize, config }
+        Console { status: 0, irq, resize, config }
     }
 }
 
@@ -127,32 +137,12 @@ impl Device for Console {
     }
     fn reset(&mut self) {
         self.status = 0;
-        // TODO: If thread is running, we should terminate it before return here
-    }
-    fn notify(&mut self, idx: usize) {
-        if idx == 0 {
-            return;
-        }
-        while let Ok(Some(buffer)) = self.tx.try_take() {
-            let mut reader = buffer.reader();
-
-            let mut io_buffer = Vec::with_capacity(reader.len());
-            unsafe { io_buffer.set_len(io_buffer.capacity()) };
-            reader.read_exact(&mut io_buffer).unwrap();
-            unsafe {
-                self.tx.put(buffer);
-            }
-
-            crate::io::console::CONSOLE.send(&io_buffer).unwrap();
-        }
-
-        crate::emu::PLIC.lock().trigger(self.irq);
     }
     fn queue_ready(&mut self, idx: usize, queue: Queue) {
         if idx == 0 {
-            thread_run(queue, self.irq);
+            start_rx(queue, self.irq);
         } else {
-            self.tx = queue;
+            start_tx(queue, self.irq);
         }
     }
 

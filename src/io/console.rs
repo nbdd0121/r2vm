@@ -1,7 +1,10 @@
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use std::collections::VecDeque;
+use std::future::Future;
 use std::io::{Read, Write};
-use std::sync::mpsc::Receiver;
+use std::sync::Arc;
+use std::task::Waker;
 
 lazy_static! {
     /// Stores the tty config before the program is launched, so we can store it properly.
@@ -22,8 +25,13 @@ extern "C" fn console_exit() {
     }
 }
 
+struct Inner {
+    buffer: VecDeque<u8>,
+    waker: Option<Waker>,
+}
+
 pub struct Console {
-    rx: Mutex<Receiver<u8>>,
+    rx: Arc<Mutex<Inner>>,
     size_callback: Mutex<Option<Box<dyn FnMut() + Send>>>,
 }
 
@@ -55,11 +63,13 @@ impl Console {
             libc::tcsetattr(0, libc::TCSANOW, &tty);
         }
 
+        let inner = Arc::new(Mutex::new(Inner { buffer: VecDeque::new(), waker: None }));
+        let inner_clone = inner.clone();
+
         // Spawn a thread to handle keyboard inputs.
         // In the future this thread may also use epolls etc to handle other IOs.
         // We spawn a new thread instead of using non-blocking and let guest OS to pull us so we can
         // terminate the process using Ctrl+A X whenever we like.
-        let (tx, rx) = std::sync::mpsc::channel::<u8>();
         std::thread::Builder::new()
             .name("console".to_owned())
             .spawn(move || {
@@ -92,12 +102,14 @@ impl Console {
                             _ => continue,
                         }
                     }
-                    tx.send(buffer).unwrap();
+                    let mut inner = inner_clone.lock();
+                    inner.buffer.push_back(buffer);
+                    inner.waker.take().map(|x| x.wake());
                 }
             })
             .unwrap();
 
-        Console { rx: Mutex::new(rx), size_callback: Mutex::new(None) }
+        Console { rx: inner, size_callback: Mutex::new(None) }
     }
 
     pub fn send(&self, data: &[u8]) -> std::io::Result<usize> {
@@ -108,34 +120,54 @@ impl Console {
     }
 
     pub fn try_recv(&self, data: &mut [u8]) -> std::io::Result<usize> {
-        let rx = match self.rx.try_lock() {
+        let mut rx = match self.rx.try_lock() {
             Some(v) => v,
             None => return Ok(0),
         };
         let mut len = 0;
         while len < data.len() {
-            match rx.try_recv() {
-                Ok(key) => {
+            match rx.buffer.pop_front() {
+                Some(key) => {
                     data[len] = key;
                     len += 1;
                 }
-                Err(_) => break,
+                None => break,
             }
         }
         Ok(len)
     }
 
-    pub fn recv(&self, data: &mut [u8]) -> std::io::Result<usize> {
-        if data.len() == 0 {
-            return Ok(0);
-        }
-        match CONSOLE.rx.lock().recv() {
-            Ok(key) => {
-                data[0] = key;
+    pub async fn recv(&self, data: &mut [u8]) -> std::io::Result<usize> {
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+
+        struct RecvFuture<'a>(&'a Console, &'a mut [u8]);
+
+        impl<'a> Future for RecvFuture<'a> {
+            type Output = std::io::Result<usize>;
+
+            fn poll(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<std::io::Result<usize>> {
+                let mut inner = self.0.rx.lock();
+                if inner.buffer.is_empty() {
+                    inner.waker = Some(ctx.waker().clone());
+                    return Poll::Pending;
+                }
+
+                let mut len = 0;
+                while len < self.1.len() {
+                    match inner.buffer.pop_front() {
+                        Some(key) => {
+                            self.1[len] = key;
+                            len += 1;
+                        }
+                        None => break,
+                    }
+                }
+                Poll::Ready(Ok(len))
             }
-            Err(_) => loop {},
         }
-        Ok(self.try_recv(&mut data[1..])? + 1)
+
+        RecvFuture(self, data).await
     }
 
     pub fn get_size(&self) -> std::io::Result<(u16, u16)> {
