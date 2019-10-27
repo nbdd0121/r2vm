@@ -8,9 +8,9 @@ use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-#[cfg(feature = "slirp")]
-use crate::io::network::Slirp;
-#[cfg(feature = "slirp")]
+#[cfg(feature = "usernet")]
+use crate::io::network::Usernet;
+#[cfg(feature = "usernet")]
 use crate::io::virtio::Network;
 
 pub mod interp;
@@ -137,19 +137,19 @@ lazy_static! {
     };
 }
 
-#[cfg(feature = "slirp")]
+#[cfg(feature = "usernet")]
 fn init_network(sys: &mut IoSystem) {
     for config in crate::CONFIG.network.iter() {
         sys.add_virtio(|irq| {
             let mac = eui48::MacAddress::parse_str(&config.mac)
                 .expect("unexpected mac address")
                 .to_array();
-            Network::new(irq, Slirp::new(), mac)
+            Network::new(irq, Usernet::new(), mac)
         });
     }
 }
 
-#[cfg(not(feature = "slirp"))]
+#[cfg(not(feature = "usernet"))]
 fn init_network(_sys: &mut IoSystem) {}
 
 fn init_virtio(sys: &mut IoSystem) {

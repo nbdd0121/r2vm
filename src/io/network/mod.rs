@@ -1,14 +1,16 @@
+use async_trait::async_trait;
 use std::io::Result;
 
 mod logger;
-#[cfg(feature = "slirp")]
-mod slirp;
+#[cfg(feature = "usernet")]
+mod usernet;
 
+#[cfg(feature = "usernet")]
+pub use self::usernet::Usernet;
 pub use logger::Logger;
-#[cfg(feature = "slirp")]
-pub use slirp::Slirp;
 
+#[async_trait]
 pub trait Network: Send + Sync {
-    fn send(&self, buf: &[u8]) -> Result<usize>;
-    fn recv(&self, buf: &mut [u8]) -> Result<usize>;
+    async fn send(&self, buf: &[u8]) -> Result<usize>;
+    async fn recv(&self, buf: &mut [u8]) -> Result<usize>;
 }

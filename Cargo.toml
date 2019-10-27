@@ -25,6 +25,7 @@ eui48 = "0.4"
 lock_api = "0.3"
 parking_lot = "0.9"
 futures-preview = "0.3.0-alpha.19"
+async-trait = "0.1"
 softfp = { path = "lib/softfp" }
 p9 = { path = "lib/p9" }
 x86 = { path = "lib/x86" }
@@ -43,7 +44,6 @@ panic = "abort"
 debug = true
 
 [features]
-default = ["slirp"]
+default = ["usernet"]
 direct = []
 sanitize = []
-slirp = ["usernet"]

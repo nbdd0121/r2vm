@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use byteorder::{WriteBytesExt, LE};
 use parking_lot::Mutex;
 use std::fs::File;
@@ -37,14 +38,15 @@ impl<T: Network> Logger<T> {
     }
 }
 
+#[async_trait]
 impl<T: Network> Network for Logger<T> {
-    fn send(&self, buf: &[u8]) -> Result<usize> {
+    async fn send(&self, buf: &[u8]) -> Result<usize> {
         self.log(buf)?;
-        self.network.send(buf)
+        self.network.send(buf).await
     }
 
-    fn recv(&self, buf: &mut [u8]) -> Result<usize> {
-        let len = self.network.recv(buf)?;
+    async fn recv(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.network.recv(buf).await?;
         self.log(&buf[..len])?;
         Ok(len)
     }
