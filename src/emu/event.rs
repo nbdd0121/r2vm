@@ -1,5 +1,6 @@
 //! This module handles event-driven simulation
 
+use futures::future::AbortHandle;
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::collections::BinaryHeap;
 use std::future::Future;
@@ -255,5 +256,17 @@ impl EventLoop {
 
         let task = Arc::new(Task { future: Mutex::new(Some(future)) });
         task.wake();
+    }
+
+    /// Spawn an abortable [`Future`], returning its abort handle.
+    pub fn spawn_abortable(
+        &self,
+        future: impl Future<Output = ()> + Send + 'static,
+    ) -> AbortHandle {
+        let (handle, reg) = AbortHandle::new_pair();
+        self.spawn(async move {
+            let _ = futures::future::Abortable::new(future, reg).await;
+        });
+        handle
     }
 }

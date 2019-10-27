@@ -1,4 +1,5 @@
 use super::{Device, DeviceId, Queue};
+use futures::future::AbortHandle;
 use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -20,10 +21,11 @@ pub struct Console {
     resize: bool,
     // Keep config with whether it has changed
     config: Arc<Mutex<([u8; 4], bool)>>,
+    rx_handle: Option<AbortHandle>,
 }
 
-fn start_rx(mut rx: Queue, irq: u32) {
-    crate::event_loop().spawn(async move {
+fn start_rx(mut rx: Queue, irq: u32) -> AbortHandle {
+    crate::event_loop().spawn_abortable(async move {
         let mut buffer = [0; 2048];
         loop {
             let len = crate::io::console::CONSOLE.recv(&mut buffer).await.unwrap();
@@ -41,7 +43,7 @@ fn start_rx(mut rx: Queue, irq: u32) {
                 );
             }
         }
-    });
+    })
 }
 
 fn start_tx(mut tx: Queue, irq: u32) {
@@ -107,7 +109,7 @@ impl Console {
             crate::io::console::CONSOLE.on_size_change(Some(callback));
         }
 
-        Console { status: 0, irq, resize, config }
+        Console { status: 0, irq, resize, config, rx_handle: None }
     }
 }
 
@@ -137,10 +139,12 @@ impl Device for Console {
     }
     fn reset(&mut self) {
         self.status = 0;
+        self.rx_handle.take().map(|x| x.abort());
     }
     fn queue_ready(&mut self, idx: usize, queue: Queue) {
         if idx == 0 {
-            start_rx(queue, self.irq);
+            self.rx_handle.take().map(|x| x.abort());
+            self.rx_handle = Some(start_rx(queue, self.irq));
         } else {
             start_tx(queue, self.irq);
         }

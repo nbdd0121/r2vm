@@ -1,5 +1,6 @@
 use super::{Device, DeviceId, Queue};
 use crate::io::network::Network as NetworkDevice;
+use futures::future::AbortHandle;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -22,6 +23,7 @@ pub struct Network {
     status: u32,
     mac: [u8; 6],
     irq: u32,
+    rx_handle: Option<AbortHandle>,
 }
 
 fn start_tx(iface: Arc<dyn NetworkDevice>, mut tx: Queue, irq: u32) {
@@ -51,8 +53,8 @@ fn start_tx(iface: Arc<dyn NetworkDevice>, mut tx: Queue, irq: u32) {
     });
 }
 
-fn start_rx(iface: Arc<dyn NetworkDevice>, mut rx: Queue, irq: u32) {
-    crate::event_loop().spawn(async move {
+fn start_rx(iface: Arc<dyn NetworkDevice>, mut rx: Queue, irq: u32) -> AbortHandle {
+    crate::event_loop().spawn_abortable(async move {
         let mut buffer = [0; 2048];
         loop {
             let len = iface.recv(&mut buffer).await.unwrap();
@@ -94,13 +96,13 @@ fn start_rx(iface: Arc<dyn NetworkDevice>, mut rx: Queue, irq: u32) {
                 ),
             }
         }
-    });
+    })
 }
 
 impl Network {
     pub fn new(irq: u32, net: impl NetworkDevice + 'static, mac: [u8; 6]) -> Network {
         let net = Arc::new(net);
-        Network { net, status: 0, mac, irq }
+        Network { net, status: 0, mac, irq, rx_handle: None }
     }
 }
 
@@ -126,10 +128,12 @@ impl Device for Network {
     }
     fn reset(&mut self) {
         self.status = 0;
+        self.rx_handle.take().map(|x| x.abort());
     }
     fn queue_ready(&mut self, idx: usize, queue: Queue) {
         if idx == 0 {
-            start_rx(self.net.clone(), queue, self.irq);
+            self.rx_handle.take().map(|x| x.abort());
+            self.rx_handle = Some(start_rx(self.net.clone(), queue, self.irq));
         } else {
             start_tx(self.net.clone(), queue, self.irq);
         }
