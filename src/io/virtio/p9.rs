@@ -59,8 +59,8 @@ impl Device for P9 {
     fn num_queues(&self) -> usize {
         1
     }
-    fn with_queue(&mut self, _idx: usize, f: &mut dyn FnMut(&mut Queue)) {
-        f(&mut self.queue)
+    fn queue_ready(&mut self, _idx: usize, queue: Queue) {
+        self.queue = queue;
     }
     fn reset(&mut self) {
         self.status = 0;

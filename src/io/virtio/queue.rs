@@ -38,6 +38,21 @@ pub(super) struct QueueInner {
 }
 
 impl QueueInner {
+    pub fn new(num_max: u16) -> Arc<Mutex<QueueInner>> {
+        let inner = Arc::new(Mutex::new(QueueInner {
+            ready: false,
+            num: num_max,
+            num_max,
+            desc_addr: 0,
+            avail_addr: 0,
+            used_addr: 0,
+            waker: None,
+            last_avail_idx: 0,
+            last_used_idx: 0,
+        }));
+        inner
+    }
+
     pub fn reset(&mut self) {
         self.ready = false;
         self.num = self.num_max;
@@ -60,17 +75,7 @@ impl Queue {
     }
 
     pub fn new_with_max(max: u16) -> Queue {
-        let inner = Arc::new(Mutex::new(QueueInner {
-            ready: false,
-            num: max,
-            num_max: max,
-            desc_addr: 0,
-            avail_addr: 0,
-            used_addr: 0,
-            waker: None,
-            last_avail_idx: 0,
-            last_used_idx: 0,
-        }));
+        let inner = QueueInner::new(max);
         Queue { inner }
     }
 
@@ -191,6 +196,8 @@ pub struct Buffer {
     write: Vec<IoSliceMut<'static>>,
 }
 
+unsafe impl Send for Buffer {}
+
 impl Buffer {
     pub fn reader(&self) -> BufferReader {
         BufferReader::new(&self.read)
@@ -212,6 +219,8 @@ pub struct BufferReader<'a> {
     slice_idx: usize,
     slice_offset: usize,
 }
+
+unsafe impl Send for BufferReader<'_> {}
 
 impl<'a> BufferReader<'a> {
     fn new(buffer: &'a [IoSlice<'static>]) -> Self {
@@ -293,6 +302,8 @@ pub struct BufferWriter<'a> {
     slice_idx: usize,
     slice_offset: usize,
 }
+
+unsafe impl Send for BufferWriter<'_> {}
 
 impl<'a> BufferWriter<'a> {
     pub fn new(buffer: &'a mut [IoSliceMut<'static>], bytes_written: &'a mut usize) -> Self {

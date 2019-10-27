@@ -39,13 +39,13 @@ pub struct Mmio {
 }
 
 impl Mmio {
-    pub fn new(mut dev: Box<dyn Device + Send>) -> Mmio {
+    pub fn new(dev: Box<dyn Device + Send>) -> Mmio {
         let num_queues = dev.num_queues();
         let mut queues = Vec::with_capacity(num_queues);
         for i in 0..num_queues {
-            dev.with_queue(i, &mut |queue| {
-                queues.push(queue.inner.clone());
-            })
+            let len_max = dev.max_queue_len(i);
+            let queue = super::queue::QueueInner::new(len_max);
+            queues.push(queue);
         }
         Mmio {
             device: dev,
@@ -225,15 +225,26 @@ impl IoMemory for Mmio {
                 std::mem::drop(queue);
 
                 if addr == ADDR_QUEUE_READY && value & 1 != 0 {
-                    self.device.queue_ready(self.queue_sel);
+                    self.device.queue_ready(
+                        self.queue_sel,
+                        super::Queue { inner: self.queues[self.queue_sel].clone() },
+                    );
                 }
             }
             ADDR_INTERRUPT_ACK => self.device.interrupt_ack(value),
             ADDR_STATUS => {
                 if value == 0 {
                     self.device.reset();
-                    for queue in self.queues.iter() {
-                        queue.lock().reset();
+                    // Upon reset, reset all queues, and replace them with new queue instances.
+                    // Replacing them can hopefully allow devices to gracefully terminate tasks.
+                    for (i, queue) in self.queues.iter_mut().enumerate() {
+                        {
+                            let mut lock = queue.lock();
+                            lock.reset();
+                            lock.waker.take().map(|x| x.wake());
+                        }
+                        let inner = super::queue::QueueInner::new(self.device.max_queue_len(i));
+                        *queue = inner;
                     }
                     self.queue_sel = 0;
                     self.device_features_sel = false;

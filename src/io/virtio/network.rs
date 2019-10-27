@@ -1,6 +1,5 @@
 use super::{Device, DeviceId, Queue};
 use crate::io::network::Network as NetworkDevice;
-use parking_lot::Mutex;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -21,14 +20,12 @@ struct VirtioNetHeader {
 pub struct Network {
     net: Arc<dyn NetworkDevice>,
     status: u32,
-    rx: Arc<Mutex<Queue>>,
     tx: Queue,
     mac: [u8; 6],
     irq: u32,
 }
 
-fn send_packet(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
-    let mut queue = queue.lock();
+fn send_packet(queue: &mut Queue, buf: &[u8], irq: u32) {
     if let Ok(Some(mut buffer)) = queue.try_take() {
         let mut writer = buffer.writer();
         let header: [u8; std::mem::size_of::<VirtioNetHeader>()] = {
@@ -65,7 +62,7 @@ fn send_packet(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
     }
 }
 
-fn thread_run(iface: Arc<dyn NetworkDevice>, queue: Arc<Mutex<Queue>>, irq: u32) {
+fn thread_run(iface: Arc<dyn NetworkDevice>, mut queue: Queue, irq: u32) {
     // There's no stop mechanism, but we don't destroy devices anyway, so that's okay.
     std::thread::Builder::new()
         .name("virtio-network".to_owned())
@@ -73,7 +70,7 @@ fn thread_run(iface: Arc<dyn NetworkDevice>, queue: Arc<Mutex<Queue>>, irq: u32)
             let mut buffer = [0; 2048];
             loop {
                 let len = iface.recv(&mut buffer).unwrap();
-                send_packet(&queue, &buffer[..len], irq);
+                send_packet(&mut queue, &buffer[..len], irq);
             }
         })
         .unwrap();
@@ -81,9 +78,8 @@ fn thread_run(iface: Arc<dyn NetworkDevice>, queue: Arc<Mutex<Queue>>, irq: u32)
 
 impl Network {
     pub fn new(irq: u32, net: impl NetworkDevice + 'static, mac: [u8; 6]) -> Network {
-        let queue = Arc::new(Mutex::new(Queue::new()));
         let net = Arc::new(net);
-        Network { net, status: 0, rx: queue, tx: Queue::new(), mac, irq }
+        Network { net, status: 0, tx: Queue::new(), mac, irq }
     }
 }
 
@@ -107,16 +103,11 @@ impl Device for Network {
     fn num_queues(&self) -> usize {
         2
     }
-    fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue)) {
-        if idx == 0 { f(&mut self.rx.lock()) } else { f(&mut self.tx) }
-        // TODO: If thread is running, we should terminate it before return here
-    }
     fn reset(&mut self) {
         self.status = 0;
     }
     fn notify(&mut self, idx: usize) {
         if idx == 0 {
-            eprintln!("Filling receving queue");
             return;
         }
         while let Ok(Some(buffer)) = self.tx.try_take() {
@@ -145,9 +136,11 @@ impl Device for Network {
         crate::emu::PLIC.lock().trigger(self.irq);
     }
 
-    fn queue_ready(&mut self, idx: usize) {
+    fn queue_ready(&mut self, idx: usize, queue: Queue) {
         if idx == 0 {
-            thread_run(self.net.clone(), self.rx.clone(), self.irq);
+            thread_run(self.net.clone(), queue, self.irq);
+        } else {
+            self.tx = queue;
         }
     }
 }

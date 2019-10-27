@@ -14,7 +14,6 @@ fn size_to_config(col: u16, row: u16) -> [u8; 4] {
 /// A virtio entropy source device.
 pub struct Console {
     status: u32,
-    rx: Arc<Mutex<Queue>>,
     tx: Queue,
     irq: u32,
     /// Whether sizing feature should be available. We allow it to be turned off because sometimes
@@ -24,8 +23,7 @@ pub struct Console {
     config: Arc<Mutex<([u8; 4], bool)>>,
 }
 
-fn put(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
-    let mut queue = queue.lock();
+fn put(queue: &mut Queue, buf: &[u8], irq: u32) {
     if let Ok(Some(mut buffer)) = queue.try_take() {
         let mut writer = buffer.writer();
         writer.write_all(buf).unwrap();
@@ -41,14 +39,14 @@ fn put(queue: &Arc<Mutex<Queue>>, buf: &[u8], irq: u32) {
     }
 }
 
-fn thread_run(queue: Arc<Mutex<Queue>>, irq: u32) {
+fn thread_run(mut queue: Queue, irq: u32) {
     std::thread::Builder::new()
         .name("virtio-console".to_owned())
         .spawn(move || {
             let mut buffer = [0; 2048];
             loop {
                 let len = crate::io::console::CONSOLE.recv(&mut buffer).unwrap();
-                put(&queue, &buffer[..len], irq);
+                put(&mut queue, &buffer[..len], irq);
             }
         })
         .unwrap();
@@ -62,7 +60,6 @@ impl Drop for Console {
 
 impl Console {
     pub fn new(irq: u32, mut resize: bool) -> Console {
-        let queue = Arc::new(Mutex::new(Queue::new_with_max(128)));
         let (col, row) = if resize {
             match crate::io::console::CONSOLE.get_size() {
                 Ok(v) => v,
@@ -100,7 +97,7 @@ impl Console {
             crate::io::console::CONSOLE.on_size_change(Some(callback));
         }
 
-        Console { status: 0, rx: queue, tx: Queue::new(), irq, resize, config }
+        Console { status: 0, tx: Queue::new(), irq, resize, config }
     }
 }
 
@@ -125,8 +122,8 @@ impl Device for Console {
     fn num_queues(&self) -> usize {
         2
     }
-    fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue)) {
-        if idx == 0 { f(&mut self.rx.lock()) } else { f(&mut self.tx) }
+    fn max_queue_len(&self, idx: usize) -> u16 {
+        if idx == 0 { 128 } else { 32768 }
     }
     fn reset(&mut self) {
         self.status = 0;
@@ -134,7 +131,6 @@ impl Device for Console {
     }
     fn notify(&mut self, idx: usize) {
         if idx == 0 {
-            eprintln!("Filling receving queue");
             return;
         }
         while let Ok(Some(buffer)) = self.tx.try_take() {
@@ -152,9 +148,11 @@ impl Device for Console {
 
         crate::emu::PLIC.lock().trigger(self.irq);
     }
-    fn queue_ready(&mut self, idx: usize) {
+    fn queue_ready(&mut self, idx: usize, queue: Queue) {
         if idx == 0 {
-            thread_run(self.rx.clone(), self.irq);
+            thread_run(queue, self.irq);
+        } else {
+            self.tx = queue;
         }
     }
 

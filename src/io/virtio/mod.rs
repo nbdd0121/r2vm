@@ -55,17 +55,19 @@ pub trait Device {
     /// Get number of queues of this device
     fn num_queues(&self) -> usize;
 
-    /// Operate on a queue associated with the device
-    fn with_queue(&mut self, idx: usize, f: &mut dyn FnMut(&mut Queue));
+    /// Get the maximum length of a queue.
+    fn max_queue_len(&self, _idx: usize) -> u16 {
+        32768
+    }
 
     /// Reset a device
     fn reset(&mut self);
 
     /// Notify that a buffer has been queued
-    fn notify(&mut self, idx: usize);
+    fn notify(&mut self, _idx: usize) {}
 
     /// Notify the device that the queue is ready
-    fn queue_ready(&mut self, _idx: usize) {}
+    fn queue_ready(&mut self, idx: usize, queue: Queue);
 
     /// Query what has caused the interrupt to be sent.
     fn interrupt_status(&mut self) -> u32 {
