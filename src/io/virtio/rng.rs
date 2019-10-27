@@ -1,11 +1,17 @@
 use super::{Device, DeviceId, Queue};
+use parking_lot::Mutex;
 use rand::SeedableRng;
 use std::io::Read;
+use std::sync::Arc;
 
 /// A virtio entropy source device.
 pub struct Rng {
     status: u32,
-    queue: Queue,
+    inner: Arc<Mutex<Inner>>,
+}
+
+/// struct used by task
+struct Inner {
     rng: Box<dyn rand::RngCore + Send>,
     irq: u32,
 }
@@ -13,7 +19,8 @@ pub struct Rng {
 impl Rng {
     /// Create a virtio entropy source device using a given random number generator.
     pub fn new(irq: u32, rng: Box<dyn rand::RngCore + Send>) -> Rng {
-        Rng { status: 0, queue: Queue::new(), rng, irq }
+        let inner = Arc::new(Mutex::new(Inner { rng, irq }));
+        Rng { status: 0, inner }
     }
 
     /// Create a virtio entropy source device, fulfilled by OS's entropy source.
@@ -26,6 +33,21 @@ impl Rng {
     pub fn new_seeded(irq: u32, seed: u64) -> Rng {
         Self::new(irq, Box::new(rand::rngs::StdRng::seed_from_u64(seed)))
     }
+}
+
+fn start_task(inner: Arc<Mutex<Inner>>, mut queue: Queue) {
+    crate::event_loop().spawn(async move {
+        while let Ok(mut buffer) = queue.take().await {
+            let mut inner = inner.lock();
+            let rng: &mut dyn rand::RngCore = &mut inner.rng;
+            let mut writer = buffer.writer();
+            std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();
+            unsafe {
+                queue.put(buffer);
+            }
+            crate::emu::PLIC.lock().trigger(inner.irq);
+        }
+    })
 }
 
 impl Device for Rng {
@@ -48,22 +70,10 @@ impl Device for Rng {
     fn num_queues(&self) -> usize {
         1
     }
-    fn queue_ready(&mut self, _idx: usize, queue: Queue) {
-        self.queue = queue;
-    }
     fn reset(&mut self) {
         self.status = 0;
     }
-    fn notify(&mut self, _idx: usize) {
-        while let Ok(Some(mut buffer)) = self.queue.try_take() {
-            let rng: &mut dyn rand::RngCore = &mut self.rng;
-            let mut writer = buffer.writer();
-            std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();
-            unsafe {
-                self.queue.put(buffer);
-            }
-        }
-
-        crate::emu::PLIC.lock().trigger(self.irq);
+    fn queue_ready(&mut self, _idx: usize, queue: Queue) {
+        start_task(self.inner.clone(), queue);
     }
 }
