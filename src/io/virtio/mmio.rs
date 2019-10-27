@@ -184,8 +184,6 @@ impl IoMemory for Mmio {
                 if let Some(waker) = self.queues[self.queue_sel].lock().waker.take() {
                     waker.wake();
                 }
-
-                self.device.notify(self.queue_sel);
             }
             ADDR_QUEUE_NUM..=ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW..=ADDR_QUEUE_USED_HIGH => {
                 if self.queue_sel >= self.device.num_queues() {

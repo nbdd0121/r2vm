@@ -63,9 +63,6 @@ pub trait Device {
     /// Reset a device
     fn reset(&mut self);
 
-    /// Notify that a buffer has been queued
-    fn notify(&mut self, _idx: usize) {}
-
     /// Notify the device that the queue is ready
     fn queue_ready(&mut self, idx: usize, queue: Queue);
 
