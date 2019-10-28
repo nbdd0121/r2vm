@@ -63,57 +63,40 @@ impl QueueInner {
         self.last_avail_idx = 0;
         self.last_used_idx = 0;
     }
-}
-
-pub struct Queue {
-    pub(super) inner: Arc<Mutex<QueueInner>>,
-}
-
-impl Queue {
-    pub fn new() -> Queue {
-        Self::new_with_max(32768)
-    }
-
-    pub fn new_with_max(max: u16) -> Queue {
-        let inner = QueueInner::new(max);
-        Queue { inner }
-    }
 
     /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
     /// returned.
     pub fn try_take(&mut self) -> Result<Option<Buffer>, QueueNotReady> {
-        let mut inner = self.inner.lock();
-
         // If the queue is not ready, trying to take item from it can cause segfault.
-        if !inner.ready {
+        if !self.ready {
             return Err(QueueNotReady);
         }
 
-        let avail_idx_ptr = unsafe { &*((inner.avail_addr + 2) as usize as *const AtomicU16) };
+        let avail_idx_ptr = unsafe { &*((self.avail_addr + 2) as usize as *const AtomicU16) };
 
         // Read the current index
         let avail_idx = avail_idx_ptr.load(Ordering::Acquire);
 
         // No extra elements in this queue
-        if inner.last_avail_idx == avail_idx {
+        if self.last_avail_idx == avail_idx {
             return Ok(None);
         }
 
         // Obtain the corresponding descriptor index for a given index of available ring.
         // Each index is 2 bytes, and there are flags and idx (2 bytes each) before the ring, so
         // we have + 4 here.
-        let idx_ptr = inner.avail_addr + 4 + (inner.last_avail_idx & (inner.num - 1)) as u64 * 2;
+        let idx_ptr = self.avail_addr + 4 + (self.last_avail_idx & (self.num - 1)) as u64 * 2;
         let mut idx = unsafe { *(idx_ptr as usize as *const u16) };
 
         // Now we have obtained this descriptor, increment the index to skip over this.
-        inner.last_avail_idx = inner.last_avail_idx.wrapping_add(1);
+        self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
 
         let mut avail = Buffer { idx, bytes_written: 0, read: Vec::new(), write: Vec::new() };
 
         loop {
             let desc = unsafe {
                 std::ptr::read(
-                    (inner.desc_addr + (idx & (inner.num - 1)) as u64 * 16) as usize
+                    (self.desc_addr + (idx & (self.num - 1)) as u64 * 16) as usize
                         as *const VirtqDesc,
                 )
             };
@@ -141,6 +124,18 @@ impl Queue {
 
         Ok(Some(avail))
     }
+}
+
+pub struct Queue {
+    pub(super) inner: Arc<Mutex<QueueInner>>,
+}
+
+impl Queue {
+    /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
+    /// returned.
+    pub fn try_take(&mut self) -> Result<Option<Buffer>, QueueNotReady> {
+        self.inner.lock().try_take()
+    }
 
     // This is to be changed to async fn once 1.39 arrives.
     pub fn take(&mut self) -> impl Future<Output = Result<Buffer, QueueNotReady>> + '_ {
@@ -152,12 +147,13 @@ impl Queue {
         impl Future for Take<'_> {
             type Output = Result<Buffer, QueueNotReady>;
 
-            fn poll(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Self::Output> {
-                match self.queue.try_take() {
+            fn poll(self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Self::Output> {
+                let mut inner = self.queue.inner.lock();
+                match inner.try_take() {
                     Err(v) => Poll::Ready(Err(v)),
                     Ok(Some(v)) => Poll::Ready(Ok(v)),
                     Ok(None) => {
-                        self.queue.inner.lock().waker = Some(ctx.waker().clone());
+                        inner.waker = Some(ctx.waker().clone());
                         Poll::Pending
                     }
                 }
