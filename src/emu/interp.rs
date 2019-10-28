@@ -249,9 +249,16 @@ impl Context {
         Ok(())
     }
 
+    /// Check whether interrupt is enabled
+    pub fn interrupt_enabled(&self) -> bool {
+        // If we're in lower privilege mode, interrupt is always enabled.
+        // Otherwise check SSTATUS.SIE
+        self.prv == 0 || self.sstatus & 0x2 != 0
+    }
+
     /// Obtaining a bitmask of pending interrupts
     pub fn interrupt_pending(&mut self) -> u64 {
-        if (self.sstatus & 0x2) != 0 {
+        if self.interrupt_enabled() {
             self.shared.sip.load(MemOrder::Relaxed) & self.sie
         } else {
             0
@@ -1698,6 +1705,10 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             ctx.sstatus |= 0x20;
             // Set SPP to U
             ctx.sstatus &=! 0x100;
+
+            if ctx.interrupt_pending() != 0 {
+                ctx.shared.alert()
+            }
         }
         Op::Wfi => {
             if crate::threaded() { ctx.shared.wait_alarm() }
