@@ -9,8 +9,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v1
-    - name: Rustup
-      uses: actions-rs/toolchain@v1
+      with:
+        submodules: recursive
+    - uses: actions-rs/toolchain@v1
       with:
         toolchain: nightly
         override: true
