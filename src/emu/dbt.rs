@@ -2178,6 +2178,9 @@ impl<'a> DbtCompiler<'a> {
     /// Finish compilation with the last instruction spanning across two pages.
     pub fn end_cross(&mut self, lo_bits: u16) {
         self.pre_adjust_pc_instret(false);
+        // emit_icache_access implicitly uses get_ebx, so need to get pc_cur and instret right.
+        self.pc_cur = -4;
+        self.instret = -1;
 
         // Access the word at the boundary. Keep RSI, as we will need its value.
         self.emit_icache_access(-2, true);
