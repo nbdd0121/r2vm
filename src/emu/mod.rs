@@ -144,7 +144,18 @@ fn init_network(sys: &mut IoSystem) {
             let mac = eui48::MacAddress::parse_str(&config.mac)
                 .expect("unexpected mac address")
                 .to_array();
-            Network::new(irq, Usernet::new(), mac)
+            let usernet = Usernet::new();
+            for fwd in config.forward.iter() {
+                usernet
+                    .add_host_forward(
+                        fwd.protocol == crate::config::ForwardProtocol::Udp,
+                        fwd.host_addr,
+                        fwd.host_port,
+                        fwd.guest_port,
+                    )
+                    .expect("cannot establish port forwarding");
+            }
+            Network::new(irq, usernet, mac)
         });
     }
 }

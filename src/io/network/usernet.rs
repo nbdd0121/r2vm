@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use std::future::Future;
+use std::net::Ipv4Addr;
 use std::pin::Pin;
 
 pub struct Usernet {
@@ -35,6 +36,17 @@ impl Usernet {
         };
         let usernet = usernet::Network::new(&usernet_opt, EventLoopContext);
         Self { inner: usernet }
+    }
+
+    /// Forward a host port to a guest port.
+    pub fn add_host_forward(
+        &self,
+        udp: bool,
+        host_addr: Ipv4Addr,
+        host_port: u16,
+        guest_port: u16,
+    ) -> std::io::Result<()> {
+        self.inner.add_host_forward(udp, host_addr, host_port, None, guest_port)
     }
 }
 

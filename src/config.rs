@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
 
 fn return_true() -> bool {
@@ -112,6 +113,33 @@ pub struct ShareConfig {
     pub path: PathBuf,
 }
 
+fn default_host_addr() -> Ipv4Addr {
+    Ipv4Addr::new(127, 0, 0, 1)
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ForwardProtocol {
+    Tcp,
+    Udp,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ForwardConfig {
+    /// The protocol to forward.
+    pub protocol: ForwardProtocol,
+
+    /// The IP address that host listens to.
+    #[serde(default = "default_host_addr")]
+    pub host_addr: Ipv4Addr,
+
+    /// The port number that host listens to.
+    pub host_port: u16,
+
+    /// The port number that guest listens on.
+    pub guest_port: u16,
+}
+
 fn default_mac() -> String {
     "02:00:00:00:00:01".to_owned()
 }
@@ -121,4 +149,8 @@ pub struct NetworkConfig {
     /// MAC address. For convience, we first parse it as string.
     #[serde(default = "default_mac")]
     pub mac: String,
+
+    /// Forward configurations.
+    #[serde(default)]
+    pub forward: Vec<ForwardConfig>,
 }

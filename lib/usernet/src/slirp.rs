@@ -21,6 +21,7 @@ extern "C" {
 /// Emulated network interface.
 pub struct Network {
     context: Arc<Mutex<Inner>>,
+    dhcp_start: Ipv4Addr,
 }
 
 impl Drop for Network {
@@ -334,7 +335,7 @@ impl Network {
             .unwrap();
 
         assert!(!context.is_null());
-        Network { context: inner }
+        Network { context: inner, dhcp_start: vdhcp_start }
     }
 
     /// Send a packet to the interface.
@@ -386,6 +387,32 @@ impl Network {
         }
 
         RecvFuture(self, buf).await
+    }
+
+    /// Forward a host port to a guest port.
+    pub fn add_host_forward(
+        &self,
+        udp: bool,
+        host_addr: Ipv4Addr,
+        host_port: u16,
+        guest_addr: Option<Ipv4Addr>,
+        guest_port: u16,
+    ) -> std::io::Result<()> {
+        let lock = self.context.lock();
+        if unsafe {
+            slirp_add_hostfwd(
+                lock.slirp,
+                udp as _,
+                host_addr.into(),
+                host_port as _,
+                guest_addr.unwrap_or(self.dhcp_start).into(),
+                guest_port as _,
+            )
+        } < 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     /// Serialise the current state to a [`Write`] stream. The bytes written into `writer` are
