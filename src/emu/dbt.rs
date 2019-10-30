@@ -2035,7 +2035,7 @@ impl<'a> DbtCompiler<'a> {
         self.pc_end = self.pc_cur + blen + olen;
         if !same_cache_line(
             self.pc_start.wrapping_add(self.pc_cur as u64) - 1,
-            self.pc_start.wrapping_add(self.pc_start as u64) - 1,
+            self.pc_start.wrapping_add(self.pc_end as u64) - 1,
         ) {
             self.emit_icache_access(self.pc_end - 1, false);
         }
