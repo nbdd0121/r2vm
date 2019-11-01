@@ -297,7 +297,11 @@ pub fn main() {
                     let name = if idx == 0 {
                         "event-loop".to_owned()
                     } else {
-                        format!("hart {}", idx - 1)
+                        if crate::get_flags().perf {
+                            "hart".to_owned()
+                        } else {
+                            format!("hart {}", idx - 1)
+                        }
                     };
 
                     std::thread::Builder::new()
