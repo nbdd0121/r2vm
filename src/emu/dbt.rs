@@ -39,6 +39,7 @@ extern "C" {
     fn read_csr();
     fn write_csr();
     fn fiber_yield_raw();
+    fn fiber_sleep_raw();
     fn riscv_step();
     fn helper_trap();
     fn helper_read_misalign();
@@ -72,6 +73,10 @@ pub struct DbtCompiler<'a> {
 
     /// The current minstret relative to `ctx.minstret`
     minstret: u32,
+
+    /// Number of cycles that the execution is expected to take after the last side effect.
+    /// Useful only in lockstep mode.
+    cycles: usize,
 
     /// The offset past the speculative guard.
     pub speculative_len: usize,
@@ -114,6 +119,7 @@ impl<'a> DbtCompiler<'a> {
             pc_end: 0,
             pc_cur: 0,
             instret: 0,
+            cycles: 0,
             speculative_len: 0,
         }
     }
@@ -285,6 +291,8 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_step_call(&mut self, op: &Op) {
+        self.before_side_effect();
+
         self.emit(Mov(Reg(Register::RDI), OpReg(Register::RBP)));
         // We currently assume that the instruction that we step through are exactly 8 bytes.
         let op: i64 = unsafe { std::mem::transmute(*op) };
@@ -295,6 +303,23 @@ impl<'a> DbtCompiler<'a> {
 
         let ebx = self.get_ebx();
         self.slow_path.push(SlowPath::Trap(ebx, jcc_trap));
+    }
+
+    /// This should be called when the generated code will create some side-effect visible to other
+    /// harts. It will generate necessary yields to make sure lock-step can function well.
+    fn before_side_effect(&mut self) {
+        if self.cycles == 0 {
+            return;
+        }
+        if !crate::threaded() {
+            if self.cycles == 1 {
+                self.emit_helper_call(fiber_yield_raw);
+            } else {
+                self.emit(Mov(Register::RDI.into(), Imm((self.cycles - 1) as i64)));
+                self.emit_helper_call(fiber_sleep_raw);
+            }
+        }
+        self.cycles = 0;
     }
 
     //
@@ -328,10 +353,9 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
         }
 
-        if !crate::threaded() {
-            self.emit_helper_call(fiber_yield_raw);
-        }
-
+        // Emit interrupt check, and set cycles in cycle-accurate mode
+        let old_cycles = self.cycles;
+        self.cycles += 1;
         self.emit_interrupt_check();
 
         let target =
@@ -358,6 +382,7 @@ impl<'a> DbtCompiler<'a> {
         // Restore
         self.pc_cur = old_pc_cur;
         self.instret = old_instret;
+        self.cycles = old_cycles;
 
         let label_not = self.label();
         self.patch(jcc_not, label_not);
@@ -379,9 +404,7 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Mov(loc_of_register(rd), OpReg(Register::RDX)));
         }
 
-        if !crate::threaded() {
-            self.emit_helper_call(fiber_yield_raw);
-        }
+        self.cycles += 1;
         self.emit_interrupt_check();
         self.emit_chain_tail();
     }
@@ -399,9 +422,7 @@ impl<'a> DbtCompiler<'a> {
             self.store_reg(rd, Register::RAX);
         }
 
-        if !crate::threaded() {
-            self.emit_helper_call(fiber_yield_raw);
-        }
+        self.cycles += 1;
         self.emit_interrupt_check();
 
         let pc_end = self.pc_start.wrapping_add(self.pc_end as u64);
@@ -414,6 +435,8 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_icache_access(&mut self, pc_offset: i64, set_rsi: bool) {
+        self.before_side_effect();
+
         // RSI = addr
         self.emit(Mov(Reg(Register::RSI), OpMem(memory_of!(pc))));
         if pc_offset != 0 {
@@ -467,6 +490,7 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_chain_tail(&mut self) {
+        assert_eq!(self.cycles, 0);
         // Save the address to patch for misprediction
         self.emit(Lea(Register::RBX, Register::RIP + 5));
         // 5 bytes
@@ -474,6 +498,9 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_interrupt_check(&mut self) {
+        // Control flow may leave in this function
+        self.before_side_effect();
+
         let offset = offset_of!(Context, shared.alarm);
         self.emit(Cmp(Mem(Register::RBP + offset as i32), Imm(0)));
         self.emit_helper_jcc(ConditionCode::NotEqual, helper_check_interrupt);
@@ -587,6 +614,8 @@ impl<'a> DbtCompiler<'a> {
     /// Shared routine for generating load code. Note that this routine does not perform the
     /// actual load - it merely computes the address, translate to physical and leave it at RSI
     fn emit_load(&mut self, rs1: u8, imm: i32, size: Size) {
+        self.before_side_effect();
+
         self.minstret += 1;
 
         // RSI = addr
@@ -599,6 +628,8 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_store(&mut self, rs1: u8, rs2: u8, imm: i32, size: Size) {
+        self.before_side_effect();
+
         self.minstret += 1;
 
         // RSI = addr
@@ -1468,6 +1499,8 @@ impl<'a> DbtCompiler<'a> {
     //
 
     fn amo_op_w(&mut self, rd: u8, rs1: u8, rs2: u8, action: impl FnOnce(&mut Self)) {
+        self.before_side_effect();
+
         self.minstret += 1;
         self.load_reg(Register::RSI, rs1);
         self.dcache_access(Size::Dword, true);
@@ -1478,6 +1511,8 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn amo_op_d(&mut self, rd: u8, rs1: u8, rs2: u8, action: impl FnOnce(&mut Self)) {
+        self.before_side_effect();
+
         self.minstret += 1;
         self.load_reg(Register::RSI, rs1);
         self.dcache_access(Size::Qword, true);
@@ -1488,6 +1523,8 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn cmpxchg_w(&mut self, rd: u8, rs1: u8, rs2: u8, action: impl FnOnce(&mut Self)) {
+        self.before_side_effect();
+
         self.minstret += 1;
         self.load_reg(Register::RSI, rs1);
         self.dcache_access(Size::Dword, true);
@@ -1507,6 +1544,8 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn cmpxchg_d(&mut self, rd: u8, rs1: u8, rs2: u8, action: impl FnOnce(&mut Self)) {
+        self.before_side_effect();
+
         self.minstret += 1;
         self.load_reg(Register::RSI, rs1);
         self.dcache_access(Size::Qword, true);
@@ -1676,18 +1715,18 @@ impl<'a> DbtCompiler<'a> {
                 self.emit_step_call(op);
                 self.pc_cur = backup.0;
                 self.instret = backup.1;
-                if !crate::threaded() {
-                    self.emit_helper_call(fiber_yield_raw);
-                }
+                self.cycles += 1;
                 self.emit_interrupt_check();
                 self.emit_chain_tail();
             }
             Op::Csrrw { rd: 0, rs1, csr } => {
+                self.before_side_effect();
                 self.load_reg(Register::RDX, rs1);
                 self.emit_write_csr(csr);
                 self.emit_trap_check();
             }
             Op::Csrrwi { rd: 0, imm, csr } => {
+                self.before_side_effect();
                 self.emit(Mov(Reg(Register::RDX), Imm(imm as i64)));
                 self.emit_write_csr(csr);
                 self.emit_trap_check();
@@ -1696,6 +1735,7 @@ impl<'a> DbtCompiler<'a> {
             Op::Csrrc { rd, rs1: 0, csr } |
             Op::Csrrsi { rd, imm: 0, csr } |
             Op::Csrrci { rd, imm: 0, csr } => {
+                self.before_side_effect();
                 self.emit_read_csr(csr);
                 self.emit_trap_check();
                 if rd != 0 {
@@ -1791,6 +1831,8 @@ impl<'a> DbtCompiler<'a> {
 
             /* A-extension */
             Op::LrW { rd, rs1, .. } => {
+                self.before_side_effect();
+
                 self.minstret += 1;
                 self.load_reg(Register::RSI, rs1);
                 self.emit(Mov(Reg(Register::RBX), OpReg(Register::RSI)));
@@ -1801,6 +1843,8 @@ impl<'a> DbtCompiler<'a> {
                 self.emit(Mov(Mem(memory_of!(lr_value)), OpReg(Register::RAX)));
             }
             Op::LrD { rd, rs1, .. } => {
+                self.before_side_effect();
+
                 self.minstret += 1;
                 self.load_reg(Register::RSI, rs1);
                 self.emit(Mov(Reg(Register::RBX), OpReg(Register::RSI)));
@@ -1811,6 +1855,8 @@ impl<'a> DbtCompiler<'a> {
                 self.emit(Mov(Mem(memory_of!(lr_value)), OpReg(Register::RAX)));
             }
             Op::ScW { rd, rs1, rs2, .. } => {
+                self.before_side_effect();
+
                 self.load_reg(Register::RSI, rs1);
                 // We check address match before checking alignment here. This is a little
                 // different from the interpreter, but doesn't make difference to SW.
@@ -1831,6 +1877,8 @@ impl<'a> DbtCompiler<'a> {
                 self.store_reg(rd, Register::RCX);
             }
             Op::ScD { rd, rs1, rs2, .. } => {
+                self.before_side_effect();
+
                 self.load_reg(Register::RSI, rs1);
                 self.emit(Cmp(Mem(memory_of!(lr_addr)), Register::RSI.into()));
                 let jcc_addr_mismatch = self.emit_jcc_short(ConditionCode::NotEqual);
@@ -1961,9 +2009,7 @@ impl<'a> DbtCompiler<'a> {
                 self.emit_step_call(op);
                 self.pc_cur = backup.0;
                 self.instret = backup.1;
-                if !crate::threaded() {
-                    self.emit_helper_call(fiber_yield_raw);
-                }
+                self.cycles += 1;
                 self.emit_interrupt_check();
                 self.emit_chain_tail();
             }
@@ -2005,10 +2051,7 @@ impl<'a> DbtCompiler<'a> {
         // Actually emit the op
         self.emit_op(op, compressed);
 
-        // In non-threaded mode, generate a yield call.
-        if !crate::threaded() {
-            self.emit_helper_call(fiber_yield_raw);
-        }
+        self.cycles += 1;
 
         // Advance counters
         self.pc_cur = self.pc_end;
@@ -2053,9 +2096,8 @@ impl<'a> DbtCompiler<'a> {
 
         // In non-threaded mode, generate a yield call.
         // This is done before we start the sequence as we cannot do it between the macro-op.
-        if !crate::threaded() {
-            self.emit_helper_call(fiber_yield_raw);
-        }
+        self.cycles += 1;
+        self.before_side_effect();
 
         // Compare and set flags.
         // If either operand is 0, it should be treated specially.
@@ -2081,9 +2123,8 @@ impl<'a> DbtCompiler<'a> {
         self.emit_op(op, comp);
 
         // In non-threaded mode, generate a yield call.
-        if !crate::threaded() {
-            self.emit_helper_call(fiber_yield_raw);
-        }
+        self.cycles += 1;
+        self.before_side_effect();
 
         let label_fin = self.label();
         self.patch(jcc, label_fin);
@@ -2264,9 +2305,7 @@ fn icache_cross_miss(ctx: &mut Context, pc: u64, patch: usize, insn: u32) {
         op => op.can_change_control_flow(),
     };
     if !unreachable {
-        if !crate::threaded() {
-            compiler.emit_helper_call(fiber_yield_raw);
-        }
+        compiler.cycles += 1;
         compiler.emit_interrupt_check();
         compiler.emit_chain_tail();
     }

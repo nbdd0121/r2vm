@@ -55,6 +55,10 @@ impl FiberStack {
         (self.0.get() - 16) as *mut FiberStack
     }
 
+    fn cycles_to_sleep(self) -> *mut usize {
+        (self.0.get() - 24) as *mut usize
+    }
+
     fn sp(self) -> *mut usize {
         (self.0.get() - 32) as *mut usize
     }
@@ -81,7 +85,7 @@ impl Fiber {
     /// If the current code is running under fiber then it is completely safe to call this, but
     /// it will just crash if the current code is not running inside fiber.
     pub fn sleep(num: usize) {
-        unsafe { fiber_sleep(num) }
+        unsafe { fiber_sleep(num - 1) }
     }
 
     pub fn scratchpad<T>() -> *mut T {
@@ -124,6 +128,8 @@ impl FiberGroup {
                 *fiber.0.next() = next;
                 *last.next() = fiber.0;
                 *fiber.0.prev() = last;
+
+                *fiber.0.cycles_to_sleep() = 0;
             }
 
             inner.last = Some(fiber.0);

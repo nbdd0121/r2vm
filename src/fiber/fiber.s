@@ -1,6 +1,7 @@
 .intel_syntax noprefix
 
 .global fiber_yield_raw
+.global fiber_sleep_raw
 .global fiber_sleep
 
 .global fiber_start
@@ -39,20 +40,30 @@ fiber_restore_ret_raw:
     pop rbx
     ret
 
-# Yield to next fiber
+# Yield to next fiber for "rdi + 1" times.
 # Before calling this, make sure:
 # - rbp already points to the desired FiberStack.
 # - all registers other than rsp and rbp are saved properly, as they will be clobbered upon return
+fiber_sleep_raw:
+    # Save number of cycles to sleep
+    mov [rbp - 24], rdi
 fiber_yield_raw:
     # Save current stack pointer
     mov [rbp - 32], rsp
+1:
     # Move to next fiber
     mov rbp, [rbp - 16]
+    # If this field is non-zero, it means that we have more cycles to sleep.
+    cmp qword ptr [rbp - 24], 0
+    jnz 2f
     # Restore stack pointer
     mov rsp, [rbp - 32]
     ret
+2:
+    sub qword ptr [rbp - 24], 1
+    jmp 1b
 
-# Yield the fiber "rdi" many times.
+# Yield the fiber "rdi + 1" many times.
 fiber_sleep:
     push rbx
     push rbp
@@ -69,15 +80,11 @@ fiber_sleep:
     and rbp, -0x200000
     add rbp, 32
 
-    push rdi
-.L1:
-    call fiber_yield_raw
-    sub qword ptr [rsp], 1
-    jne .L1
+    call fiber_sleep_raw
 
-    fldcw [rsp + 12]
-    ldmxcsr [rsp + 8]
-    add rsp, 16
+    fldcw [rsp + 4]
+    ldmxcsr [rsp]
+    add rsp, 8
     pop r15
     pop r14
     pop r13
