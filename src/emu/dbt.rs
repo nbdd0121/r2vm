@@ -42,8 +42,7 @@ extern "C" {
     fn fiber_sleep_raw();
     fn riscv_step();
     fn helper_trap();
-    fn helper_read_misalign();
-    fn helper_write_misalign();
+    fn helper_misalign();
     fn translate_cache_miss();
     fn insn_translate_cache_miss();
     fn helper_icache_cross_miss();
@@ -588,7 +587,7 @@ impl<'a> DbtCompiler<'a> {
             self.patch(jcc_misalign, label_misalign);
 
             self.emit(Mov(Reg(Register::EBX), Imm(ebx as i64)));
-            self.emit_helper_jmp(if write { helper_write_misalign } else { helper_read_misalign });
+            self.emit_helper_jmp(helper_misalign);
         }
 
         let label_miss = self.label();

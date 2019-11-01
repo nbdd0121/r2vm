@@ -20,20 +20,26 @@ helper_trap:
     ret
 
 # RSI -> vaddr
-.global helper_read_misalign
-helper_read_misalign:
-    # Set scause and stval
-    mov qword ptr [rbp + 32 * 8 + 16], 4
-    mov [rbp + 32 * 8 + 24], rsi
-    jmp helper_trap
+.global helper_misalign
+helper_misalign:
+# RDI -> context
+    mov rdi, rbp
+    # We use EBX to store the instruction offset within the current basic block
+    # Lower 16 bits are PC offset and upper 16 bits are INSTRET offset.
+    movsx rax, bx
+    add [rbp + 0x100], rax
+    shr ebx, 16
+    movsx rax, bx
+    add [rbp + 0x108], rax
 
-# RSI -> vaddr
-.global helper_write_misalign
-helper_write_misalign:
-    # Set scause and stval
-    mov qword ptr [rbp + 32 * 8 + 16], 5
-    mov [rbp + 32 * 8 + 24], rsi
-    jmp helper_trap
+    call handle_misalign
+    test al, al
+    jnz 1f
+    ret
+1:
+    mov rdi, rbp
+    call trap
+    ret
 
 .global helper_icache_cross_miss
 .extern icache_cross_miss

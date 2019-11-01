@@ -264,6 +264,42 @@ impl Context {
             0
         }
     }
+
+    /// Copy memory from the hart-specific virtual address.
+    pub fn copy_from_virt_addr(&mut self, addr: u64, slice: &mut [u8]) -> Result<(), ()> {
+        let mut virt_addr = addr;
+        let mut phys_addr = 0;
+        let mut virt_line = !addr;
+        for i in 0..slice.len() {
+            // Enter a new cache line
+            if virt_addr >> CACHE_LINE_LOG2_SIZE != virt_line {
+                virt_line = virt_addr >> CACHE_LINE_LOG2_SIZE;
+                phys_addr = translate_read(self, virt_addr)?;
+            }
+            slice[i] = unsafe { *(phys_addr as *const u8) };
+            virt_addr += 1;
+            phys_addr += 1;
+        }
+        Ok(())
+    }
+
+    /// Copy memory to the hart-specific virtual address.
+    pub fn copy_to_virt_addr(&mut self, addr: u64, slice: &[u8]) -> Result<(), ()> {
+        let mut virt_addr = addr;
+        let mut phys_addr = 0;
+        let mut virt_line = !addr;
+        for i in 0..slice.len() {
+            // Enter a new cache line
+            if virt_addr >> CACHE_LINE_LOG2_SIZE != virt_line {
+                virt_line = virt_addr >> CACHE_LINE_LOG2_SIZE;
+                phys_addr = translate_write(self, virt_addr)?;
+            }
+            unsafe { *(phys_addr as *mut u8) = slice[i] };
+            virt_addr += 1;
+            phys_addr += 1;
+        }
+        Ok(())
+    }
 }
 
 /// Perform a CSR read on a context. Note that this operation performs no checks before accessing
@@ -491,8 +527,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
     Ok(out)
 }
 
-fn read_vaddr<T>(ctx: &mut Context, addr: u64) -> Result<&'static T, ()> {
-    ctx.minstret += 1;
+fn translate_read(ctx: &mut Context, addr: u64) -> Result<usize, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.shared.line[(idx & 1023) as usize];
     let paddr = if (line.tag.load(MemOrder::Relaxed) >> 1) != idx {
@@ -500,11 +535,15 @@ fn read_vaddr<T>(ctx: &mut Context, addr: u64) -> Result<&'static T, ()> {
     } else {
         line.paddr.load(MemOrder::Relaxed) ^ addr
     };
-    Ok(unsafe { &*(paddr as *const T) })
+    Ok(paddr as usize)
 }
 
-fn ptr_vaddr_x<T>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
+fn read_vaddr<T>(ctx: &mut Context, addr: u64) -> Result<&'static T, ()> {
     ctx.minstret += 1;
+    Ok(unsafe { &*(translate_read(ctx, addr)? as *const T) })
+}
+
+fn translate_write(ctx: &mut Context, addr: u64) -> Result<usize, ()> {
     let idx = addr >> CACHE_LINE_LOG2_SIZE;
     let line = &ctx.shared.line[(idx & 1023) as usize];
     let paddr = if line.tag.load(MemOrder::Relaxed) != (idx << 1) {
@@ -512,7 +551,12 @@ fn ptr_vaddr_x<T>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
     } else {
         line.paddr.load(MemOrder::Relaxed) ^ addr
     };
-    Ok(unsafe { &mut *(paddr as *mut T) })
+    Ok(paddr as usize)
+}
+
+fn ptr_vaddr_x<T>(ctx: &mut Context, addr: u64) -> Result<&'static mut T, ()> {
+    ctx.minstret += 1;
+    Ok(unsafe { &mut *(translate_write(ctx, addr)? as *mut T) })
 }
 
 /// DBT-ed instruction cache
@@ -1993,4 +2037,73 @@ pub fn trap(ctx: &mut Context) {
     ctx.pc = ctx.stvec;
 
     crate::fiber::Fiber::sleep(1)
+}
+
+/// Handle a misaligned load/store.
+#[no_mangle]
+pub fn handle_misalign(ctx: &mut Context, addr: u64) -> Result<(), ()> {
+    // Decode the misaligned instruction.
+    let (op, compressed) = {
+        let bits = unsafe { *(insn_translate(ctx, ctx.pc)? as *mut u16) };
+        if bits & 3 == 3 {
+            let hi_bits = unsafe { *(insn_translate(ctx, ctx.pc + 2)? as *mut u16) };
+            let bits = (hi_bits as u32) << 16 | bits as u32;
+            (riscv::decode(bits), false)
+        } else {
+            (riscv::decode_compressed(bits), true)
+        }
+    };
+    match op {
+        Op::Lh { rd, .. } => {
+            let mut bytes = [0; 2];
+            ctx.copy_from_virt_addr(addr, &mut bytes)?;
+            ctx.registers[rd as usize] = i16::from_le_bytes(bytes) as u64;
+        }
+        Op::Lw { rd, .. } => {
+            let mut bytes = [0; 4];
+            ctx.copy_from_virt_addr(addr, &mut bytes)?;
+            ctx.registers[rd as usize] = i32::from_le_bytes(bytes) as u64;
+        }
+        Op::Ld { rd, .. } => {
+            let mut bytes = [0; 8];
+            ctx.copy_from_virt_addr(addr, &mut bytes)?;
+            ctx.registers[rd as usize] = u64::from_le_bytes(bytes);
+        }
+        Op::Lhu { rd, .. } => {
+            let mut bytes = [0; 2];
+            ctx.copy_from_virt_addr(addr, &mut bytes)?;
+            ctx.registers[rd as usize] = u16::from_le_bytes(bytes) as u64;
+        }
+        Op::Lwu { rd, .. } => {
+            let mut bytes = [0; 4];
+            ctx.copy_from_virt_addr(addr, &mut bytes)?;
+            ctx.registers[rd as usize] = u32::from_le_bytes(bytes) as u64;
+        }
+        Op::Sh { rs2, .. } => {
+            let bytes = (ctx.registers[rs2 as usize] as u16).to_le_bytes();
+            ctx.copy_to_virt_addr(addr, &bytes)?;
+        }
+        Op::Sw { rs2, .. } => {
+            let bytes = (ctx.registers[rs2 as usize] as u32).to_le_bytes();
+            ctx.copy_to_virt_addr(addr, &bytes)?;
+        }
+        Op::Sd { rs2, .. } => {
+            let bytes = (ctx.registers[rs2 as usize] as u64).to_le_bytes();
+            ctx.copy_to_virt_addr(addr, &bytes)?;
+        }
+        _ => {
+            // Otherwise it's misaligned atomic
+            ctx.scause = 5;
+            ctx.stval = addr;
+            return Err(());
+        }
+    }
+
+    // Advance PC past misaligned instruction.
+    ctx.pc += if compressed { 2 } else { 4 };
+    ctx.instret += 1;
+    ctx.minstret += 1;
+    crate::fiber::Fiber::sleep(1);
+
+    Ok(())
 }
