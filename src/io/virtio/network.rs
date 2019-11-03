@@ -45,7 +45,7 @@ fn start_tx(iface: Arc<dyn NetworkDevice>, mut tx: Queue, irq: u32) {
             let mut io_buffer = Vec::with_capacity(packet_len);
             unsafe { io_buffer.set_len(io_buffer.capacity()) };
             reader.read_exact(&mut io_buffer).unwrap();
-            unsafe { tx.put(buffer) };
+            drop(buffer);
 
             iface.send(&io_buffer).await.unwrap();
             crate::emu::PLIC.lock().trigger(irq);
@@ -85,7 +85,7 @@ fn start_rx(iface: Arc<dyn NetworkDevice>, mut rx: Queue, irq: u32) -> AbortHand
                     }
                     writer.write_all(&header).unwrap();
                     writer.write_all(&buffer[..len]).unwrap();
-                    unsafe { rx.put(dma_buffer) };
+                    drop(dma_buffer);
 
                     crate::emu::PLIC.lock().trigger(irq);
                 }

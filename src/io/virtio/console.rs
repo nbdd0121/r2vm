@@ -32,7 +32,7 @@ fn start_rx(mut rx: Queue, irq: u32) -> AbortHandle {
             if let Ok(Some(mut dma_buffer)) = rx.try_take() {
                 let mut writer = dma_buffer.writer();
                 writer.write_all(&buffer[..len]).unwrap();
-                unsafe { rx.put(dma_buffer) };
+                drop(dma_buffer);
 
                 crate::emu::PLIC.lock().trigger(irq);
             } else {
@@ -54,9 +54,7 @@ fn start_tx(mut tx: Queue, irq: u32) {
             let mut io_buffer = Vec::with_capacity(reader.len());
             unsafe { io_buffer.set_len(io_buffer.capacity()) };
             reader.read_exact(&mut io_buffer).unwrap();
-            unsafe {
-                tx.put(buffer);
-            }
+            drop(buffer);
 
             crate::io::console::CONSOLE.send(&io_buffer).unwrap();
             crate::emu::PLIC.lock().trigger(irq);

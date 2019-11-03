@@ -66,7 +66,7 @@ impl QueueInner {
 
     /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
     /// returned.
-    pub fn try_take(&mut self) -> Result<Option<Buffer>, QueueNotReady> {
+    fn try_take(&mut self, arc: &Arc<Mutex<Self>>) -> Result<Option<Buffer>, QueueNotReady> {
         // If the queue is not ready, trying to take item from it can cause segfault.
         if !self.ready {
             return Err(QueueNotReady);
@@ -91,7 +91,13 @@ impl QueueInner {
         // Now we have obtained this descriptor, increment the index to skip over this.
         self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
 
-        let mut avail = Buffer { idx, bytes_written: 0, read: Vec::new(), write: Vec::new() };
+        let mut avail = Buffer {
+            queue: arc.clone(),
+            idx,
+            bytes_written: 0,
+            read: Vec::new(),
+            write: Vec::new(),
+        };
 
         loop {
             let desc = unsafe {
@@ -124,6 +130,29 @@ impl QueueInner {
 
         Ok(Some(avail))
     }
+
+    /// Put back a buffer to the ring.
+    fn put(&mut self, avail: &Buffer) {
+        // Write requires invalidating icache
+        for slice in avail.write.iter() {
+            let start = slice.as_ptr() as usize;
+            let end = start + slice.len();
+            crate::emu::interp::icache_invalidate(start, end);
+        }
+
+        if !self.ready {
+            return;
+        }
+
+        let elem_ptr = self.used_addr + 4 + (self.last_used_idx & (self.num - 1)) as u64 * 8;
+        unsafe {
+            *(elem_ptr as usize as *mut u32) = avail.idx as u32;
+            *((elem_ptr + 4) as usize as *mut u32) = avail.bytes_written as u32;
+        }
+        self.last_used_idx = self.last_used_idx.wrapping_add(1);
+        let used_idx_ptr = unsafe { &*((self.used_addr + 2) as usize as *const AtomicU16) };
+        used_idx_ptr.store(self.last_used_idx, Ordering::Release);
+    }
 }
 
 pub struct Queue {
@@ -134,7 +163,7 @@ impl Queue {
     /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
     /// returned.
     pub fn try_take(&mut self) -> Result<Option<Buffer>, QueueNotReady> {
-        self.inner.lock().try_take()
+        self.inner.lock().try_take(&self.inner)
     }
 
     // This is to be changed to async fn once 1.39 arrives.
@@ -149,7 +178,7 @@ impl Queue {
 
             fn poll(self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Self::Output> {
                 let mut inner = self.queue.inner.lock();
-                match inner.try_take() {
+                match inner.try_take(&self.queue.inner) {
                     Err(v) => Poll::Ready(Err(v)),
                     Ok(Some(v)) => Poll::Ready(Ok(v)),
                     Ok(None) => {
@@ -162,34 +191,20 @@ impl Queue {
 
         Take { queue: self }
     }
-
-    /// Put back a buffer to the ring. This function is unsafe because there is no guarantee that
-    /// the buffer to put back comes from this queue.
-    pub unsafe fn put(&mut self, avail: Buffer) {
-        let mut inner = self.inner.lock();
-        let used_idx_ptr = &*((inner.used_addr + 2) as usize as *const AtomicU16);
-
-        // Write requires invalidating icache
-        for slice in avail.write {
-            let start = slice.as_ptr() as usize;
-            let end = start + slice.len();
-            crate::emu::interp::icache_invalidate(start, end);
-        }
-
-        let elem_ptr = inner.used_addr + 4 + (inner.last_used_idx & (inner.num - 1)) as u64 * 8;
-        *(elem_ptr as usize as *mut u32) = avail.idx as u32;
-        *((elem_ptr + 4) as usize as *mut u32) = avail.bytes_written as u32;
-        inner.last_used_idx = inner.last_used_idx.wrapping_add(1);
-
-        used_idx_ptr.store(inner.last_used_idx, Ordering::Release);
-    }
 }
 
 pub struct Buffer {
+    queue: Arc<Mutex<QueueInner>>,
     idx: u16,
     bytes_written: usize,
     read: Vec<IoSlice<'static>>,
     write: Vec<IoSliceMut<'static>>,
+}
+
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        self.queue.lock().put(self);
+    }
 }
 
 unsafe impl Send for Buffer {}

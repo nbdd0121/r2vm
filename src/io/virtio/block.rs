@@ -86,9 +86,7 @@ fn start_task(mut queue: Queue, file: Arc<Mutex<Box<dyn BlockDevice + Send>>>, i
                 }
             }
 
-            unsafe {
-                queue.put(buffer);
-            }
+            drop(buffer);
             crate::emu::PLIC.lock().trigger(irq);
         }
     };

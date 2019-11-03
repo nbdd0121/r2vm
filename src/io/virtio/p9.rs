@@ -57,10 +57,7 @@ fn start_task(mut queue: Queue, handler: Arc<Mutex<P9Handler<Passthrough>>>, irq
             writer.seek(SeekFrom::Start(0)).unwrap();
             writer.write_u32::<LE>(size as u32).unwrap();
 
-            unsafe {
-                queue.put(buffer);
-            }
-
+            drop(buffer);
             crate::emu::PLIC.lock().trigger(irq);
         }
     };

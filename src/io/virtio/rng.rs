@@ -42,9 +42,7 @@ fn start_task(inner: Arc<Mutex<Inner>>, mut queue: Queue) {
             let rng: &mut dyn rand::RngCore = &mut inner.rng;
             let mut writer = buffer.writer();
             std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();
-            unsafe {
-                queue.put(buffer);
-            }
+            drop(buffer);
             crate::emu::PLIC.lock().trigger(inner.irq);
         }
     })
