@@ -1,5 +1,6 @@
 mod atomic_ext;
 mod ro_cell;
+pub mod spin;
 pub use atomic_ext::AtomicExt;
 pub use ro_cell::RoCell;
 
