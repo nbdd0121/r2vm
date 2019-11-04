@@ -2,7 +2,6 @@ use super::super::IoMemory;
 use super::Device;
 
 use parking_lot::Mutex;
-use std::convert::TryInto;
 use std::sync::Arc;
 
 const ADDR_MAGIC_VALUE: usize = 0x000;
@@ -60,21 +59,7 @@ impl Mmio {
 impl IoMemory for Mmio {
     fn read(&mut self, addr: usize, size: u32) -> u64 {
         if addr >= ADDR_CONFIG {
-            let offset = (addr - ADDR_CONFIG) as usize;
-            let mut value = 0;
-            self.device.with_config_space(&mut |config| {
-                if offset + size as usize > config.len() {
-                    error!(target: "Mmio", "out-of-bound config register read 0x{:x}", offset);
-                    return;
-                }
-                let slice = &config[offset..offset + size as usize];
-                value = match size {
-                    8 => u64::from_le_bytes(slice.try_into().unwrap()) as u64,
-                    4 => u32::from_le_bytes(slice.try_into().unwrap()) as u64,
-                    2 => u16::from_le_bytes(slice.try_into().unwrap()) as u64,
-                    _ => slice[0] as u64,
-                };
-            });
+            let value = self.device.config_read(addr - ADDR_CONFIG, size);
             trace!(target: "Mmio", "config register read 0x{:x} = 0x{:x}", addr, value);
             return value;
         }
@@ -136,7 +121,8 @@ impl IoMemory for Mmio {
 
     fn write(&mut self, addr: usize, value: u64, size: u32) {
         if addr >= ADDR_CONFIG {
-            error!(target: "Mmio", "config register write 0x{:x} = 0x{:x}", addr, value);
+            self.device.config_write(addr - ADDR_CONFIG, value, size);
+            trace!(target: "Mmio", "config register write 0x{:x} = 0x{:x}", addr, value);
             return;
         }
         if size != 4 {

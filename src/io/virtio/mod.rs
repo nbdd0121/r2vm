@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 mod block;
 mod console;
 mod mmio;
@@ -31,10 +33,12 @@ pub trait Device {
     fn device_id(&self) -> DeviceId;
 
     /// Indicate a list of supported features.
-    fn device_feature(&self) -> u32;
+    fn device_feature(&self) -> u32 {
+        0
+    }
 
     /// Signal to the device that a feature is selected by the driver.
-    fn driver_feature(&mut self, value: u32);
+    fn driver_feature(&mut self, _value: u32) {}
 
     /// Retrieve the status field.
     fn get_status(&self) -> u32;
@@ -50,6 +54,30 @@ pub trait Device {
     /// Get the configuration space, callback form.
     fn with_config_space(&self, f: &mut dyn FnMut(&[u8])) {
         f(self.config_space())
+    }
+
+    /// Read from config space. Reading might have a side-effect, therefore it takes `&mut self`.
+    fn config_read(&mut self, offset: usize, size: u32) -> u64 {
+        let mut value = 0;
+        self.with_config_space(&mut |config| {
+            if offset + size as usize > config.len() {
+                error!(target: "Mmio", "out-of-bound config register read 0x{:x}", offset);
+                return;
+            }
+            let slice = &config[offset..offset + size as usize];
+            value = match size {
+                8 => u64::from_le_bytes(slice.try_into().unwrap()) as u64,
+                4 => u32::from_le_bytes(slice.try_into().unwrap()) as u64,
+                2 => u16::from_le_bytes(slice.try_into().unwrap()) as u64,
+                _ => slice[0] as u64,
+            };
+        });
+        value
+    }
+
+    /// Write to the config space.
+    fn config_write(&mut self, offset: usize, value: u64, _size: u32) {
+        error!(target: "Mmio", "config register write 0x{:x} = 0x{:x}", offset, value);
     }
 
     /// Get number of queues of this device
