@@ -345,12 +345,7 @@ impl<'a> DbtCompiler<'a> {
         // Adjust PC, instret and minstret.
         let pc_offset = self.pc_end.wrapping_add(imm as i64).wrapping_sub(4);
         self.emit(Add(Mem(memory_of!(pc)), Imm(pc_offset)));
-        if self.instret != -1 {
-            self.emit(Add(Mem(memory_of!(instret)), Imm(self.instret as i64 + 1)));
-        }
-        if self.minstret != 0 {
-            self.emit(Add(Mem(memory_of!(minstret)), Imm(self.minstret as i64)));
-        }
+        self.pre_adjust_instret();
 
         // Emit interrupt check, and set cycles in cycle-accurate mode
         let old_cycles = self.cycles;
@@ -388,20 +383,21 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32, comp: bool) {
-        self.pre_adjust_pc_instret(comp);
+        self.pre_adjust_instret();
 
-        if rd != 0 {
-            self.emit(Mov(Reg(Register::RDX), OpMem(memory_of!(pc))));
-        }
         self.load_reg(Register::RAX, rs1);
         if imm != 0 {
             self.emit(Add(Reg(Register::RAX), Imm(imm as i64)));
         }
         self.emit(And(Reg(Register::RAX), Imm(!(1 as i64))));
-        self.emit(Mov(Mem(memory_of!(pc)), OpReg(Register::RAX)));
+
         if rd != 0 {
+            self.emit(Mov(Reg(Register::RDX), OpMem(memory_of!(pc))));
+            self.emit(Add(Register::RDX.into(), Imm(self.pc_cur + if comp { 2 } else { 4 })));
             self.emit(Mov(loc_of_register(rd), OpReg(Register::RDX)));
         }
+
+        self.emit(Mov(Mem(memory_of!(pc)), OpReg(Register::RAX)));
 
         self.cycles += 1;
         self.emit_interrupt_check();
@@ -409,16 +405,18 @@ impl<'a> DbtCompiler<'a> {
     }
 
     fn emit_jal(&mut self, rd: u8, imm: i32, comp: bool) {
-        self.pre_adjust_pc_instret(comp);
-
-        if rd != 0 {
-            self.emit(Mov(Reg(Register::RAX), OpMem(memory_of!(pc))));
-        }
-
+        self.pre_adjust_instret();
+        let pc_offset = self.pc_cur + if comp { 2 } else { 4 };
         let imm_from_end = (imm as i64).wrapping_sub(4);
-        self.emit(Add(Mem(memory_of!(pc)), Imm(imm_from_end)));
+
         if rd != 0 {
-            self.store_reg(rd, Register::RAX);
+            self.emit(Mov(Register::RAX.into(), memory_of!(pc).into()));
+            self.emit(Lea(Register::RDX, Register::RAX + (pc_offset as i32)));
+            self.store_reg(rd, Register::RDX);
+            self.emit(Add(Register::RAX.into(), Imm(imm_from_end.wrapping_add(pc_offset))));
+            self.emit(Mov(memory_of!(pc).into(), Register::RAX.into()));
+        } else {
+            self.emit(Add(memory_of!(pc).into(), Imm(imm_from_end.wrapping_add(pc_offset))));
         }
 
         self.cycles += 1;
@@ -2187,19 +2185,24 @@ impl<'a> DbtCompiler<'a> {
         }
     }
 
-    /// Adjust PC/instret before executing an instruction
-    fn pre_adjust_pc_instret(&mut self, comp: bool) {
-        let pc_offset = self.pc_cur + if comp { 2 } else { 4 };
+    /// Adjust instret before executing an instruction
+    fn pre_adjust_instret(&mut self) {
         let instret_offset = self.instret as i64 + 1;
-        if pc_offset != 0 {
-            self.emit(Add(memory_of!(pc).into(), Imm(pc_offset)));
-        }
         if instret_offset != 0 {
             self.emit(Add(memory_of!(instret).into(), Imm(instret_offset)));
         }
         if self.minstret != 0 {
             self.emit(Add(memory_of!(minstret).into(), Imm(self.minstret as i64)));
         }
+    }
+
+    /// Adjust PC/instret before executing an instruction
+    fn pre_adjust_pc_instret(&mut self, comp: bool) {
+        let pc_offset = self.pc_cur + if comp { 2 } else { 4 };
+        if pc_offset != 0 {
+            self.emit(Add(memory_of!(pc).into(), Imm(pc_offset)));
+        }
+        self.pre_adjust_instret();
     }
 
     /// Adjust PC/instret after executing an instruction
