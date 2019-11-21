@@ -2093,7 +2093,7 @@ pub fn handle_misalign(ctx: &mut Context, addr: u64) -> Result<(), ()> {
         }
         _ => {
             // Otherwise it's misaligned atomic
-            ctx.scause = 5;
+            ctx.scause = 6;
             ctx.stval = addr;
             return Err(());
         }
