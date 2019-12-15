@@ -143,7 +143,7 @@ impl FiberGroup {
         let inner = &mut self.0;
         loop {
             // Run fiber group. Function will return when any fiber exits.
-            let stack = unsafe { fiber_start(inner.last.unwrap()) };
+            let stack = unsafe { fiber_start(inner.first.unwrap()) };
             let next = unsafe { *stack.next() };
             if stack == next {
                 stack.init();

@@ -7,6 +7,7 @@
 event_loop_wait:
     call fiber_save_raw
 1:
+    call fiber_yield_raw
     # Increase the global cycle counter. No need for atomics, as we are the only writer.
     mov rax, [rbp]
     add rax, 1
@@ -14,5 +15,4 @@ event_loop_wait:
     # If the cycle counter exceeds the `next_event` value, we can return
     cmp rax, [rbp + 8]
     jae fiber_restore_ret_raw
-    call fiber_yield_raw
     jmp 1b
