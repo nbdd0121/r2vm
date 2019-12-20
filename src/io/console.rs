@@ -186,7 +186,7 @@ impl Console {
             WINCH.call_once(|| unsafe {
                 let mut act: libc::sigaction = std::mem::zeroed();
                 act.sa_sigaction = handle_winch as usize;
-                act.sa_flags = libc::SA_SIGINFO;
+                act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
                 libc::sigaction(libc::SIGWINCH, &act, std::ptr::null_mut());
             });
         }
