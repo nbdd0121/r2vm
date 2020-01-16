@@ -439,6 +439,16 @@ pub fn decode_compressed(bits: u16) -> Op {
 }
 
 pub fn decode(bits: u32) -> Op {
+    macro_rules! rm {
+        ($rm: expr) => {{
+            let rm = $rm as u8;
+            if rm > 4 && rm != 0b111 {
+                return Op::Illegal;
+            }
+            rm
+        }};
+    }
+
     // We shouldn't see compressed ops here
     assert!(bits & 3 == 3);
 
@@ -696,10 +706,10 @@ pub fn decode(bits: u32) -> Op {
         /* MADD */
         0b1000011 => match funct7(bits) & 3 {
             0b00 => {
-                Op::FmaddS { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: function as u8 }
+                Op::FmaddS { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: rm!(function) }
             }
             0b01 => {
-                Op::FmaddD { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: function as u8 }
+                Op::FmaddD { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: rm!(function) }
             }
             _ => Op::Illegal,
         },
@@ -707,10 +717,10 @@ pub fn decode(bits: u32) -> Op {
         /* MSUB */
         0b1000111 => match funct7(bits) & 3 {
             0b00 => {
-                Op::FmsubS { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: function as u8 }
+                Op::FmsubS { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: rm!(function) }
             }
             0b01 => {
-                Op::FmsubD { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: function as u8 }
+                Op::FmsubD { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: rm!(function) }
             }
             _ => Op::Illegal,
         },
@@ -718,10 +728,10 @@ pub fn decode(bits: u32) -> Op {
         /* NMSUB */
         0b1001011 => match funct7(bits) & 3 {
             0b00 => {
-                Op::FnmsubS { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: function as u8 }
+                Op::FnmsubS { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: rm!(function) }
             }
             0b01 => {
-                Op::FnmsubD { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: function as u8 }
+                Op::FnmsubD { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: rm!(function) }
             }
             _ => Op::Illegal,
         },
@@ -729,10 +739,10 @@ pub fn decode(bits: u32) -> Op {
         /* NMADD */
         0b1001111 => match funct7(bits) & 3 {
             0b00 => {
-                Op::FnmaddS { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: function as u8 }
+                Op::FnmaddS { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: rm!(function) }
             }
             0b01 => {
-                Op::FnmaddD { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: function as u8 }
+                Op::FnmaddD { frd: rd, frs1: rs1, frs2: rs2, frs3: rs3(bits), rm: rm!(function) }
             }
             _ => Op::Illegal,
         },
@@ -745,20 +755,20 @@ pub fn decode(bits: u32) -> Op {
             let function7 = funct7(bits);
             match function7 {
                 /* F-extension and D-extension */
-                0b0000000 => Op::FaddS { frd: rd, frs1: rs1, frs2: rs2, rm: function as u8 },
-                0b0000001 => Op::FaddD { frd: rd, frs1: rs1, frs2: rs2, rm: function as u8 },
-                0b0000100 => Op::FsubS { frd: rd, frs1: rs1, frs2: rs2, rm: function as u8 },
-                0b0000101 => Op::FsubD { frd: rd, frs1: rs1, frs2: rs2, rm: function as u8 },
-                0b0001000 => Op::FmulS { frd: rd, frs1: rs1, frs2: rs2, rm: function as u8 },
-                0b0001001 => Op::FmulD { frd: rd, frs1: rs1, frs2: rs2, rm: function as u8 },
-                0b0001100 => Op::FdivS { frd: rd, frs1: rs1, frs2: rs2, rm: function as u8 },
-                0b0001101 => Op::FdivD { frd: rd, frs1: rs1, frs2: rs2, rm: function as u8 },
+                0b0000000 => Op::FaddS { frd: rd, frs1: rs1, frs2: rs2, rm: rm!(function) },
+                0b0000001 => Op::FaddD { frd: rd, frs1: rs1, frs2: rs2, rm: rm!(function) },
+                0b0000100 => Op::FsubS { frd: rd, frs1: rs1, frs2: rs2, rm: rm!(function) },
+                0b0000101 => Op::FsubD { frd: rd, frs1: rs1, frs2: rs2, rm: rm!(function) },
+                0b0001000 => Op::FmulS { frd: rd, frs1: rs1, frs2: rs2, rm: rm!(function) },
+                0b0001001 => Op::FmulD { frd: rd, frs1: rs1, frs2: rs2, rm: rm!(function) },
+                0b0001100 => Op::FdivS { frd: rd, frs1: rs1, frs2: rs2, rm: rm!(function) },
+                0b0001101 => Op::FdivD { frd: rd, frs1: rs1, frs2: rs2, rm: rm!(function) },
                 0b0101100 => match rs2 {
-                    0b00000 => Op::FsqrtS { frd: rd, frs1: rs1, rm: function as u8 },
+                    0b00000 => Op::FsqrtS { frd: rd, frs1: rs1, rm: rm!(function) },
                     _ => Op::Illegal,
                 },
                 0b0101101 => match rs2 {
-                    0b00000 => Op::FsqrtD { frd: rd, frs1: rs1, rm: function as u8 },
+                    0b00000 => Op::FsqrtD { frd: rd, frs1: rs1, rm: rm!(function) },
                     _ => Op::Illegal,
                 },
                 0b0010000 => match function {
@@ -784,25 +794,25 @@ pub fn decode(bits: u32) -> Op {
                     _ => Op::Illegal,
                 },
                 0b0100000 => match rs2 {
-                    0b00001 => Op::FcvtSD { frd: rd, frs1: rs1, rm: function as u8 },
+                    0b00001 => Op::FcvtSD { frd: rd, frs1: rs1, rm: rm!(function) },
                     _ => Op::Illegal,
                 },
                 0b0100001 => match rs2 {
-                    0b00000 => Op::FcvtDS { frd: rd, frs1: rs1, rm: function as u8 },
+                    0b00000 => Op::FcvtDS { frd: rd, frs1: rs1, rm: rm!(function) },
                     _ => Op::Illegal,
                 },
                 0b1100000 => match rs2 {
-                    0b00000 => Op::FcvtWS { rd, frs1: rs1, rm: function as u8 },
-                    0b00001 => Op::FcvtWuS { rd, frs1: rs1, rm: function as u8 },
-                    0b00010 => Op::FcvtLS { rd, frs1: rs1, rm: function as u8 },
-                    0b00011 => Op::FcvtLuS { rd, frs1: rs1, rm: function as u8 },
+                    0b00000 => Op::FcvtWS { rd, frs1: rs1, rm: rm!(function) },
+                    0b00001 => Op::FcvtWuS { rd, frs1: rs1, rm: rm!(function) },
+                    0b00010 => Op::FcvtLS { rd, frs1: rs1, rm: rm!(function) },
+                    0b00011 => Op::FcvtLuS { rd, frs1: rs1, rm: rm!(function) },
                     _ => Op::Illegal,
                 },
                 0b1100001 => match rs2 {
-                    0b00000 => Op::FcvtWD { rd, frs1: rs1, rm: function as u8 },
-                    0b00001 => Op::FcvtWuD { rd, frs1: rs1, rm: function as u8 },
-                    0b00010 => Op::FcvtLD { rd, frs1: rs1, rm: function as u8 },
-                    0b00011 => Op::FcvtLuD { rd, frs1: rs1, rm: function as u8 },
+                    0b00000 => Op::FcvtWD { rd, frs1: rs1, rm: rm!(function) },
+                    0b00001 => Op::FcvtWuD { rd, frs1: rs1, rm: rm!(function) },
+                    0b00010 => Op::FcvtLD { rd, frs1: rs1, rm: rm!(function) },
+                    0b00011 => Op::FcvtLuD { rd, frs1: rs1, rm: rm!(function) },
                     _ => Op::Illegal,
                 },
                 0b1110000 => match (rs2, function) {
@@ -828,17 +838,17 @@ pub fn decode(bits: u32) -> Op {
                     _ => Op::Illegal,
                 },
                 0b1101000 => match rs2 {
-                    0b00000 => Op::FcvtSW { frd: rd, rs1, rm: function as u8 },
-                    0b00001 => Op::FcvtSWu { frd: rd, rs1, rm: function as u8 },
-                    0b00010 => Op::FcvtSL { frd: rd, rs1, rm: function as u8 },
-                    0b00011 => Op::FcvtSLu { frd: rd, rs1, rm: function as u8 },
+                    0b00000 => Op::FcvtSW { frd: rd, rs1, rm: rm!(function) },
+                    0b00001 => Op::FcvtSWu { frd: rd, rs1, rm: rm!(function) },
+                    0b00010 => Op::FcvtSL { frd: rd, rs1, rm: rm!(function) },
+                    0b00011 => Op::FcvtSLu { frd: rd, rs1, rm: rm!(function) },
                     _ => Op::Illegal,
                 },
                 0b1101001 => match rs2 {
-                    0b00000 => Op::FcvtDW { frd: rd, rs1, rm: function as u8 },
-                    0b00001 => Op::FcvtDWu { frd: rd, rs1, rm: function as u8 },
-                    0b00010 => Op::FcvtDL { frd: rd, rs1, rm: function as u8 },
-                    0b00011 => Op::FcvtDLu { frd: rd, rs1, rm: function as u8 },
+                    0b00000 => Op::FcvtDW { frd: rd, rs1, rm: rm!(function) },
+                    0b00001 => Op::FcvtDWu { frd: rd, rs1, rm: rm!(function) },
+                    0b00010 => Op::FcvtDL { frd: rd, rs1, rm: rm!(function) },
+                    0b00011 => Op::FcvtDLu { frd: rd, rs1, rm: rm!(function) },
                     _ => Op::Illegal,
                 },
                 0b1111000 => match (rs2, function) {
