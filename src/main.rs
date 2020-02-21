@@ -22,6 +22,7 @@ Options:
   --perf                Generate /tmp/perf-<PID>.map for perf tool.
   --lockstep            Use lockstep non-threaded mode for execution.
   --sysroot             Change the sysroot to a non-default value.
+  --dump-fdt            Save FDT to the specified path.
   --help                Display this help message.
 "
     };
@@ -42,6 +43,9 @@ pub struct Flags {
 
     // Whether threaded mode should be used
     thread: bool,
+
+    /// Dump FDT option
+    dump_fdt: Option<String>,
 }
 
 static mut FLAGS: Flags = Flags {
@@ -50,6 +54,7 @@ static mut FLAGS: Flags = Flags {
     user_only: false,
     perf: false,
     thread: true,
+    dump_fdt: None,
 };
 
 pub fn get_flags() -> &'static Flags {
@@ -152,6 +157,11 @@ pub fn main() {
                 if arg.starts_with("--sysroot=") {
                     let path_slice = &arg["--sysroot=".len()..];
                     sysroot = path_slice.to_owned();
+                } else if arg.starts_with("--dump-fdt=") {
+                    let path_slice = &arg["--dump-fdt=".len()..];
+                    unsafe {
+                        FLAGS.dump_fdt = Some(path_slice.to_owned());
+                    }
                 } else {
                     eprintln!("{}: unrecognized option '{}'", interp_name, arg);
                     std::process::exit(1);

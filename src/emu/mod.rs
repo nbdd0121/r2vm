@@ -105,7 +105,7 @@ impl IoSystem {
         self.register_io_mem(mem, 4096, virtio.clone());
 
         let core_count = crate::core_count();
-        let node = self.fdt.add_node(format!("virtio@{:x}", self.boundary));
+        let node = self.fdt.add_node(format!("virtio@{:x}", mem));
         node.add_prop("reg", &[mem as u64, 0x1000][..]);
         node.add_prop("compatible", "virtio,mmio");
         node.add_prop("interrupts-extended", &[core_count as u32 + 1, irq][..]);
@@ -291,7 +291,7 @@ pub fn device_tree() -> fdt::Node {
 
     root.child.push(IO_SYSTEM.fdt.clone());
 
-    let memory = root.add_node("memory@0x40000000");
+    let memory = root.add_node("memory@40000000");
     memory.add_prop("reg", &[0x40000000, (crate::CONFIG.memory * 1024 * 1024) as u64][..]);
     memory.add_prop("device_type", "memory");
 

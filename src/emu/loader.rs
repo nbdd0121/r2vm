@@ -3,6 +3,7 @@ use super::interp::Context;
 use rand::RngCore;
 use std::ffi::CStr;
 use std::fs::File;
+use std::io::Write;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::path::Path;
 
@@ -476,6 +477,12 @@ pub unsafe fn load(
         };
 
         let device_tree = fdt::encode(&crate::emu::device_tree());
+
+        if let Some(ref path) = crate::get_flags().dump_fdt {
+            let mut file = File::create(path).unwrap();
+            file.write_all(&device_tree).unwrap();
+        }
+
         let target =
             std::slice::from_raw_parts_mut((0x40000000 + size) as *mut u8, device_tree.len());
         target.copy_from_slice(&device_tree[..]);
