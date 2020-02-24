@@ -26,6 +26,12 @@ pub struct Config {
     /// It should be of ELF format, not containing any firmware.
     pub kernel: PathBuf,
 
+    /// Location of firmware.
+    /// It should be of ELF format. If firmware is present, RVM will start with machine mode.
+    /// If firmware is not present, RVM will start in supervisor mode and provide SBI interface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firmware: Option<PathBuf>,
+
     /// Memory size, in MiB.
     #[serde(default = "default_memory")]
     pub memory: usize,

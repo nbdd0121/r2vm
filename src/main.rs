@@ -211,6 +211,10 @@ pub fn main() {
             std::process::exit(1);
         }
 
+        if CONFIG.firmware.is_some() {
+            unsafe { FLAGS.prv = 3 }
+        }
+
         loader = emu::loader::Loader::new(&CONFIG.kernel).unwrap_or_else(|err| {
             eprintln!("{}: cannot load {}: {}", interp_name, CONFIG.kernel.to_string_lossy(), err);
             std::process::exit(1);
@@ -250,15 +254,15 @@ pub fn main() {
             sscratch: 0,
             stvec: 0,
             scounteren: 0,
-            mideleg: 0x222,
-            medeleg: 0xB35D,
+            mideleg: 0,
+            medeleg: 0,
             mcause: 0,
             mepc: 0,
             mtval: 0,
             mie: 0,
             mscratch: 0,
             mtvec: 0,
-            mcounteren: 0b111,
+            mcounteren: 0,
             mtimecmp: u64::max_value(),
             // These are set by setup_mem, so we don't really care now.
             pc: 0,
@@ -268,6 +272,12 @@ pub fn main() {
         };
         // x0 must always be 0
         newctx.registers[0] = 0;
+
+        if CONFIG.firmware.is_none() {
+            newctx.mideleg = 0x222;
+            newctx.medeleg = 0xB35D;
+            newctx.mcounteren = 0b111;
+        }
 
         let fiber = fiber::Fiber::new();
         let ptr = fiber.data_pointer();
@@ -292,6 +302,23 @@ pub fn main() {
         emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args), &mut contexts)
     };
     std::mem::drop(loader);
+
+    // Load firmware if present
+    if let Some(ref firmware) = CONFIG.firmware {
+        let loader = emu::loader::Loader::new(firmware).unwrap_or_else(|err| {
+            eprintln!("{}: cannot load {}: {}", interp_name, firmware.to_string_lossy(), err);
+            std::process::exit(1);
+        });
+        // Load this past memory location
+        let location = 0x40000000 + ((CONFIG.memory * 0x100000 + 0x200000) & !0x200000);
+        unsafe { loader.load_kernel(location as u64) };
+
+        for ctx in contexts.iter_mut() {
+            ctx.registers[12] = ctx.pc;
+            ctx.pc = location as u64;
+            ctx.prv = 3;
+        }
+    }
 
     loop {
         fibers[0].set_fn(|| {

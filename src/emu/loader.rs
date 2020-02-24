@@ -269,7 +269,7 @@ impl Loader {
         bias + ehdr.e_entry
     }
 
-    unsafe fn load_kernel(&self, load_addr: u64) -> u64 {
+    pub unsafe fn load_kernel(&self, load_addr: u64) -> u64 {
         // Scan the bounds of the image.
         let mut loaddr = u64::max_value();
         let mut hiaddr = 0;

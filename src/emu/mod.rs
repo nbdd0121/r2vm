@@ -229,7 +229,11 @@ pub fn init() {
         // 1 GiB -       main memory
         crate::util::RoCell::replace(&IO_BOUNDARY, 0x40000000);
 
-        let phys_size = crate::CONFIG.memory * 1024 * 1024;
+        // If firmware is present give it 2MiB of extra memory.
+        let phys_size = (crate::CONFIG.memory
+            + (if crate::CONFIG.firmware.is_some() { 2 } else { 0 }))
+            * 1024
+            * 1024;
         let phys_limit = 0x40000000 + phys_size;
 
         // First allocate physical memory region, without making them accessible
