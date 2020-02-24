@@ -368,7 +368,7 @@ pub unsafe fn load(
     args: &mut dyn Iterator<Item = String>,
     ctxs: &mut [&mut Context],
 ) {
-    if crate::get_flags().user_only {
+    if crate::get_flags().prv == 0 {
         // Set sp to be the highest possible address.
         let mut sp: u64 = 0x7fff0000;
         let map = libc::mmap(

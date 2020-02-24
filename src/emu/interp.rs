@@ -50,7 +50,7 @@ pub struct SharedContext {
     /// * Timer interrupts are treated a little bit differently. To avoid to deal with atomicity
     ///   issues related to `mtimecmp`, we make `mtimecmp` local to the hart. Instead, when we
     ///   think there might be a new timer interrupt, we set a bit in `alarm`.
-    ///   The hart will check and set `sip` if there is indeed a timer interrupt.
+    ///   The hart will check and set `mip` if there is indeed a timer interrupt.
     /// * Shutdown notice.
     pub alarm: AtomicU64,
 
@@ -58,7 +58,7 @@ pub struct SharedContext {
     /// because it could be updated from outside a running hart.
     /// * When an external interrupt asserts, it should be **OR**ed with corresponding bit.
     /// * When an external interrupt deasserts, it should be **AND**ed with a mask.
-    pub sip: AtomicU64,
+    pub mip: AtomicU64,
 
     /// This is the L0 cache used to accelerate simulation. If a memory request hits the cache line
     /// here, then it will not go through virtual address translation nor cache simulation.
@@ -92,10 +92,10 @@ pub struct SharedContext {
 impl SharedContext {
     pub fn new() -> Self {
         // Check the constant used in helper.s
-        assert_eq!(offset_of!(Context, scause), 32 * 8 + 16);
+        assert_eq!(offset_of!(Context, cause), 32 * 8 + 16);
 
         SharedContext {
-            sip: AtomicU64::new(0),
+            mip: AtomicU64::new(0),
             alarm: AtomicU64::new(0),
             line: unsafe {
                 let mut arr: [CacheLine; 1024] = std::mem::MaybeUninit::uninit().assume_init();
@@ -121,14 +121,14 @@ impl SharedContext {
 
     /// Assert interrupt using the given mask.
     pub fn assert(&self, mask: u64) {
-        if self.sip.fetch_or(mask, MemOrder::Relaxed) & mask != mask {
+        if self.mip.fetch_or(mask, MemOrder::Relaxed) & mask != mask {
             self.alert();
         }
     }
 
     /// Deassert interrupt using the given mask.
     pub fn deassert(&self, mask: u64) {
-        self.sip.fetch_and(!mask, MemOrder::Relaxed);
+        self.mip.fetch_and(!mask, MemOrder::Relaxed);
     }
 
     /// Trigger alarms. Will also wake up WFI.
@@ -149,7 +149,7 @@ impl SharedContext {
     }
 
     /// Inform the hart that there might be a pending interrupt, but without actually touching
-    /// `sip`. This should be called, e.g. if SIE or SSTATUS is modified.
+    /// `mip`. This should be called, e.g. if SIE or SSTATUS is modified.
     pub fn alert(&self) {
         self.fire_alarm(1);
     }
@@ -208,8 +208,8 @@ pub struct Context {
 
     // Note that changing the position of this field would need to change the hard-fixed constant
     // in assembly.
-    pub scause: u64,
-    pub stval: u64,
+    pub cause: u64,
+    pub tval: u64,
 
     pub shared: SharedContext,
 
@@ -222,14 +222,27 @@ pub struct Context {
     pub lr_value: u64,
 
     // S-mode CSRs
-    pub sstatus: u64,
-    pub sie: u64,
+    pub scause: u64,
+    pub stval: u64,
     pub stvec: u64,
     pub sscratch: u64,
     pub sepc: u64,
     pub satp: u64,
+    pub scounteren: u64,
 
-    pub timecmp: u64,
+    // M-mode CSRs
+    pub mideleg: u64,
+    pub medeleg: u64,
+    pub mcause: u64,
+    pub mtval: u64,
+    pub mstatus: u64,
+    pub mie: u64,
+    pub mtvec: u64,
+    pub mscratch: u64,
+    pub mepc: u64,
+    pub mcounteren: u64,
+
+    pub mtimecmp: u64,
 
     // Current privilege level
     pub prv: u64,
@@ -240,28 +253,46 @@ pub struct Context {
 
 impl Context {
     pub fn test_and_set_fs(&mut self) -> Result<(), ()> {
-        if self.sstatus & 0x6000 == 0 {
-            self.scause = 2;
-            self.stval = 0;
+        if self.mstatus & 0x6000 == 0 {
+            self.cause = 2;
+            self.tval = 0;
             return Err(());
         }
-        self.sstatus |= 0x6000;
+        self.mstatus |= 0x6000;
         Ok(())
     }
 
-    /// Check whether interrupt is enabled
-    pub fn interrupt_enabled(&self) -> bool {
-        // If we're in lower privilege mode, interrupt is always enabled.
-        // Otherwise check SSTATUS.SIE
-        self.prv == 0 || self.sstatus & 0x2 != 0
+    pub fn test_counter(&mut self, id: u32) -> Result<(), ()> {
+        if self.prv < 3 && self.mcounteren & (1 << id) == 0
+            || self.prv < 1 && self.scounteren & (1 << id) == 0
+        {
+            self.cause = 2;
+            self.tval = 0;
+            return Err(());
+        }
+        Ok(())
     }
 
     /// Obtaining a bitmask of pending interrupts
     pub fn interrupt_pending(&mut self) -> u64 {
-        if self.interrupt_enabled() {
-            self.shared.sip.load(MemOrder::Relaxed) & self.sie
-        } else {
-            0
+        let int_ready = self.shared.mip.load(MemOrder::Relaxed) & self.mie;
+        (if self.prv != 3 || self.mstatus & 0x8 != 0 { int_ready & !self.mideleg } else { 0 })
+            | (if self.prv == 0 || self.prv == 1 && self.mstatus & 0x2 != 0 {
+                int_ready & self.mideleg
+            } else {
+                0
+            })
+    }
+
+    /// Re-check interrupt status, potentially wake up WFI
+    pub fn recheck_interrupt(&mut self) {
+        let int_ready = self.shared.mip.load(MemOrder::Relaxed) & self.mie;
+        if int_ready != 0 {
+            if self.interrupt_pending() != 0 {
+                self.shared.fire_alarm(1);
+            } else {
+                self.shared.fire_alarm(0);
+            }
         }
     }
 
@@ -323,12 +354,21 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
             ctx.test_and_set_fs()?;
             ((ctx.frm << 5) | ctx.shared.fflags.load(MemOrder::Relaxed)) as u64
         }
-        Csr::Cycle => crate::event_loop().cycle(),
-        Csr::Time => crate::event_loop().time(),
+        Csr::Cycle => {
+            ctx.test_counter(0)?;
+            crate::event_loop().cycle()
+        }
+        Csr::Time => {
+            ctx.test_counter(0)?;
+            crate::event_loop().time()
+        }
         // We assume the instret is incremented already
-        Csr::Instret => ctx.instret - 1,
+        Csr::Instret => {
+            ctx.test_counter(0)?;
+            ctx.instret - 1
+        }
         Csr::Sstatus => {
-            let mut value = ctx.sstatus;
+            let mut value = ctx.mstatus & 0xC6122;
             // SSTATUS.FS = dirty, also set SD
             if value & 0x6000 == 0x6000 {
                 value |= 0x8000000000000000
@@ -337,19 +377,45 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
             value |= 0x200000000;
             value
         }
-        Csr::Sie => ctx.sie,
+        Csr::Sie => ctx.mie & ctx.mideleg,
         Csr::Stvec => ctx.stvec,
-        Csr::Scounteren => 0,
+        Csr::Scounteren => ctx.scounteren,
         Csr::Sscratch => ctx.sscratch,
         Csr::Sepc => ctx.sepc,
         Csr::Scause => ctx.scause,
         Csr::Stval => ctx.stval,
-        Csr::Sip => ctx.shared.sip.load(MemOrder::Relaxed),
+        Csr::Sip => ctx.shared.mip.load(MemOrder::Relaxed) & ctx.mideleg,
         Csr::Satp => ctx.satp,
+        Csr::Mvendorid | Csr::Marchid | Csr::Mimpid => 0,
+        Csr::Mhartid => ctx.hartid,
+        Csr::Mstatus => {
+            let mut value = ctx.mstatus;
+            // MSTATUS.FS = dirty, also set SD
+            if value & 0x6000 == 0x6000 {
+                value |= 0x8000000000000000
+            }
+            // Hard-wire UXL to 0b10, i.e. 64-bit.
+            value |= 0x200000000;
+            value
+        }
+        Csr::Misa => unimplemented!(),
+        Csr::Medeleg => ctx.medeleg,
+        Csr::Mideleg => ctx.mideleg,
+        Csr::Mie => ctx.mie,
+        Csr::Mtvec => ctx.mtvec,
+        Csr::Mcounteren => ctx.mcounteren,
+        Csr::Mscratch => ctx.mscratch,
+        Csr::Mepc => ctx.mepc,
+        Csr::Mcause => ctx.mcause,
+        Csr::Mtval => ctx.mtval,
+        Csr::Mip => ctx.shared.mip.load(MemOrder::Relaxed),
+        Csr::Mcycle => crate::event_loop().cycle(),
+        Csr::Mtime => crate::event_loop().time(),
+        Csr::Minstret => ctx.instret - 1,
         _ => {
             error!("read illegal csr {:x}", csr.0);
-            ctx.scause = 2;
-            ctx.stval = 0;
+            ctx.cause = 2;
+            ctx.tval = 0;
             return Err(());
         }
     })
@@ -373,20 +439,22 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
             ctx.shared.fflags.store((value & 0b11111) as u32, MemOrder::Relaxed);
             ctx.frm = ((value >> 5) & 0b111) as u32;
         }
-        Csr::Instret => ctx.instret = value,
         Csr::Sstatus => {
             // Mask-out non-writable bits
-            ctx.sstatus = value & 0xC6122;
+            let old_value = ctx.mstatus;
+            ctx.mstatus = old_value & !0xC6122 | value & 0xC6122;
             if ctx.interrupt_pending() != 0 {
                 ctx.shared.alert()
             }
-            // XXX: When MXR or SUM is changed, also clear local cache
+            // If MXR/SUM changed, need to flush local cache
+            if old_value & 0xC0000 != ctx.mstatus & 0xC0000 {
+                ctx.shared.clear_local_cache();
+                ctx.shared.clear_local_icache();
+            }
         }
         Csr::Sie => {
-            ctx.sie = value;
-            if ctx.interrupt_pending() != 0 {
-                ctx.shared.alert()
-            }
+            ctx.mie = (ctx.mie & !ctx.mideleg) | (value & ctx.mideleg);
+            ctx.recheck_interrupt();
         }
         Csr::Stvec => {
             // We support MODE 0 only at the moment
@@ -394,17 +462,19 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
                 ctx.stvec = value;
             }
         }
-        Csr::Scounteren => (),
+        Csr::Scounteren => ctx.scounteren = value & 0b111,
         Csr::Sscratch => ctx.sscratch = value,
         Csr::Sepc => ctx.sepc = value & !1,
         Csr::Scause => ctx.scause = value,
         Csr::Stval => ctx.stval = value,
         Csr::Sip => {
-            // Only SSIP flag can be cleared by software
-            if value & 0x2 != 0 {
-                ctx.shared.assert(2);
-            } else {
-                ctx.shared.deassert(2);
+            if ctx.mideleg & 0x2 != 0 {
+                // Only SSIP flag can be cleared by software
+                if value & 0x2 != 0 {
+                    ctx.shared.assert(2);
+                } else {
+                    ctx.shared.deassert(2);
+                }
             }
         }
         Csr::Satp => {
@@ -419,10 +489,52 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
             ctx.shared.clear_local_cache();
             ctx.shared.clear_local_icache();
         }
+        Csr::Mstatus => {
+            // Mask-out non-writable bits
+            let old_value = ctx.mstatus;
+            ctx.mstatus = old_value & !0x7E79AA | value & 0x7E79AA;
+            if ctx.interrupt_pending() != 0 {
+                ctx.shared.alert();
+            }
+
+            // If MPRV/MPP/MXR/SUM changed, need to flush local cache
+            if old_value & 0xE1800 != ctx.mstatus & 0xE1800 {
+                ctx.shared.clear_local_cache();
+                ctx.shared.clear_local_icache();
+            }
+        }
+        Csr::Misa => (),
+        Csr::Medeleg => ctx.medeleg = value & 0xB35D,
+        Csr::Mideleg => {
+            ctx.mideleg = value & 0x222;
+            if ctx.interrupt_pending() != 0 {
+                ctx.shared.alert()
+            }
+        }
+        Csr::Mie => {
+            ctx.mie = value & 0xAAA;
+            ctx.recheck_interrupt();
+        }
+        Csr::Mtvec => {
+            // We support MODE 0 only at the moment
+            if (value & 2) == 0 {
+                ctx.mtvec = value;
+            }
+        }
+        Csr::Mcounteren => ctx.mcounteren = value & 0b111,
+        Csr::Mscratch => ctx.mscratch = value,
+        Csr::Mepc => ctx.mepc = value & !1,
+        Csr::Mcause => ctx.mcause = value,
+        Csr::Mtval => ctx.mtval = value,
+        Csr::Mip => {
+            ctx.shared.deassert(0x222 & !value);
+            ctx.shared.assert(0x222 & value);
+        }
+        Csr::Minstret => ctx.instret = value,
         _ => {
             error!("write illegal csr {:x} = {:x}", csr.0, value);
-            ctx.scause = 2;
-            ctx.stval = 0;
+            ctx.cause = 2;
+            ctx.tval = 0;
             return Err(());
         }
     }
@@ -452,14 +564,19 @@ pub fn icache_invalidate(start: usize, end: usize) {
             // before the software expects a coherence instruction cache.
             crate::shared_context(i).run_on(move || {
                 let mut icache = icache(i as u64);
+                let keys: Vec<u64> = icache.u_map.range(start..end).map(|(k, _)| *k).collect();
+                for key in keys {
+                    let blk = icache.u_map.remove(&key).unwrap();
+                    unsafe { *(blk.1 as *mut u8) = 0xC3 }
+                }
                 let keys: Vec<u64> = icache.s_map.range(start..end).map(|(k, _)| *k).collect();
                 for key in keys {
                     let blk = icache.s_map.remove(&key).unwrap();
                     unsafe { *(blk.1 as *mut u8) = 0xC3 }
                 }
-                let keys: Vec<u64> = icache.u_map.range(start..end).map(|(k, _)| *k).collect();
+                let keys: Vec<u64> = icache.m_map.range(start..end).map(|(k, _)| *k).collect();
                 for key in keys {
-                    let blk = icache.u_map.remove(&key).unwrap();
+                    let blk = icache.m_map.remove(&key).unwrap();
                     unsafe { *(blk.1 as *mut u8) = 0xC3 }
                 }
             });
@@ -469,20 +586,25 @@ pub fn icache_invalidate(start: usize, end: usize) {
 
 fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, ()> {
     // MMU off
-    if (ctx.satp >> 60) == 0 {
+    if (ctx.satp >> 60) == 0
+        || (ctx.prv == 3
+            && (ctx.mstatus & 0x20000 == 0
+                || ctx.mstatus & 0x1800 == 0x1800
+                || access == AccessType::Execute))
+    {
         return Ok(addr);
     }
 
     let pte = walk_page(ctx.satp, addr >> 12, |addr| crate::emu::read_memory(addr as usize));
-    match check_permission(pte, access, ctx.prv as u8, ctx.sstatus) {
+    match check_permission(pte, access, ctx.prv as u8, ctx.mstatus) {
         Ok(_) => Ok(pte >> 10 << 12 | addr & 4095),
         Err(_) => {
-            ctx.scause = match access {
+            ctx.cause = match access {
                 AccessType::Read => 13,
                 AccessType::Write => 15,
                 AccessType::Execute => 12,
             };
-            ctx.stval = addr;
+            ctx.tval = addr;
             Err(())
         }
     }
@@ -588,8 +710,9 @@ const HEAP_SIZE: usize = 1024 * 1024 * 32;
 
 struct ICache {
     // The tuple stores (start, non-speculative start)
-    s_map: BTreeMap<u64, (usize, usize)>,
     u_map: BTreeMap<u64, (usize, usize)>,
+    s_map: BTreeMap<u64, (usize, usize)>,
+    m_map: BTreeMap<u64, (usize, usize)>,
     heap_start: usize,
     heap_offset: usize,
 }
@@ -597,8 +720,9 @@ struct ICache {
 impl ICache {
     fn new(ptr: usize) -> ICache {
         ICache {
-            s_map: BTreeMap::default(),
             u_map: BTreeMap::default(),
+            s_map: BTreeMap::default(),
+            m_map: BTreeMap::default(),
             heap_start: ptr,
             heap_offset: 0,
         }
@@ -616,8 +740,9 @@ impl ICache {
 
     fn rollover(&mut self) {
         self.heap_offset = 0;
-        self.s_map.clear();
         self.u_map.clear();
+        self.s_map.clear();
+        self.m_map.clear();
         debug!("icache {:x} rollover", self.heap_start);
     }
 
@@ -680,8 +805,9 @@ fn icache(hartid: u64) -> MutexGuard<'static, ICache> {
 pub fn icache_reset() {
     for icache in ICACHE.iter() {
         let mut icache = icache.lock();
-        icache.s_map.clear();
         icache.u_map.clear();
+        icache.s_map.clear();
+        icache.m_map.clear();
         icache.heap_offset = 0;
     }
 }
@@ -702,8 +828,12 @@ fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
 fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     match nr {
         0 => {
-            ctx.timecmp = arg0;
-            ctx.shared.deassert(32);
+            ctx.mtimecmp = arg0;
+            if crate::get_flags().prv == 1 {
+                ctx.shared.deassert(32);
+            } else {
+                ctx.shared.deassert(128);
+            }
             let shared_ctx = unsafe { &*(&ctx.shared as *const SharedContext) };
             crate::event_loop().queue_time(arg0, Box::new(move || shared_ctx.alert()));
             0
@@ -898,8 +1028,8 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     }
     macro_rules! trap {
         ($cause: expr, $tval: expr) => {{
-            ctx.scause = $cause;
-            ctx.stval = $tval;
+            ctx.cause = $cause;
+            ctx.tval = $tval;
             return Err(());
         }};
     }
@@ -1047,29 +1177,49 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         /* SYSTEM */
         Op::Ecall =>
-            if ctx.prv == 0 {
-                if crate::get_flags().user_only {
-                    ctx.registers[10] = unsafe { crate::emu::syscall(
+            match ctx.prv {
+                0 => {
+                    if crate::get_flags().prv == 0 {
+                        ctx.registers[10] = unsafe { crate::emu::syscall(
+                            ctx.registers[17],
+                            ctx.registers[10],
+                            ctx.registers[11],
+                            ctx.registers[12],
+                            ctx.registers[13],
+                            ctx.registers[14],
+                            ctx.registers[15],
+                        ) };
+                    } else {
+                        trap!(8, 0)
+                    }
+                }
+                1 => {
+                    if crate::get_flags().prv == 1 {
+                        ctx.registers[10] = sbi_call(
+                            ctx,
+                            ctx.registers[17],
+                            ctx.registers[10],
+                            ctx.registers[11],
+                            ctx.registers[12],
+                            ctx.registers[13],
+                        )
+                    } else {
+                        trap!(9, 0)
+                    }
+                }
+                3 => {
+                    // Note: We provide SBI interface to our M-mode, so the firmware can simple a few things down.
+                    // This is non-standard.
+                    ctx.registers[10] = sbi_call(
+                        ctx,
                         ctx.registers[17],
                         ctx.registers[10],
                         ctx.registers[11],
                         ctx.registers[12],
                         ctx.registers[13],
-                        ctx.registers[14],
-                        ctx.registers[15],
-                    ) };
-                } else {
-                    trap!(8, 0)
+                    );
                 }
-            } else {
-                ctx.registers[10] = sbi_call(
-                    ctx,
-                    ctx.registers[17],
-                    ctx.registers[10],
-                    ctx.registers[11],
-                    ctx.registers[12],
-                    ctx.registers[13],
-                )
+                _ => unreachable!(),
             }
         Op::Ebreak => trap!(3, 0),
         Op::Csrrw { rd, rs1, csr } => {
@@ -1725,12 +1875,35 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
 
         /* Privileged */
-        Op::Mret => unreachable!(),
+        Op::Mret => {
+            ctx.pc = ctx.mepc;
+
+            // Set privilege according to MPP
+            let new_prv = (ctx.mstatus & 0x1800) >> 11;
+            assert_ne!(new_prv, 2);
+            ctx.prv = new_prv;
+            if new_prv != 3 {
+                // Switch from M-mode to S/U-mode, clear local cache
+                ctx.shared.clear_local_cache();
+                ctx.shared.clear_local_icache();
+            }
+
+            // Set MIE according to MPIE
+            ctx.mstatus = (ctx.mstatus &! 0x8) | (ctx.mstatus & 0x80) >> 4;
+            // Set MPIE to 1
+            ctx.mstatus |= 0x80;
+            // Set MPP to U
+            ctx.mstatus &= !0x1800;
+
+            if ctx.interrupt_pending() != 0 {
+                ctx.shared.alert()
+            }
+        }
         Op::Sret => {
             ctx.pc = ctx.sepc;
 
             // Set privilege according to SPP
-            if (ctx.sstatus & 0x100) != 0 {
+            if (ctx.mstatus & 0x100) != 0 {
                 ctx.prv = 1;
             } else {
                 ctx.prv = 0;
@@ -1740,16 +1913,16 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             }
 
             // Set SIE according to SPIE
-            if (ctx.sstatus & 0x20) != 0 {
-                ctx.sstatus |= 0x2;
+            if (ctx.mstatus & 0x20) != 0 {
+                ctx.mstatus |= 0x2;
             } else {
-                ctx.sstatus &=! 0x2;
+                ctx.mstatus &=! 0x2;
             }
 
             // Set SPIE to 1
-            ctx.sstatus |= 0x20;
+            ctx.mstatus |= 0x20;
             // Set SPP to U
-            ctx.sstatus &=! 0x100;
+            ctx.mstatus &=! 0x100;
 
             if ctx.interrupt_pending() != 0 {
                 ctx.shared.alert()
@@ -1919,7 +2092,12 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
     let spec_len = compiler.speculative_len;
     let code_fn = code.as_ptr() as usize;
     let nonspec_fn = code_fn + spec_len;
-    let map = if prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
+    let map = match prv {
+        0 => &mut icache.u_map,
+        1 => &mut icache.s_map,
+        3 => &mut icache.m_map,
+        _ => unreachable!(),
+    };
     map.insert(phys_pc, (code_fn, nonspec_fn));
 
     // Actually commit the space we allocated
@@ -1930,7 +2108,9 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
     (if rollover { 0 } else { code_fn }, nonspec_fn)
 }
 
-extern "C" fn no_op() {}
+extern "C" {
+    fn helper_check_interrupt();
+}
 
 #[no_mangle]
 extern "C" fn find_block(ctx: &mut Context) -> (usize, usize) {
@@ -1939,12 +2119,17 @@ extern "C" fn find_block(ctx: &mut Context) -> (usize, usize) {
         Ok(pc) => pc,
         Err(_) => {
             trap(ctx);
-            return (no_op as usize, no_op as usize);
+            return (helper_check_interrupt as usize, helper_check_interrupt as usize);
         }
     };
     let mut prot = CODE_PROT.lock();
     let mut icache = icache(ctx.hartid);
-    let map = if ctx.prv == 1 { &mut icache.s_map } else { &mut icache.u_map };
+    let map = match ctx.prv {
+        0 => &mut icache.u_map,
+        1 => &mut icache.s_map,
+        3 => &mut icache.m_map,
+        _ => unreachable!(),
+    };
     match map.get(&phys_pc).copied() {
         Some(v) => v,
         None => {
@@ -1977,8 +2162,13 @@ pub fn check_interrupt(ctx: &mut Context) -> Result<(), ()> {
         }
     }
 
-    if crate::event_loop().time() >= ctx.timecmp {
-        ctx.shared.sip.fetch_or(32, MemOrder::Relaxed);
+    if crate::event_loop().time() >= ctx.mtimecmp {
+        if crate::get_flags().prv == 1 {
+            // Do what firmware do any delegate MTI to STI directly.
+            ctx.shared.mip.fetch_or(32, MemOrder::Relaxed);
+        } else {
+            ctx.shared.mip.fetch_or(128, MemOrder::Relaxed);
+        }
     }
 
     // Find out which interrupts can be taken
@@ -1990,8 +2180,8 @@ pub fn check_interrupt(ctx: &mut Context) -> Result<(), ()> {
     // Find the highest priority interrupt
     let pending = 63 - interrupt_mask.leading_zeros() as u64;
     // Interrupts have the highest bit set
-    ctx.scause = (1 << 63) | pending;
-    ctx.stval = 0;
+    ctx.cause = (1 << 63) | pending;
+    ctx.tval = 0;
     trap(ctx);
     Ok(())
 }
@@ -1999,43 +2189,80 @@ pub fn check_interrupt(ctx: &mut Context) -> Result<(), ()> {
 /// Trigger a trap. pc must be already adjusted properly before calling.
 #[no_mangle]
 pub fn trap(ctx: &mut Context) {
-    if crate::get_flags().user_only {
-        eprintln!("unhandled trap {:x}, tval = {:x}", ctx.scause, ctx.stval);
+    if crate::get_flags().prv == 0 {
+        eprintln!("unhandled trap {:x}, tval = {:x}", ctx.cause, ctx.tval);
         eprintln!("pc  = {:16x}  ra  = {:16x}", ctx.pc, ctx.registers[1]);
         for i in (2..32).step_by(2) {
             eprintln!(
                 "{:-3} = {:16x}  {:-3} = {:16x}",
                 riscv::register_name(i as u8),
                 ctx.registers[i],
-                riscv::register_name(i as u8),
+                riscv::register_name((i + 1) as u8),
                 ctx.registers[i + 1]
             );
         }
         std::process::exit(1);
     }
 
-    ctx.sepc = ctx.pc;
+    let deleg_reg = if ctx.cause >> 63 != 0 { ctx.mideleg } else { ctx.medeleg };
+    let deleg_to_s = ctx.prv != 3 && (deleg_reg >> (ctx.cause & 15)) & 1 != 0;
 
-    // Clear or set SPP bit
-    if ctx.prv != 0 {
-        ctx.sstatus |= 0x100;
+    if deleg_to_s {
+        ctx.scause = ctx.cause;
+        ctx.stval = ctx.tval;
+        ctx.sepc = ctx.pc;
+
+        // Clear or set SPP bit
+        if ctx.prv != 0 {
+            ctx.mstatus |= 0x100;
+        } else {
+            ctx.mstatus &= !0x100;
+            // Switch from U-mode to S-mode, clear local cache
+            ctx.shared.clear_local_cache();
+            ctx.shared.clear_local_icache();
+        }
+
+        // Clear of set SPIE bit
+        if (ctx.mstatus & 0x2) != 0 {
+            ctx.mstatus |= 0x20;
+        } else {
+            ctx.mstatus &= !0x20;
+        }
+
+        // Clear SIE
+        ctx.mstatus &= !0x2;
+
+        // Switch to S-mode
+        ctx.prv = 1;
+        ctx.pc = ctx.stvec;
     } else {
-        ctx.sstatus &= !0x100;
-        // Switch from U-mode to S-mode, clear local cache
-        ctx.shared.clear_local_cache();
-        ctx.shared.clear_local_icache();
+        assert_eq!(crate::get_flags().prv, 3);
+
+        ctx.mcause = ctx.cause;
+        ctx.mtval = ctx.tval;
+        ctx.mepc = ctx.pc;
+
+        // Set MPP bits
+        ctx.mstatus = (ctx.mstatus & !0x1800) | (ctx.prv << 11);
+        if ctx.prv != 3 {
+            ctx.shared.clear_local_cache();
+            ctx.shared.clear_local_icache();
+        }
+
+        // Clear of set MPIE bit
+        if (ctx.mstatus & 0x8) != 0 {
+            ctx.mstatus |= 0x80;
+        } else {
+            ctx.mstatus &= !0x80;
+        }
+
+        // Clear MIE
+        ctx.mstatus &= !0x8;
+
+        // Switch to M-mode
+        ctx.prv = 3;
+        ctx.pc = ctx.mtvec;
     }
-    // Clear of set SPIE bit
-    if (ctx.sstatus & 0x2) != 0 {
-        ctx.sstatus |= 0x20;
-    } else {
-        ctx.sstatus &= !0x20;
-    }
-    // Clear SIE
-    ctx.sstatus &= !0x2;
-    // Switch to S-mode
-    ctx.prv = 1;
-    ctx.pc = ctx.stvec;
 
     crate::fiber::Fiber::sleep(1)
 }
@@ -2094,8 +2321,8 @@ pub fn handle_misalign(ctx: &mut Context, addr: u64) -> Result<(), ()> {
         }
         _ => {
             // Otherwise it's misaligned atomic
-            ctx.scause = 6;
-            ctx.stval = addr;
+            ctx.cause = 6;
+            ctx.tval = addr;
             return Err(());
         }
     }

@@ -35,8 +35,8 @@ pub struct Flags {
     // A flag to determine whether to print instruction out when it is decoded.
     disassemble: bool,
 
-    // If we are only emulating userspace code
-    user_only: bool,
+    // The highest privilege mode emulated
+    prv: u8,
 
     /// If perf map should be generated
     perf: bool,
@@ -51,7 +51,7 @@ pub struct Flags {
 static mut FLAGS: Flags = Flags {
     no_direct_memory_access: true,
     disassemble: false,
-    user_only: false,
+    prv: 1,
     perf: false,
     thread: true,
     dump_fdt: None,
@@ -194,7 +194,7 @@ pub fn main() {
             eprintln!("{}: {}", interp_name, msg);
             std::process::exit(1);
         }
-        unsafe { FLAGS.user_only = true }
+        unsafe { FLAGS.prv = 0 }
     } else {
         // Full-system emulation is needed. Originally we uses kernel path as "program name"
         // directly, but as full-system emulation requires many peripheral devices as well,
@@ -222,7 +222,7 @@ pub fn main() {
     let mut contexts = Vec::new();
     let mut shared_contexts = Vec::new();
 
-    let num_cores = if get_flags().user_only { 1 } else { CONFIG.core };
+    let num_cores = if get_flags().prv == 0 { 1 } else { CONFIG.core };
 
     // Create a fiber for event-driven simulation, e.g. timer, I/O
     let event_fiber = fiber::Fiber::new();
@@ -239,16 +239,27 @@ pub fn main() {
             instret: 0,
             lr_addr: 0,
             lr_value: 0,
+            cause: 0,
+            tval: 0,
             // FPU turned on by default
-            sstatus: 0x6000,
+            mstatus: 0x6000,
             scause: 0,
             sepc: 0,
             stval: 0,
             satp: 0,
-            sie: 0,
             sscratch: 0,
             stvec: 0,
-            timecmp: u64::max_value(),
+            scounteren: 0,
+            mideleg: 0x222,
+            medeleg: 0xB35D,
+            mcause: 0,
+            mepc: 0,
+            mtval: 0,
+            mie: 0,
+            mscratch: 0,
+            mtvec: 0,
+            mcounteren: 0b111,
+            mtimecmp: u64::max_value(),
             // These are set by setup_mem, so we don't really care now.
             pc: 0,
             prv: 0,
@@ -271,7 +282,7 @@ pub fn main() {
     unsafe { RoCell::init(&SHARED_CONTEXTS, shared_contexts) };
 
     // These should only be initialised for full-system emulation
-    if !get_flags().user_only {
+    if get_flags().prv != 0 {
         io::console::console_init();
         emu::init();
     }

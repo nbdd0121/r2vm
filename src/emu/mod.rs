@@ -42,7 +42,7 @@ struct IoSystem {
 
 impl IoSystem {
     pub fn new() -> IoSystem {
-        assert!(!crate::get_flags().user_only);
+        assert_ne!(crate::get_flags().prv, 0);
 
         // Instantiate PLIC and corresponding device tre
         let core_count = crate::core_count();

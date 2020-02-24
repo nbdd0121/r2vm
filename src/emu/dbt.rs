@@ -440,7 +440,7 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Add(Reg(Register::RSI), Imm(pc_offset)));
         }
 
-        if cfg!(feature = "direct") && crate::get_flags().user_only {
+        if cfg!(feature = "direct") && crate::get_flags().prv == 0 {
             return;
         }
 
@@ -520,7 +520,7 @@ impl<'a> DbtCompiler<'a> {
     /// Destroy all volatile registers
     fn dcache_access(&mut self, size: Size, write: bool) {
         // XXX: In direct mode, self-modifying code be wrong!!!
-        if cfg!(feature = "direct") && crate::get_flags().user_only {
+        if cfg!(feature = "direct") && crate::get_flags().prv == 0 {
             return;
         }
 
