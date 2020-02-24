@@ -176,6 +176,7 @@ impl Op {
             Op::FmsubD { .. } => "fmsub.d",
             Op::FnmsubD { .. } => "fnmsub.d",
             Op::FnmaddD { .. } => "fnmadd.d",
+            Op::Mret { .. } => "mret",
             Op::Sret { .. } => "sret",
             Op::Wfi { .. } => "wfi",
             Op::SfenceVma { .. } => "sfence.vma",
@@ -278,6 +279,7 @@ impl Op {
             Op::FenceI |
             Op::Ecall |
             Op::Ebreak |
+            Op::Mret |
             Op::Sret |
             Op::Wfi => (),
             Op::SfenceVma { rs1, rs2 } =>

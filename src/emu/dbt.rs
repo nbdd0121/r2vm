@@ -1993,6 +1993,7 @@ impl<'a> DbtCompiler<'a> {
             }
 
             /* OPs that can disrupt control flow */
+            Op::Mret |
             Op::Sret |
             Op::Ecall |
             Op::Ebreak |

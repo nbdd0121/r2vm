@@ -1725,6 +1725,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
 
         /* Privileged */
+        Op::Mret => unreachable!(),
         Op::Sret => {
             ctx.pc = ctx.sepc;
 

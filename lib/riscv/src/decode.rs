@@ -879,6 +879,7 @@ pub fn decode(bits: u32) -> Op {
                 0b000 => match bits {
                     0x73 => Op::Ecall,
                     0x100073 => Op::Ebreak,
+                    0x30200073 => Op::Mret,
                     0x10200073 => Op::Sret,
                     0x10500073 => Op::Wfi,
                     bits if rd == 0 && funct7(bits) == 0b0001001 => Op::SfenceVma { rs1, rs2 },

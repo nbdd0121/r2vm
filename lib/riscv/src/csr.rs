@@ -24,14 +24,33 @@ impl Csr {
     pub const Sie: Csr = Csr(0x104);
     pub const Stvec: Csr = Csr(0x105);
     pub const Scounteren: Csr = Csr(0x106);
-
     pub const Sscratch: Csr = Csr(0x140);
     pub const Sepc: Csr = Csr(0x141);
     pub const Scause: Csr = Csr(0x142);
     pub const Stval: Csr = Csr(0x143);
     pub const Sip: Csr = Csr(0x144);
-
     pub const Satp: Csr = Csr(0x180);
+
+    pub const Mvendorid: Csr = Csr(0xF11);
+    pub const Marchid: Csr = Csr(0xF12);
+    pub const Mimpid: Csr = Csr(0xF13);
+    pub const Mhartid: Csr = Csr(0xF14);
+    pub const Mstatus: Csr = Csr(0x300);
+    pub const Misa: Csr = Csr(0x301);
+    pub const Medeleg: Csr = Csr(0x302);
+    pub const Mideleg: Csr = Csr(0x303);
+    pub const Mie: Csr = Csr(0x304);
+    pub const Mtvec: Csr = Csr(0x305);
+    pub const Mcounteren: Csr = Csr(0x306);
+    pub const Mscratch: Csr = Csr(0x340);
+    pub const Mepc: Csr = Csr(0x341);
+    pub const Mcause: Csr = Csr(0x342);
+    pub const Mtval: Csr = Csr(0x343);
+    pub const Mip: Csr = Csr(0x344);
+
+    pub const Mcycle: Csr = Csr(0xB00);
+    pub const Mtime: Csr = Csr(0xB01);
+    pub const Minstret: Csr = Csr(0xB02);
 }
 
 impl Csr {

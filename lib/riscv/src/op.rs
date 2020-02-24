@@ -239,6 +239,7 @@ pub enum Op {
     FnmaddD { frd: u8, frs1: u8, frs2: u8, frs3: u8, rm: u8 },
 
     /* Privileged */
+    Mret,
     Sret,
     Wfi,
     SfenceVma { rs1: u8, rs2: u8 },
@@ -257,6 +258,7 @@ impl Op {
             Op::Jalr {..} |
             Op::Jal {..} |
             // Return from ecall also changes control flow.
+            Op::Mret |
             Op::Sret |
             // They always trigger faults
             Op::Ecall |
@@ -296,6 +298,7 @@ impl Op {
             | Op::Csrrwi { csr, .. }
             | Op::Csrrsi { csr, .. }
             | Op::Csrrci { csr, .. } => csr.min_prv_level(),
+            Op::Mret => 3,
             Op::Sret | Op::Wfi | Op::SfenceVma { .. } => 1,
             _ => 0,
         }
