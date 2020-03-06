@@ -1,8 +1,10 @@
 use crate::util::RoCell;
+use lazy_static::lazy_static;
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use super::abi;
 
@@ -20,6 +22,14 @@ pub static EXEC_PATH: RoCell<CString> = unsafe { RoCell::new_uninit() };
 /// Path of sysroot. When the guest application tries to open a file, and the corresponding file exists in sysroot,
 /// it will be redirected.
 pub static SYSROOT: RoCell<PathBuf> = unsafe { RoCell::new_uninit() };
+
+lazy_static! {
+    /// The reference point when the user space asks for the current time. This is to allow
+    /// user-space applications to do timing properly in lockstep mode.
+    static ref EPOCH: Duration = {
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap() - Duration::from_micros(crate::event_loop().time())
+    };
+}
 
 /// Initialise brk when program is being loaded. Should not be called after execution has started.
 pub unsafe fn init_brk(brk: u64) {
@@ -643,8 +653,7 @@ pub unsafe fn syscall(
             ret
         }
         abi::SYS_gettimeofday => {
-            use std::time::SystemTime;
-            let time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+            let time = *EPOCH + Duration::from_micros(crate::event_loop().time());
             let guest_tv = &mut *(arg0 as usize as *mut abi::timeval);
             guest_tv.tv_sec = time.as_secs() as _;
             guest_tv.tv_usec = time.subsec_micros() as _;
