@@ -52,3 +52,18 @@ impl<R: lock_api::RawMutex + Send + Sync, T: IoMemory + Send> IoMemorySync
         self.lock().write(addr, value, size)
     }
 }
+
+/// A context for I/O operation.
+pub trait IoContext: Send + Sync {
+    /// Perform a DMA read at given address.
+    fn dma_read(&self, addr: u64, buf: &mut [u8]);
+
+    /// Perform a DMA write at given address.
+    fn dma_write(&self, addr: u64, buf: &[u8]);
+
+    /// Read a half word atomically
+    fn read_u16(&self, addr: u64) -> u16;
+
+    /// Write a half word atomically
+    fn write_u16(&self, addr: u64, value: u16);
+}

@@ -1,11 +1,12 @@
 use parking_lot::Mutex;
-use std::io::{IoSlice, IoSliceMut, Read, Seek, SeekFrom, Write};
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
+
+use super::super::IoContext;
 
 const VIRTQ_DESC_F_NEXT: u16 = 1;
 const VIRTQ_DESC_F_WRITE: u16 = 2;
@@ -35,10 +36,11 @@ pub(super) struct QueueInner {
     pub last_avail_idx: u16,
     pub last_used_idx: u16,
     pub waker: Option<Waker>,
+    pub io_ctx: Arc<dyn IoContext>,
 }
 
 impl QueueInner {
-    pub fn new(num_max: u16) -> Arc<Mutex<QueueInner>> {
+    pub fn new(io_ctx: Arc<dyn IoContext>, num_max: u16) -> Arc<Mutex<QueueInner>> {
         let inner = Arc::new(Mutex::new(QueueInner {
             ready: false,
             num: num_max,
@@ -49,6 +51,7 @@ impl QueueInner {
             waker: None,
             last_avail_idx: 0,
             last_used_idx: 0,
+            io_ctx,
         }));
         inner
     }
@@ -72,10 +75,8 @@ impl QueueInner {
             return Err(QueueNotReady);
         }
 
-        let avail_idx_ptr = unsafe { &*((self.avail_addr + 2) as usize as *const AtomicU16) };
-
         // Read the current index
-        let avail_idx = avail_idx_ptr.load(Ordering::Acquire);
+        let avail_idx = self.io_ctx.read_u16(self.avail_addr + 2);
 
         // No extra elements in this queue
         if self.last_avail_idx == avail_idx {
@@ -86,7 +87,7 @@ impl QueueInner {
         // Each index is 2 bytes, and there are flags and idx (2 bytes each) before the ring, so
         // we have + 4 here.
         let idx_ptr = self.avail_addr + 4 + (self.last_avail_idx & (self.num - 1)) as u64 * 2;
-        let mut idx = unsafe { *(idx_ptr as usize as *const u16) };
+        let mut idx = self.io_ctx.read_u16(idx_ptr);
 
         // Now we have obtained this descriptor, increment the index to skip over this.
         self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
@@ -97,29 +98,25 @@ impl QueueInner {
             bytes_written: 0,
             read: Vec::new(),
             write: Vec::new(),
+            read_len: 0,
+            write_len: 0,
+            io_ctx: self.io_ctx.clone(),
         };
 
         loop {
-            let desc = unsafe {
-                std::ptr::read(
-                    (self.desc_addr + (idx & (self.num - 1)) as u64 * 16) as usize
-                        as *const VirtqDesc,
-                )
-            };
+            let mut desc = [0; std::mem::size_of::<VirtqDesc>()];
+            self.io_ctx.dma_read(self.desc_addr + (idx & (self.num - 1)) as u64 * 16, &mut desc);
+            let desc: VirtqDesc = unsafe { std::mem::transmute(desc) };
 
             // Add to the corresponding buffer (read/write)
             if (desc.flags & VIRTQ_DESC_F_WRITE) == 0 {
-                avail.read.push(IoSlice::new(unsafe {
-                    std::slice::from_raw_parts((desc.addr as usize) as *const u8, desc.len as usize)
-                }));
+                avail.read.push((desc.addr, desc.len as usize));
             } else {
-                avail.write.push(IoSliceMut::new(unsafe {
-                    std::slice::from_raw_parts_mut(
-                        (desc.addr as usize) as *mut u8,
-                        desc.len as usize,
-                    )
-                }));
+                avail.write.push((desc.addr, desc.len as usize));
             };
+
+            avail.read_len = avail.read.iter().map(|(_, len)| len).sum();
+            avail.write_len = avail.write.iter().map(|(_, len)| len).sum();
 
             // Follow the linked list until we've see a descritpro without NEXT flag.
             if (desc.flags & VIRTQ_DESC_F_NEXT) == 0 {
@@ -133,25 +130,18 @@ impl QueueInner {
 
     /// Put back a buffer to the ring.
     fn put(&mut self, avail: &Buffer) {
-        // Write requires invalidating icache
-        for slice in avail.write.iter() {
-            let start = slice.as_ptr() as usize;
-            let end = start + slice.len();
-            crate::emu::interp::icache_invalidate(start, end);
-        }
-
         if !self.ready {
             return;
         }
 
         let elem_ptr = self.used_addr + 4 + (self.last_used_idx & (self.num - 1)) as u64 * 8;
-        unsafe {
-            *(elem_ptr as usize as *mut u32) = avail.idx as u32;
-            *((elem_ptr + 4) as usize as *mut u32) = avail.bytes_written as u32;
-        }
+        let mut buffer = [0; 8];
+        buffer[0..4].copy_from_slice(&(avail.idx as u32).to_le_bytes());
+        buffer[4..8].copy_from_slice(&(avail.bytes_written as u32).to_le_bytes());
+        self.io_ctx.dma_write(elem_ptr, &buffer);
+
         self.last_used_idx = self.last_used_idx.wrapping_add(1);
-        let used_idx_ptr = unsafe { &*((self.used_addr + 2) as usize as *const AtomicU16) };
-        used_idx_ptr.store(self.last_used_idx, Ordering::Release);
+        self.io_ctx.write_u16(self.used_addr + 2, self.last_used_idx);
     }
 }
 
@@ -197,8 +187,11 @@ pub struct Buffer {
     queue: Arc<Mutex<QueueInner>>,
     idx: u16,
     bytes_written: usize,
-    read: Vec<IoSlice<'static>>,
-    write: Vec<IoSliceMut<'static>>,
+    read: Vec<(u64, usize)>,
+    write: Vec<(u64, usize)>,
+    read_len: usize,
+    write_len: usize,
+    io_ctx: Arc<dyn IoContext>,
 }
 
 impl Drop for Buffer {
@@ -207,42 +200,66 @@ impl Drop for Buffer {
     }
 }
 
-unsafe impl Send for Buffer {}
-
 impl Buffer {
     pub fn reader(&self) -> BufferReader {
-        BufferReader::new(&self.read)
+        BufferReader {
+            buffer: &self.read,
+            len: self.read_len,
+            pos: 0,
+            slice_idx: 0,
+            slice_offset: 0,
+            io_ctx: &*self.io_ctx,
+        }
     }
 
     pub fn writer(&mut self) -> BufferWriter {
-        BufferWriter::new(&mut self.write, &mut self.bytes_written)
+        BufferWriter {
+            buffer: &self.write,
+            len: self.write_len,
+            bytes_written: &mut self.bytes_written,
+            pos: 0,
+            slice_idx: 0,
+            slice_offset: 0,
+            io_ctx: &*self.io_ctx,
+        }
     }
 
     pub fn reader_writer(&mut self) -> (BufferReader, BufferWriter) {
-        (BufferReader::new(&self.read), BufferWriter::new(&mut self.write, &mut self.bytes_written))
+        (
+            BufferReader {
+                buffer: &self.read,
+                len: self.read_len,
+                pos: 0,
+                slice_idx: 0,
+                slice_offset: 0,
+                io_ctx: &*self.io_ctx,
+            },
+            BufferWriter {
+                buffer: &self.write,
+                len: self.write_len,
+                bytes_written: &mut self.bytes_written,
+                pos: 0,
+                slice_idx: 0,
+                slice_offset: 0,
+                io_ctx: &*self.io_ctx,
+            },
+        )
     }
 }
 
 pub struct BufferReader<'a> {
-    buffer: &'a [IoSlice<'static>],
+    buffer: &'a [(u64, usize)],
     len: usize,
     pos: usize,
     slice_idx: usize,
     slice_offset: usize,
+    io_ctx: &'a dyn IoContext,
 }
 
-unsafe impl Send for BufferReader<'_> {}
-
 impl<'a> BufferReader<'a> {
-    fn new(buffer: &'a [IoSlice<'static>]) -> Self {
-        let len = buffer.iter().map(|x| x.len()).sum();
-        Self { buffer, len, pos: 0, slice_idx: 0, slice_offset: 0 }
-    }
-
     fn seek_slice(&mut self, mut offset: usize) {
-        for (i, desc) in self.buffer.iter().enumerate() {
+        for (i, &(_, len)) in self.buffer.iter().enumerate() {
             // offset >= len means that this block should be completely skipped
-            let len = desc.len() as usize;
             if offset >= len {
                 offset -= len;
                 continue;
@@ -287,15 +304,17 @@ impl<'a> Read for BufferReader<'a> {
             return Ok(0);
         }
 
-        let slice = &self.buffer[self.slice_idx][self.slice_offset..];
+        let (addr, len) = self.buffer[self.slice_idx];
+        let slice_addr = addr + self.slice_offset as u64;
+        let slice_len = len - self.slice_offset;
 
-        let len = if buf.len() >= slice.len() {
-            buf[..slice.len()].copy_from_slice(slice);
+        let len = if buf.len() >= slice_len {
+            self.io_ctx.dma_read(slice_addr, &mut buf[..slice_len]);
             self.slice_idx += 1;
             self.slice_offset = 0;
-            slice.len()
+            slice_len
         } else {
-            buf.copy_from_slice(&slice[..buf.len()]);
+            self.io_ctx.dma_read(slice_addr, buf);
             self.slice_offset += buf.len();
             buf.len()
         };
@@ -306,26 +325,19 @@ impl<'a> Read for BufferReader<'a> {
 }
 
 pub struct BufferWriter<'a> {
-    buffer: &'a mut [IoSliceMut<'static>],
+    buffer: &'a [(u64, usize)],
     bytes_written: &'a mut usize,
     len: usize,
     pos: usize,
     slice_idx: usize,
     slice_offset: usize,
+    io_ctx: &'a dyn IoContext,
 }
 
-unsafe impl Send for BufferWriter<'_> {}
-
 impl<'a> BufferWriter<'a> {
-    pub fn new(buffer: &'a mut [IoSliceMut<'static>], bytes_written: &'a mut usize) -> Self {
-        let len = buffer.iter().map(|x| x.len()).sum();
-        Self { buffer, len, bytes_written, pos: 0, slice_idx: 0, slice_offset: 0 }
-    }
-
     fn seek_slice(&mut self, mut offset: usize) {
-        for (i, desc) in self.buffer.iter().enumerate() {
+        for (i, &(_, len)) in self.buffer.iter().enumerate() {
             // offset >= len means that this block should be completely skipped
-            let len = desc.len() as usize;
             if offset >= len {
                 offset -= len;
                 continue;
@@ -374,15 +386,17 @@ impl<'a> Write for BufferWriter<'a> {
             return Ok(0);
         }
 
-        let slice = &mut self.buffer[self.slice_idx][self.slice_offset..];
+        let (addr, len) = self.buffer[self.slice_idx];
+        let slice_addr = addr + self.slice_offset as u64;
+        let slice_len = len - self.slice_offset;
 
-        let len = if buf.len() >= slice.len() {
-            slice.copy_from_slice(&buf[..slice.len()]);
+        let len = if buf.len() >= slice_len {
+            self.io_ctx.dma_write(slice_addr, &buf[..slice_len]);
             self.slice_idx += 1;
             self.slice_offset = 0;
-            slice.len()
+            slice_len
         } else {
-            slice[..buf.len()].copy_from_slice(buf);
+            self.io_ctx.dma_write(slice_addr, buf);
             self.slice_offset += buf.len();
             buf.len()
         };

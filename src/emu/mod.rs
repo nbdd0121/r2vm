@@ -24,6 +24,36 @@ pub mod syscall;
 pub use event::EventLoop;
 pub use syscall::syscall;
 
+struct DirectIoContext;
+
+impl crate::io::IoContext for DirectIoContext {
+    fn dma_read(&self, addr: u64, buf: &mut [u8]) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(addr as usize as *const u8, buf.as_mut_ptr(), buf.len())
+        };
+    }
+
+    fn dma_write(&self, addr: u64, buf: &[u8]) {
+        let addr = addr as usize;
+        unsafe { std::ptr::copy_nonoverlapping(buf.as_ptr(), addr as *mut u8, buf.len()) };
+        crate::emu::interp::icache_invalidate(addr, addr + buf.len());
+    }
+
+    fn read_u16(&self, addr: u64) -> u16 {
+        unsafe {
+            (*(addr as *const std::sync::atomic::AtomicU16))
+                .load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    fn write_u16(&self, addr: u64, value: u16) {
+        unsafe {
+            (*(addr as *const std::sync::atomic::AtomicU16))
+                .store(value, std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+}
+
 /// This describes all I/O aspects of the system.
 struct IoSystem {
     /// The IO memory map.
@@ -101,7 +131,7 @@ impl IoSystem {
         self.boundary += 4096;
 
         let device = Box::new(f(irq));
-        let virtio = Arc::new(Mutex::new(Mmio::new(device)));
+        let virtio = Arc::new(Mutex::new(Mmio::new(Arc::new(DirectIoContext), device)));
         self.register_io_mem(mem, 4096, virtio.clone());
 
         let core_count = crate::core_count();

@@ -1,4 +1,4 @@
-use super::super::IoMemory;
+use super::super::{IoContext, IoMemory};
 use super::Device;
 
 use parking_lot::Mutex;
@@ -35,15 +35,16 @@ pub struct Mmio {
     device_features_sel: bool,
     driver_features_sel: bool,
     queue_sel: usize,
+    io_ctx: Arc<dyn IoContext>,
 }
 
 impl Mmio {
-    pub fn new(dev: Box<dyn Device + Send>) -> Mmio {
+    pub fn new(io_ctx: Arc<dyn IoContext>, dev: Box<dyn Device + Send>) -> Mmio {
         let num_queues = dev.num_queues();
         let mut queues = Vec::with_capacity(num_queues);
         for i in 0..num_queues {
             let len_max = dev.max_queue_len(i);
-            let queue = super::queue::QueueInner::new(len_max);
+            let queue = super::queue::QueueInner::new(io_ctx.clone(), len_max);
             queues.push(queue);
         }
         Mmio {
@@ -52,6 +53,7 @@ impl Mmio {
             device_features_sel: false,
             driver_features_sel: false,
             queue_sel: 0,
+            io_ctx,
         }
     }
 }
@@ -103,7 +105,7 @@ impl IoMemory for Mmio {
                     ADDR_QUEUE_AVAIL_HIGH => (queue.avail_addr >> 32) as u32,
                     ADDR_QUEUE_USED_LOW => queue.used_addr as u32,
                     ADDR_QUEUE_USED_HIGH => (queue.used_addr >> 32) as u32,
-                    _ => unsafe { std::hint::unreachable_unchecked() },
+                    _ => unreachable!(),
                 }
             }
             // As currently config space is readonly, the interrupt status must be an used buffer.
@@ -204,7 +206,7 @@ impl IoMemory for Mmio {
                     ADDR_QUEUE_USED_HIGH => {
                         queue.used_addr = (queue.used_addr & 0xffffffff) | (value as u64) << 32
                     }
-                    _ => unsafe { std::hint::unreachable_unchecked() },
+                    _ => unreachable!(),
                 }
                 std::mem::drop(queue);
 
@@ -227,7 +229,10 @@ impl IoMemory for Mmio {
                             lock.reset();
                             lock.waker.take().map(|x| x.wake());
                         }
-                        let inner = super::queue::QueueInner::new(self.device.max_queue_len(i));
+                        let inner = super::queue::QueueInner::new(
+                            self.io_ctx.clone(),
+                            self.device.max_queue_len(i),
+                        );
                         *queue = inner;
                     }
                     self.queue_sel = 0;
