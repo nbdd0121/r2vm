@@ -1,3 +1,4 @@
+use super::super::IrqPin;
 use super::{Device, DeviceId, Queue};
 use futures::future::AbortHandle;
 use parking_lot::Mutex;
@@ -15,7 +16,7 @@ fn size_to_config(col: u16, row: u16) -> [u8; 4] {
 /// A virtio entropy source device.
 pub struct Console {
     status: u32,
-    irq: u32,
+    irq: Arc<dyn IrqPin>,
     /// Whether sizing feature should be available. We allow it to be turned off because sometimes
     /// STDIN is not tty.
     resize: bool,
@@ -24,7 +25,7 @@ pub struct Console {
     rx_handle: Option<AbortHandle>,
 }
 
-fn start_rx(mut rx: Queue, irq: u32) -> AbortHandle {
+fn start_rx(mut rx: Queue, irq: Arc<dyn IrqPin>) -> AbortHandle {
     crate::event_loop().spawn_abortable(async move {
         let mut buffer = [0; 2048];
         loop {
@@ -34,7 +35,7 @@ fn start_rx(mut rx: Queue, irq: u32) -> AbortHandle {
                 writer.write_all(&buffer[..len]).unwrap();
                 drop(dma_buffer);
 
-                crate::emu::PLIC.lock().trigger(irq);
+                irq.pulse();
             } else {
                 info!(
                     target: "VirtioConsole",
@@ -46,7 +47,7 @@ fn start_rx(mut rx: Queue, irq: u32) -> AbortHandle {
     })
 }
 
-fn start_tx(mut tx: Queue, irq: u32) {
+fn start_tx(mut tx: Queue, irq: Arc<dyn IrqPin>) {
     crate::event_loop().spawn(async move {
         while let Ok(buffer) = tx.take().await {
             let mut reader = buffer.reader();
@@ -57,7 +58,7 @@ fn start_tx(mut tx: Queue, irq: u32) {
             drop(buffer);
 
             crate::io::console::CONSOLE.send(&io_buffer).unwrap();
-            crate::emu::PLIC.lock().trigger(irq);
+            irq.pulse();
         }
     });
 }
@@ -69,7 +70,7 @@ impl Drop for Console {
 }
 
 impl Console {
-    pub fn new(irq: u32, mut resize: bool) -> Console {
+    pub fn new(irq: Arc<dyn IrqPin>, mut resize: bool) -> Console {
         let (col, row) = if resize {
             match crate::io::console::CONSOLE.get_size() {
                 Ok(v) => v,
@@ -93,6 +94,7 @@ impl Console {
         if resize {
             let callback = {
                 let config = config.clone();
+                let irq_clone = irq.clone();
                 Box::new(move || {
                     let (col, row) = match crate::io::console::CONSOLE.get_size() {
                         Err(_) => return,
@@ -101,7 +103,7 @@ impl Console {
                     let mut guard = config.lock();
                     guard.0 = size_to_config(col, row);
                     guard.1 = true;
-                    crate::emu::PLIC.lock().trigger(irq);
+                    irq_clone.pulse();
                 })
             };
             crate::io::console::CONSOLE.on_size_change(Some(callback));
@@ -142,9 +144,9 @@ impl Device for Console {
     fn queue_ready(&mut self, idx: usize, queue: Queue) {
         if idx == 0 {
             self.rx_handle.take().map(|x| x.abort());
-            self.rx_handle = Some(start_rx(queue, self.irq));
+            self.rx_handle = Some(start_rx(queue, self.irq.clone()));
         } else {
-            start_tx(queue, self.irq);
+            start_tx(queue, self.irq.clone());
         }
     }
 

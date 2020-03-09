@@ -1,3 +1,4 @@
+use super::super::IrqPin;
 use super::{Device, DeviceId, Queue};
 use byteorder::{WriteBytesExt, LE};
 use p9::serialize::{Fcall, Serializable};
@@ -14,11 +15,11 @@ pub struct P9 {
     status: u32,
     config: Box<[u8]>,
     handler: Arc<Mutex<P9Handler<Passthrough>>>,
-    irq: u32,
+    irq: Arc<dyn IrqPin>,
 }
 
 impl P9 {
-    pub fn new(irq: u32, mount_tag: &str, path: &std::path::Path) -> P9 {
+    pub fn new(irq: Arc<dyn IrqPin>, mount_tag: &str, path: &std::path::Path) -> P9 {
         // Config space is composed of u16 length followed by the tag bytes
         let config = {
             let tag_len = mount_tag.len();
@@ -39,7 +40,7 @@ impl P9 {
     }
 }
 
-fn start_task(mut queue: Queue, handler: Arc<Mutex<P9Handler<Passthrough>>>, irq: u32) {
+fn start_task(mut queue: Queue, handler: Arc<Mutex<P9Handler<Passthrough>>>, irq: Arc<dyn IrqPin>) {
     let task = async move {
         while let Ok(mut buffer) = queue.take().await {
             let (mut reader, mut writer) = buffer.reader_writer();
@@ -58,7 +59,7 @@ fn start_task(mut queue: Queue, handler: Arc<Mutex<P9Handler<Passthrough>>>, irq
             writer.write_u32::<LE>(size as u32).unwrap();
 
             drop(buffer);
-            crate::emu::PLIC.lock().trigger(irq);
+            irq.pulse();
         }
     };
     if crate::threaded() {
@@ -95,6 +96,6 @@ impl Device for P9 {
         self.status = 0;
     }
     fn queue_ready(&mut self, _idx: usize, queue: Queue) {
-        start_task(queue, self.handler.clone(), self.irq);
+        start_task(queue, self.handler.clone(), self.irq.clone());
     }
 }

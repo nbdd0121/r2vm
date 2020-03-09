@@ -1,4 +1,5 @@
 use super::super::block::Block as BlockDevice;
+use super::super::IrqPin;
 use super::{Device, DeviceId, Queue};
 use parking_lot::Mutex;
 use std::io::{Read, Write};
@@ -23,11 +24,11 @@ pub struct Block {
     status: u32,
     config: [u8; 8],
     file: Arc<Mutex<Box<dyn BlockDevice + Send>>>,
-    irq: u32,
+    irq: Arc<dyn IrqPin>,
 }
 
 impl Block {
-    pub fn new(irq: u32, mut file: Box<dyn BlockDevice + Send>) -> Block {
+    pub fn new(irq: Arc<dyn IrqPin>, mut file: Box<dyn BlockDevice + Send>) -> Block {
         let len = file.len().unwrap();
         if len % 512 != 0 {
             panic!("Size of block device must be multiple of 512 bytes");
@@ -41,7 +42,11 @@ impl Block {
     }
 }
 
-fn start_task(mut queue: Queue, file: Arc<Mutex<Box<dyn BlockDevice + Send>>>, irq: u32) {
+fn start_task(
+    mut queue: Queue,
+    file: Arc<Mutex<Box<dyn BlockDevice + Send>>>,
+    irq: Arc<dyn IrqPin>,
+) {
     let task = async move {
         while let Ok(mut buffer) = queue.take().await {
             let (mut reader, mut writer) = buffer.reader_writer();
@@ -87,7 +92,7 @@ fn start_task(mut queue: Queue, file: Arc<Mutex<Box<dyn BlockDevice + Send>>>, i
             }
 
             drop(buffer);
-            crate::emu::PLIC.lock().trigger(irq);
+            irq.pulse();
         }
     };
     if crate::threaded() {
@@ -124,6 +129,6 @@ impl Device for Block {
         self.status = 0;
     }
     fn queue_ready(&mut self, _idx: usize, queue: Queue) {
-        start_task(queue, self.file.clone(), self.irq)
+        start_task(queue, self.file.clone(), self.irq.clone())
     }
 }

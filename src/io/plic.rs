@@ -1,4 +1,8 @@
-use super::IoMemory;
+use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use super::{IoMemory, IoMemorySync, IrqPin};
 
 // The ranges here are all inclusive, and they are calculated under maximum permitted number
 // of interrupts (1024).
@@ -18,26 +22,38 @@ const OFFSET_INTERRUPT_CLAIM: usize = 0x004;
 
 /// An implementation of SiFive's PLIC controller. We support 31 interrupts at the moment.
 pub struct Plic {
+    inner: Mutex<PlicInner>,
+}
+
+struct PlicInner {
     priority: [u8; 32],
     pending: u32,
     claimed: u32,
     enable: Box<[u32]>,
     threshold: Box<[u8]>,
+    irq: Vec<Arc<dyn IrqPin>>,
 }
 
-impl Plic {
+pub struct PlicIrq {
+    plic: Arc<Plic>,
+    irq: u32,
+    prev: AtomicBool,
+}
+
+impl PlicInner {
     /// Create a SiFive-compatible PLIC, with `ctx` number of contexts.
-    pub fn new(ctx: usize) -> Plic {
-        Plic {
+    fn new(ctx_irqs: Vec<Arc<dyn IrqPin>>) -> Self {
+        Self {
             priority: [0; 32],
             pending: 0,
-            enable: vec![0; ctx].into_boxed_slice(),
-            threshold: vec![0; ctx].into_boxed_slice(),
+            enable: vec![0; ctx_irqs.len()].into_boxed_slice(),
+            threshold: vec![0; ctx_irqs.len()].into_boxed_slice(),
             claimed: 0,
+            irq: ctx_irqs,
         }
     }
 
-    pub fn trigger(&mut self, irq: u32) {
+    fn trigger(&mut self, irq: u32) {
         assert!(irq > 0 && irq < 32);
         self.pending |= 1 << irq;
         self.recompute_pending();
@@ -58,11 +74,7 @@ impl Plic {
 
     fn recompute_pending(&mut self) {
         for ctx in 0..self.enable.len() {
-            if self.pending(ctx) {
-                crate::shared_context(ctx).assert(512);
-            } else {
-                crate::shared_context(ctx).deassert(512);
-            }
+            self.irq[ctx].set_level(self.pending(ctx));
         }
     }
 
@@ -90,7 +102,7 @@ impl Plic {
     }
 }
 
-impl IoMemory for Plic {
+impl IoMemory for PlicInner {
     fn read(&mut self, addr: usize, size: u32) -> u64 {
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
@@ -239,5 +251,36 @@ impl IoMemory for Plic {
 
         // Re-compute the interrupt status after each successful register write
         self.recompute_pending();
+    }
+}
+
+impl Plic {
+    /// Create a SiFive-compatible PLIC, with `ctx` number of contexts.
+    pub fn new(ctx_irqs: Vec<Arc<dyn IrqPin>>) -> Arc<Self> {
+        Arc::new(Self { inner: Mutex::new(PlicInner::new(ctx_irqs)) })
+    }
+
+    pub fn irq_pin(self: Arc<Self>, irq: u32) -> PlicIrq {
+        PlicIrq { plic: self, irq, prev: AtomicBool::new(false) }
+    }
+}
+
+impl IoMemorySync for Plic {
+    fn read_sync(&self, addr: usize, size: u32) -> u64 {
+        self.inner.read_sync(addr, size)
+    }
+
+    fn write_sync(&self, addr: usize, value: u64, size: u32) {
+        self.inner.write_sync(addr, value, size)
+    }
+}
+
+impl IrqPin for PlicIrq {
+    fn set_level(&self, level: bool) {
+        let prev = self.prev.swap(level, Ordering::Relaxed);
+        // Edge trigger
+        if level && !prev {
+            self.plic.inner.lock().trigger(self.irq);
+        }
     }
 }

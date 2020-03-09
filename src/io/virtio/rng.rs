@@ -1,3 +1,4 @@
+use super::super::IrqPin;
 use super::{Device, DeviceId, Queue};
 use parking_lot::Mutex;
 use rand::SeedableRng;
@@ -13,24 +14,24 @@ pub struct Rng {
 /// struct used by task
 struct Inner {
     rng: Box<dyn rand::RngCore + Send>,
-    irq: u32,
+    irq: Box<dyn IrqPin>,
 }
 
 impl Rng {
     /// Create a virtio entropy source device using a given random number generator.
-    pub fn new(irq: u32, rng: Box<dyn rand::RngCore + Send>) -> Rng {
+    pub fn new(irq: Box<dyn IrqPin>, rng: Box<dyn rand::RngCore + Send>) -> Rng {
         let inner = Arc::new(Mutex::new(Inner { rng, irq }));
         Rng { status: 0, inner }
     }
 
     /// Create a virtio entropy source device, fulfilled by OS's entropy source.
-    pub fn new_os(irq: u32) -> Rng {
+    pub fn new_os(irq: Box<dyn IrqPin>) -> Rng {
         Self::new(irq, Box::new(rand::rngs::OsRng))
     }
 
     /// Create a virtio entropy source device with a fixed seed.
     /// **This is not cryptographically secure!!!**
-    pub fn new_seeded(irq: u32, seed: u64) -> Rng {
+    pub fn new_seeded(irq: Box<dyn IrqPin>, seed: u64) -> Rng {
         Self::new(irq, Box::new(rand::rngs::StdRng::seed_from_u64(seed)))
     }
 }
@@ -43,7 +44,7 @@ fn start_task(inner: Arc<Mutex<Inner>>, mut queue: Queue) {
             let mut writer = buffer.writer();
             std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();
             drop(buffer);
-            crate::emu::PLIC.lock().trigger(inner.irq);
+            inner.irq.pulse();
         }
     })
 }

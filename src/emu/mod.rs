@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::io::plic::Plic;
+use crate::io::plic::{Plic, PlicIrq};
 use crate::io::rtc::Rtc;
 use crate::io::virtio::{Block, Console, Mmio, Rng, P9};
 use crate::io::IoMemorySync;
@@ -60,7 +60,7 @@ struct IoSystem {
     map: BTreeMap<usize, (usize, Arc<dyn IoMemorySync>)>,
 
     /// The PLIC instance. It always exist.
-    plic: Arc<Mutex<Plic>>,
+    plic: Arc<Plic>,
 
     // Types below are useful only for initialisation
     next_irq: u32,
@@ -76,7 +76,23 @@ impl IoSystem {
 
         // Instantiate PLIC and corresponding device tre
         let core_count = crate::core_count();
-        let plic = Arc::new(Mutex::new(Plic::new(core_count)));
+
+        struct CoreIrq(usize);
+        impl crate::io::IrqPin for CoreIrq {
+            fn set_level(&self, level: bool) {
+                if level {
+                    crate::shared_context(self.0).assert(512);
+                } else {
+                    crate::shared_context(self.0).deassert(512);
+                }
+            }
+        }
+        let mut irqs: Vec<Arc<dyn crate::io::IrqPin>> = Vec::with_capacity(core_count);
+        for i in 0..core_count {
+            irqs.push(Arc::new(CoreIrq(i)));
+        }
+
+        let plic = Plic::new(irqs);
 
         let mut soc = fdt::Node::new("soc");
         soc.add_prop("ranges", ());
@@ -120,7 +136,7 @@ impl IoSystem {
     }
 
     /// Add a virtio device
-    pub fn add_virtio<T>(&mut self, f: impl FnOnce(u32) -> T)
+    pub fn add_virtio<T>(&mut self, f: impl FnOnce(PlicIrq) -> T)
     where
         T: crate::io::virtio::Device + Send + 'static,
     {
@@ -130,7 +146,7 @@ impl IoSystem {
         let mem = self.boundary;
         self.boundary += 4096;
 
-        let device = Box::new(f(irq));
+        let device = Box::new(f(self.plic.clone().irq_pin(irq)));
         let virtio = Arc::new(Mutex::new(Mmio::new(Arc::new(DirectIoContext), device)));
         self.register_io_mem(mem, 4096, virtio.clone());
 
@@ -162,7 +178,7 @@ lazy_static! {
     };
 
     /// The global PLIC
-    pub static ref PLIC: &'static Mutex<Plic> = {
+    pub static ref PLIC: &'static Arc<Plic> = {
         &IO_SYSTEM.plic
     };
 }
@@ -185,7 +201,7 @@ fn init_network(sys: &mut IoSystem) {
                     )
                     .expect("cannot establish port forwarding");
             }
-            Network::new(irq, usernet, mac)
+            Network::new(Arc::new(irq), usernet, mac)
         });
     }
 }
@@ -205,24 +221,24 @@ fn init_virtio(sys: &mut IoSystem) {
         } else {
             Box::new(file)
         };
-        sys.add_virtio(|irq| Block::new(irq, file));
+        sys.add_virtio(|irq| Block::new(Arc::new(irq), file));
     }
 
     for config in crate::CONFIG.random.iter() {
         sys.add_virtio(|irq| match config.r#type {
-            crate::config::RandomType::Pseudo => Rng::new_seeded(irq, config.seed),
-            crate::config::RandomType::OS => Rng::new_os(irq),
+            crate::config::RandomType::Pseudo => Rng::new_seeded(Box::new(irq), config.seed),
+            crate::config::RandomType::OS => Rng::new_os(Box::new(irq)),
         });
     }
 
     for config in crate::CONFIG.share.iter() {
-        sys.add_virtio(|irq| P9::new(irq, &config.tag, &config.path));
+        sys.add_virtio(|irq| P9::new(Arc::new(irq), &config.tag, &config.path));
     }
 
     init_network(sys);
 
     if crate::CONFIG.console.virtio {
-        sys.add_virtio(|irq| Console::new(irq, crate::CONFIG.console.resize));
+        sys.add_virtio(|irq| Console::new(Arc::new(irq), crate::CONFIG.console.resize));
     }
 }
 

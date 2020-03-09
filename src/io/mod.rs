@@ -67,3 +67,20 @@ pub trait IoContext: Send + Sync {
     /// Write a half word atomically
     fn write_u16(&self, addr: u64, value: u16);
 }
+
+/// An interrupt pin.
+pub trait IrqPin: Send + Sync {
+    /// Set the IRQ level.
+    fn set_level(&self, level: bool);
+
+    fn raise(&self) {
+        self.set_level(true);
+    }
+    fn lower(&self) {
+        self.set_level(false);
+    }
+    fn pulse(&self) {
+        self.raise();
+        self.lower();
+    }
+}
