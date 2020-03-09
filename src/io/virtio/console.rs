@@ -26,25 +26,29 @@ pub struct Console {
 }
 
 fn start_rx(mut rx: Queue, irq: Arc<dyn IrqPin>) -> AbortHandle {
-    crate::event_loop().spawn_abortable(async move {
-        let mut buffer = [0; 2048];
-        loop {
-            let len = crate::io::console::CONSOLE.recv(&mut buffer).await.unwrap();
-            if let Ok(Some(mut dma_buffer)) = rx.try_take() {
-                let mut writer = dma_buffer.writer();
-                writer.write_all(&buffer[..len]).unwrap();
-                drop(dma_buffer);
+    let (handle, reg) = futures::future::AbortHandle::new_pair();
+    crate::event_loop().spawn(async move {
+        let _ = futures::future::Abortable::new(async move {
+            let mut buffer = [0; 2048];
+            loop {
+                let len = crate::io::console::CONSOLE.recv(&mut buffer).await.unwrap();
+                if let Ok(Some(mut dma_buffer)) = rx.try_take() {
+                    let mut writer = dma_buffer.writer();
+                    writer.write_all(&buffer[..len]).unwrap();
+                    drop(dma_buffer);
 
-                irq.pulse();
-            } else {
-                info!(
-                    target: "VirtioConsole",
-                    "discard packet of size {:x} because there is no buffer in receiver queue",
-                    len
-                );
+                    irq.pulse();
+                } else {
+                    info!(
+                        target: "VirtioConsole",
+                        "discard packet of size {:x} because there is no buffer in receiver queue",
+                        len
+                    );
+                }
             }
-        }
-    })
+        }, reg).await;
+    });
+    handle
 }
 
 fn start_tx(mut tx: Queue, irq: Arc<dyn IrqPin>) {

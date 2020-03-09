@@ -5,6 +5,9 @@ pub mod plic;
 pub mod rtc;
 pub mod virtio;
 
+use futures::future::BoxFuture;
+use std::time::Duration;
+
 /// IoMemory represents a region of physically continuous I/O memory.
 ///
 /// We currently expect only one guest core can access a region of I/O memory at a time. Usually as
@@ -66,6 +69,18 @@ pub trait IoContext: Send + Sync {
 
     /// Write a half word atomically
     fn write_u16(&self, addr: u64, value: u16);
+
+    /// Get the current time since an arbitary epoch.
+    fn time(&self) -> Duration;
+
+    /// Get a [`Future`] that is triggered at the supplied time since the epoch.
+    fn on_time(&self, time: Duration) -> BoxFuture<'static, ()>;
+
+    /// Spawn a task.
+    ///
+    /// Most devices need to run a event loop, which we models into a Rust task. The I/O context
+    /// therefore must provide a runtime for this to be carried out.
+    fn spawn(&self, task: BoxFuture<'static, ()>);
 }
 
 /// An interrupt pin.

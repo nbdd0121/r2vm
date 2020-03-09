@@ -4,9 +4,11 @@ use crate::io::plic::{Plic, PlicIrq};
 use crate::io::rtc::Rtc;
 use crate::io::virtio::{Block, Console, Mmio, Rng, P9};
 use crate::io::IoMemorySync;
+use futures::future::BoxFuture;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[cfg(feature = "usernet")]
 use crate::io::network::Usernet;
@@ -51,6 +53,21 @@ impl crate::io::IoContext for DirectIoContext {
             (*(addr as *const std::sync::atomic::AtomicU16))
                 .store(value, std::sync::atomic::Ordering::SeqCst)
         }
+    }
+
+    fn time(&self) -> Duration {
+        Duration::from_micros(crate::event_loop().time())
+    }
+
+    fn on_time(&self, time: Duration) -> BoxFuture<'static, ()> {
+        Box::pin(crate::event_loop().on_time(time.as_micros() as u64))
+    }
+
+    fn spawn(
+        &self,
+        task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'static + Send>>,
+    ) {
+        crate::event_loop().spawn(task);
     }
 }
 
@@ -201,7 +218,7 @@ fn init_network(sys: &mut IoSystem) {
                     )
                     .expect("cannot establish port forwarding");
             }
-            Network::new(Arc::new(irq), usernet, mac)
+            Network::new(Arc::new(DirectIoContext), Arc::new(irq), usernet, mac)
         });
     }
 }
