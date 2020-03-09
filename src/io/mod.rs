@@ -1,4 +1,5 @@
 pub mod block;
+pub mod clint;
 pub mod console;
 pub mod network;
 pub mod plic;

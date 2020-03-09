@@ -263,7 +263,6 @@ pub fn main() {
             mscratch: 0,
             mtvec: 0,
             mcounteren: 0,
-            mtimecmp: u64::max_value(),
             // These are set by setup_mem, so we don't really care now.
             pc: 0,
             prv: 0,

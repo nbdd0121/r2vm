@@ -1,3 +1,4 @@
+use crate::io::IoMemorySync;
 use crate::util::AtomicExt;
 use lazy_static::lazy_static;
 use parking_lot::{Condvar, Mutex, MutexGuard};
@@ -47,10 +48,6 @@ pub struct SharedContext {
     ///   external interrupt arrives. The message handler will check if it actually should take an
     ///   interrupt, or the interrupt is indeed masked out. It will clear the bit regardless SIE,
     ///   By doing so, it wouldn't need to check interrupts later.
-    /// * Timer interrupts are treated a little bit differently. To avoid to deal with atomicity
-    ///   issues related to `mtimecmp`, we make `mtimecmp` local to the hart. Instead, when we
-    ///   think there might be a new timer interrupt, we set a bit in `alarm`.
-    ///   The hart will check and set `mip` if there is indeed a timer interrupt.
     /// * Shutdown notice.
     pub alarm: AtomicU64,
 
@@ -241,8 +238,6 @@ pub struct Context {
     pub mscratch: u64,
     pub mepc: u64,
     pub mcounteren: u64,
-
-    pub mtimecmp: u64,
 
     // Current privilege level
     pub prv: u64,
@@ -828,14 +823,7 @@ fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
 fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     match nr {
         0 => {
-            ctx.mtimecmp = arg0;
-            if crate::get_flags().prv == 1 {
-                ctx.shared.deassert(32);
-            } else {
-                ctx.shared.deassert(128);
-            }
-            let shared_ctx = unsafe { &*(&ctx.shared as *const SharedContext) };
-            crate::event_loop().queue_time(arg0, Box::new(move || shared_ctx.alert()));
+            (*super::CLINT).write_sync(0x4000 + ctx.hartid as usize * 8, arg0, 8);
             0
         }
         1 => {
@@ -2159,15 +2147,6 @@ pub fn check_interrupt(ctx: &mut Context) -> Result<(), ()> {
         let mut guard = ctx.shared.tasks.lock();
         for task in guard.drain(..) {
             task();
-        }
-    }
-
-    if crate::event_loop().time() >= ctx.mtimecmp {
-        if crate::get_flags().prv == 1 {
-            // Do what firmware do any delegate MTI to STI directly.
-            ctx.shared.mip.fetch_or(32, MemOrder::Relaxed);
-        } else {
-            ctx.shared.mip.fetch_or(128, MemOrder::Relaxed);
         }
     }
 

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::io::clint::Clint;
 use crate::io::plic::{Plic, PlicIrq};
 use crate::io::rtc::Rtc;
 use crate::io::virtio::{Block, Console, Mmio, Rng, P9};
@@ -71,6 +72,18 @@ impl crate::io::IoContext for DirectIoContext {
     }
 }
 
+struct CoreIrq(usize, u64);
+
+impl crate::io::IrqPin for CoreIrq {
+    fn set_level(&self, level: bool) {
+        if level {
+            crate::shared_context(self.0).assert(self.1);
+        } else {
+            crate::shared_context(self.0).deassert(self.1);
+        }
+    }
+}
+
 /// This describes all I/O aspects of the system.
 struct IoSystem {
     /// The IO memory map.
@@ -93,23 +106,11 @@ impl IoSystem {
 
         // Instantiate PLIC and corresponding device tre
         let core_count = crate::core_count();
-
-        struct CoreIrq(usize);
-        impl crate::io::IrqPin for CoreIrq {
-            fn set_level(&self, level: bool) {
-                if level {
-                    crate::shared_context(self.0).assert(512);
-                } else {
-                    crate::shared_context(self.0).deassert(512);
-                }
-            }
-        }
-        let mut irqs: Vec<Arc<dyn crate::io::IrqPin>> = Vec::with_capacity(core_count);
-        for i in 0..core_count {
-            irqs.push(Arc::new(CoreIrq(i)));
-        }
-
-        let plic = Plic::new(irqs);
+        let plic = Plic::new(
+            (0..core_count)
+                .map(|i| -> Arc<dyn crate::io::IrqPin> { Arc::new(CoreIrq(i, 512)) })
+                .collect(),
+        );
 
         let mut soc = fdt::Node::new("soc");
         soc.add_prop("ranges", ());
@@ -197,6 +198,17 @@ lazy_static! {
     /// The global PLIC
     pub static ref PLIC: &'static Arc<Plic> = {
         &IO_SYSTEM.plic
+    };
+
+    pub static ref CLINT: Arc<Clint> = {
+        let core_count = crate::core_count();
+        Clint::new(Arc::new(DirectIoContext),
+            (0..core_count)
+                .map(|i| -> Arc<dyn crate::io::IrqPin> { Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 2 } else { 8 })) })
+                .collect(),
+            (0..core_count)
+                .map(|i| -> Arc<dyn crate::io::IrqPin> { Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 32 } else { 128 })) })
+                .collect())
     };
 }
 
