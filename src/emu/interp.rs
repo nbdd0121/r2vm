@@ -1237,7 +1237,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::Csrrci { rd, imm, csr } => {
             let result = read_csr(ctx, csr)?;
-            if imm != 0 { write_csr(ctx, csr, result &! imm as u64)? }
+            if imm != 0 { write_csr(ctx, csr, result &! (imm as u64))? }
             write_reg!(rd, result);
         }
 
