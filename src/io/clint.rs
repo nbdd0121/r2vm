@@ -40,57 +40,96 @@ impl Clint {
 
 impl IoMemorySync for Clint {
     fn read_sync(&self, addr: usize, size: u32) -> u64 {
+        // Guard against access narrower than 32-bit
+        if size < 4 {
+            error!(target: "CLINT", "illegal register read 0x{:x}", addr);
+            return 0;
+        }
+
         let inner = self.inner.lock();
-        if addr == 0xBFF8 {
-            inner.io_ctx.time().as_micros() as u64
-        } else if addr < 0x4000 {
-            let hart = addr / 4;
-            if size != 4 || hart >= inner.msip.len() {
+
+        match addr & !4 {
+            0..=0x3FFF => {
+                let hart = addr / 4;
+                if size != 4 || hart >= inner.msip.len() {
+                    error!(target: "CLINT", "illegal register read 0x{:x}", addr);
+                    return 0;
+                }
+                inner.msip[hart] as u64
+            }
+            0x4000..=0xBFF7 => {
+                let hart = (addr - 0x4000) / 8;
+                if hart >= inner.mtimecmp.len() {
+                    error!(target: "CLINT", "illegal register read 0x{:x}", addr);
+                    return 0;
+                }
+                if size == 8 {
+                    inner.mtimecmp[hart]
+                } else {
+                    // Narrow read
+                    if addr & 4 == 0 { inner.mtimecmp[hart] } else { inner.mtimecmp[hart] >> 32 }
+                }
+            }
+            0xBFF8 => {
+                let time = inner.io_ctx.time().as_micros() as u64;
+                if size == 8 {
+                    time
+                } else {
+                    // Narrow read
+                    if addr & 4 == 0 { time } else { time >> 32 }
+                }
+            }
+            _ => {
                 error!(target: "CLINT", "illegal register read 0x{:x}", addr);
                 return 0;
             }
-            inner.msip[hart] as u64
-        } else {
-            let hart = (addr - 0x4000) / 8;
-            if size != 8 || hart >= inner.mtimecmp.len() {
-                error!(target: "CLINT", "illegal register read 0x{:x}", addr);
-                return 0;
-            }
-            inner.mtimecmp[hart]
         }
     }
 
     fn write_sync(&self, addr: usize, value: u64, size: u32) {
-        let mut inner = self.inner.lock();
-        if addr < 0x4000 {
-            let hart = addr / 4;
-            if size != 4 || hart >= inner.msip.len() {
-                error!(target: "CLINT", "illegal register write 0x{:x} = 0x{:x}", addr, value);
-                return;
-            }
-            let value = value & 1 != 0;
-            inner.msip[hart] = value;
-            inner.msip_irqs[hart].set_level(value);
-        } else {
-            let hart = (addr - 0x4000) / 8;
-            if size != 8 || hart >= inner.mtimecmp.len() {
-                error!(target: "CLINT", "illegal register write 0x{:x} = 0x{:x}", addr, value);
-                return;
-            }
-            inner.mtimecmp[hart] = value;
+        // Guard against access narrower than 32-bit
+        if size < 4 {
+            error!(target: "CLINT", "illegal register write 0x{:x} = 0x{:x}", addr, value);
+            return;
+        }
 
-            let new_time = Duration::from_micros(value);
-            let triggered = new_time <= inner.io_ctx.time();
-            inner.mtip_irqs[hart].set_level(triggered);
-            if !triggered {
-                let timer = inner.io_ctx.on_time(new_time);
-                let self_arc = inner.self_ref.upgrade().unwrap();
-                inner.io_ctx.spawn(Box::pin(async move {
-                    timer.await;
-                    let inner = self_arc.inner.lock();
-                    inner.mtip_irqs[hart]
-                        .set_level(inner.mtimecmp[hart] <= inner.io_ctx.time().as_micros() as u64);
-                }));
+        let mut inner = self.inner.lock();
+        match addr & !4 {
+            0..=0x3FFF => {
+                let hart = addr / 4;
+                if size != 4 || hart >= inner.msip.len() {
+                    error!(target: "CLINT", "illegal register write 0x{:x} = 0x{:x}", addr, value);
+                    return;
+                }
+                let value = value & 1 != 0;
+                inner.msip[hart] = value;
+                inner.msip_irqs[hart].set_level(value);
+            }
+            0x4000..=0xBFF7 => {
+                let hart = (addr - 0x4000) / 8;
+                if size != 8 || hart >= inner.mtimecmp.len() {
+                    error!(target: "CLINT", "illegal register write 0x{:x} = 0x{:x}", addr, value);
+                    return;
+                }
+                inner.mtimecmp[hart] = value;
+
+                let new_time = Duration::from_micros(value);
+                let triggered = new_time <= inner.io_ctx.time();
+                inner.mtip_irqs[hart].set_level(triggered);
+                if !triggered {
+                    let timer = inner.io_ctx.on_time(new_time);
+                    let self_arc = inner.self_ref.upgrade().unwrap();
+                    inner.io_ctx.spawn(Box::pin(async move {
+                        timer.await;
+                        let inner = self_arc.inner.lock();
+                        inner.mtip_irqs[hart].set_level(
+                            inner.mtimecmp[hart] <= inner.io_ctx.time().as_micros() as u64,
+                        );
+                    }));
+                }
+            }
+            _ => {
+                error!(target: "CLINT", "illegal register write 0x{:x} = 0x{:x}", addr, value);
             }
         }
     }
