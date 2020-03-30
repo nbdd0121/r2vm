@@ -354,12 +354,12 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
             crate::event_loop().cycle()
         }
         Csr::Time => {
-            ctx.test_counter(0)?;
+            ctx.test_counter(1)?;
             crate::event_loop().time()
         }
         // We assume the instret is incremented already
         Csr::Instret => {
-            ctx.test_counter(0)?;
+            ctx.test_counter(2)?;
             ctx.instret - 1
         }
         Csr::Sstatus => {
@@ -427,12 +427,12 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
         }
         Csr::Frm => {
             ctx.test_and_set_fs()?;
-            ctx.frm = (value & 0b111) as u32;
+            ctx.frm = ((value & 0b111) as u32).min(4);
         }
         Csr::Fcsr => {
             ctx.test_and_set_fs()?;
             ctx.shared.fflags.store((value & 0b11111) as u32, MemOrder::Relaxed);
-            ctx.frm = ((value >> 5) & 0b111) as u32;
+            ctx.frm = (((value >> 5) & 0b111) as u32).min(4);
         }
         Csr::Sstatus => {
             // Mask-out non-writable bits
@@ -580,18 +580,19 @@ pub fn icache_invalidate(start: usize, end: usize) {
 }
 
 fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, ()> {
+    // Respect MPRV
+    let mut prv = ctx.prv;
+    if prv == 3 && ctx.mstatus & 0x20000 != 0 && access != AccessType::Execute {
+        prv = (ctx.mstatus >> 11) & 3;
+    }
+
     // MMU off
-    if (ctx.satp >> 60) == 0
-        || (ctx.prv == 3
-            && (ctx.mstatus & 0x20000 == 0
-                || ctx.mstatus & 0x1800 == 0x1800
-                || access == AccessType::Execute))
-    {
+    if (ctx.satp >> 60) == 0 || prv == 3 {
         return Ok(addr);
     }
 
     let pte = walk_page(ctx.satp, addr >> 12, |addr| crate::emu::read_memory(addr as usize));
-    match check_permission(pte, access, ctx.prv as u8, ctx.mstatus) {
+    match check_permission(pte, access, prv as u8, ctx.mstatus) {
         Ok(_) => Ok(pte >> 10 << 12 | addr & 4095),
         Err(_) => {
             ctx.cause = match access {
@@ -1002,9 +1003,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         ($rm: expr) => {{
             ctx.test_and_set_fs()?;
             let rm = if $rm == 0b111 { ctx.frm } else { $rm as u32 };
-            if rm >= 5 {
-                trap!(2, 0)
-            };
+            assert!(rm <= 4);
             ctx.shared.rm.store(rm, MemOrder::Relaxed);
         }};
     }
