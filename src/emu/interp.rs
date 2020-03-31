@@ -248,6 +248,11 @@ pub struct Context {
 
 impl Context {
     pub fn test_and_set_fs(&mut self) -> Result<(), ()> {
+        if cfg!(not(feature = "float")) {
+            self.cause = 2;
+            self.tval = 0;
+            return Err(());
+        }
         if self.mstatus & 0x6000 == 0 {
             self.cause = 2;
             self.tval = 0;

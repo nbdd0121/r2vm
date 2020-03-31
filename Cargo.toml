@@ -44,6 +44,7 @@ panic = "abort"
 debug = true
 
 [features]
-default = ["usernet"]
+default = ["usernet", "float"]
+float = []
 direct = []
 sanitize = []
