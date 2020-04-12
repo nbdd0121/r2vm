@@ -41,6 +41,9 @@ pub struct Config {
     pub cmdline: String,
 
     #[serde(default)]
+    pub clint: Option<DeviceConfig<ClintConfig>>,
+
+    #[serde(default)]
     pub console: ConsoleConfig,
 
     /// Whether a RTC device should be instantiated.
@@ -65,7 +68,7 @@ pub struct Config {
 }
 
 /// Specifies which particular address is to be used for an IO device
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Default)]
 pub struct DeviceConfig<T> {
     #[serde(default)]
     pub io_base: Option<usize>,
@@ -73,6 +76,9 @@ pub struct DeviceConfig<T> {
     #[serde(flatten)]
     pub config: T,
 }
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct ClintConfig {}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ConsoleConfig {

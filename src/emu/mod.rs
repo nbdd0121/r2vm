@@ -142,6 +142,14 @@ impl IoSystem {
 
         sys.register_io_mem(0x200000, 0x400000, plic);
 
+        if let Some(ref config) = crate::CONFIG.clint {
+            let base = config.io_base.unwrap_or_else(|| {
+                let mem = sys.boundary;
+                sys.boundary += 0x10000;
+                mem
+            });
+            sys.register_io_mem(base, 0x10000, CLINT.clone());
+        }
         sys
     }
 
