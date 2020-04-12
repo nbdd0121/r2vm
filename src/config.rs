@@ -61,7 +61,17 @@ pub struct Config {
 
     /// Network adapters
     #[serde(default)]
-    pub network: Vec<NetworkConfig>,
+    pub network: Vec<DeviceConfig<NetworkConfig>>,
+}
+
+/// Specifies which particular address is to be used for an IO device
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DeviceConfig<T> {
+    #[serde(default)]
+    pub io_base: Option<usize>,
+
+    #[serde(flatten)]
+    pub config: T,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -146,12 +156,20 @@ pub struct ForwardConfig {
     pub guest_port: u16,
 }
 
+fn default_net_type() -> String {
+    "virtio".to_owned()
+}
+
 fn default_mac() -> String {
     "02:00:00:00:00:01".to_owned()
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NetworkConfig {
+    /// Device type
+    #[serde(default = "default_net_type")]
+    pub r#type: String,
+
     /// MAC address. For convience, we first parse it as string.
     #[serde(default = "default_mac")]
     pub mac: String,

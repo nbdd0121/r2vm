@@ -4,6 +4,7 @@ use std::io::Result;
 mod logger;
 #[cfg(feature = "usernet")]
 mod usernet;
+pub mod xemaclite;
 
 #[cfg(feature = "usernet")]
 pub use self::usernet::Usernet;

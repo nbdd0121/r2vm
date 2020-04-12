@@ -215,23 +215,55 @@ lazy_static! {
 #[cfg(feature = "usernet")]
 fn init_network(sys: &mut IoSystem) {
     for config in crate::CONFIG.network.iter() {
-        sys.add_virtio(|irq| {
-            let mac = eui48::MacAddress::parse_str(&config.mac)
-                .expect("unexpected mac address")
-                .to_array();
-            let usernet = Usernet::new();
-            for fwd in config.forward.iter() {
-                usernet
-                    .add_host_forward(
-                        fwd.protocol == crate::config::ForwardProtocol::Udp,
-                        fwd.host_addr,
-                        fwd.host_port,
-                        fwd.guest_port,
-                    )
-                    .expect("cannot establish port forwarding");
+        let mac = eui48::MacAddress::parse_str(&config.config.mac)
+            .expect("unexpected mac address")
+            .to_array();
+        let usernet = Usernet::new();
+        for fwd in config.config.forward.iter() {
+            usernet
+                .add_host_forward(
+                    fwd.protocol == crate::config::ForwardProtocol::Udp,
+                    fwd.host_addr,
+                    fwd.host_port,
+                    fwd.guest_port,
+                )
+                .expect("cannot establish port forwarding");
+        }
+
+        match config.config.r#type.as_str() {
+            "virtio" => {
+                sys.add_virtio(|irq| {
+                    Network::new(Arc::new(DirectIoContext), Arc::new(irq), usernet, mac)
+                });
             }
-            Network::new(Arc::new(DirectIoContext), Arc::new(irq), usernet, mac)
-        });
+            "xemaclite" => {
+                let irq = sys.next_irq;
+                sys.next_irq += 1;
+
+                let base = match config.io_base {
+                    None => {
+                        let mem = sys.boundary;
+                        sys.boundary += 0x2000;
+                        mem
+                    }
+                    Some(v) => v,
+                };
+
+                use crate::io::network::xemaclite::Xemaclite;
+                let xemaclite = Xemaclite::new(
+                    Arc::new(DirectIoContext),
+                    Arc::new(sys.plic.clone().irq_pin(irq)),
+                    Arc::new(usernet),
+                );
+                sys.register_io_mem(base, 0x2000, Arc::new(xemaclite));
+                let core_count = crate::core_count();
+                sys.fdt.child.push(Xemaclite::build_fdt(
+                    (base as u64, 0x2000),
+                    (core_count as u32 + 1, irq),
+                ));
+            }
+            _ => panic!("unknown device type"),
+        }
     }
 }
 
@@ -379,17 +411,17 @@ pub fn device_tree() -> fdt::Node {
 
 // TODO: Remove these 2 functions
 pub fn read_memory<T: Copy>(addr: usize) -> T {
-    assert!(addr >= *IO_BOUNDARY);
+    assert!(addr >= *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     unsafe { std::ptr::read(addr as *const T) }
 }
 
 pub fn write_memory<T: Copy>(addr: usize, value: T) {
-    assert!(addr >= *IO_BOUNDARY);
+    assert!(addr >= *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     unsafe { std::ptr::write_volatile(addr as *mut T, value) }
 }
 
 pub fn io_read(addr: usize, size: u32) -> u64 {
-    assert!(addr < *IO_BOUNDARY);
+    assert!(addr < *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     match IO_SYSTEM.find_io_mem(addr) {
         Some((base, v)) => v.read_sync(addr - base, size),
         None => {
@@ -400,7 +432,7 @@ pub fn io_read(addr: usize, size: u32) -> u64 {
 }
 
 pub fn io_write(addr: usize, value: u64, size: u32) {
-    assert!(addr < *IO_BOUNDARY);
+    assert!(addr < *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     match IO_SYSTEM.find_io_mem(addr) {
         Some((base, v)) => return v.write_sync(addr - base, value, size),
         None => {
