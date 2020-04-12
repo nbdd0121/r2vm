@@ -309,7 +309,7 @@ pub fn main() {
             std::process::exit(1);
         });
         // Load this past memory location
-        let location = 0x40000000 + ((CONFIG.memory * 0x100000 + 0x200000) & !0x200000);
+        let location = 0x40000000 + ((CONFIG.memory * 0x100000 + 0x1fffff) & !0x1fffff);
         unsafe { loader.load_kernel(location as u64) };
 
         for ctx in contexts.iter_mut() {
