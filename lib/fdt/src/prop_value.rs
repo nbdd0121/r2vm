@@ -150,3 +150,11 @@ impl TryFrom<&PropValue> for Box<[u64]> {
         Ok(vec.into_boxed_slice())
     }
 }
+
+// Raw bytes
+impl TryFrom<&[u8]> for PropValue {
+    type Error = PropConversionError;
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        Ok(PropValue(value.to_vec().into_boxed_slice()))
+    }
+}
