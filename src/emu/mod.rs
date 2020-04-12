@@ -268,6 +268,7 @@ fn init_network(sys: &mut IoSystem) {
                 sys.fdt.child.push(Xemaclite::build_fdt(
                     (base as u64, 0x2000),
                     (core_count as u32 + 1, irq),
+                    mac,
                 ));
             }
             _ => panic!("unknown device type"),

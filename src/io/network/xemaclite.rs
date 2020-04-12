@@ -356,20 +356,20 @@ impl Xemaclite {
         handle
     }
 
-    pub fn build_fdt(mem: (u64, u64), irq: (u32, u32)) -> fdt::Node {
+    pub fn build_fdt(mem: (u64, u64), irq: (u32, u32), mac: [u8; 6]) -> fdt::Node {
         let mut node = fdt::Node::new(format!("ethernet@{:x}", mem.0));
         node.add_prop("reg", &[mem.0, mem.1][..]);
         node.add_prop("interrupts-extended", &[irq.0, irq.1][..]);
         node.add_prop("compatible", "xlnx,xps-ethernetlite-3.00.a");
         node.add_prop("device_type", "network");
-        node.add_prop("local-mac-address", &[0x00u8, 0x0a, 0x35, 0x00, 0x00, 0x00][..]);
+        node.add_prop("local-mac-address", &mac[..]);
         node.add_prop("phy-handle", 100u32);
         node.add_prop("xlnx,rx-ping-pong", 1u32);
         node.add_prop("xlnx,tx-ping-pong", 1u32);
-        let mut mdio = node.add_node("mdio");
+        let mdio = node.add_node("mdio");
         mdio.add_prop("#address-cells", 1u32);
         mdio.add_prop("#size-cells", 0u32);
-        let mut phy = mdio.add_node("ethernet-phy@1");
+        let phy = mdio.add_node("ethernet-phy@1");
         phy.add_prop("reg", 1u32);
         phy.add_prop("phandle", 100u32);
         node
