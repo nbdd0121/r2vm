@@ -182,12 +182,17 @@ impl Xemaclite {
 
 impl IoMemorySync for Xemaclite {
     fn read_sync(&self, addr: usize, size: u32) -> u64 {
+        let state = self.inner.state.lock();
+
+        // For wider access, break it into 32-bit memory accesses if necessary
+        if size == 8 && (addr & 0x7ff) < 0x7e0 {
+            return LE::read_u64(&state.buffer[addr..]);
+        }
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
             error!(target: "Xemaclite", "illegal register read 0x{:x}", addr);
             return 0;
         }
-        let state = self.inner.state.lock();
         (match addr {
             ADDR_MDIOADDR => {
                 (state.mdio_op as u32) << 10
@@ -214,6 +219,14 @@ impl IoMemorySync for Xemaclite {
     }
 
     fn write_sync(&self, addr: usize, value: u64, size: u32) {
+        let mut state = self.inner.state.lock();
+        let mut state = &mut *state;
+
+        // For wider access, break it into 32-bit memory accesses if necessary
+        if size == 8 && (addr & 0x7ff) < 0x7e0 {
+            LE::write_u64(&mut state.buffer[addr..], value);
+            return;
+        }
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
             error!(target: "Xemaclite", "illegal register write 0x{:x} = 0x{:x}", addr, value);
@@ -221,8 +234,6 @@ impl IoMemorySync for Xemaclite {
         }
         let value = value as u32;
 
-        let mut state = self.inner.state.lock();
-        let mut state = &mut *state;
         match addr {
             ADDR_MDIOADDR => {
                 state.mdio_op = value & (1 << 10) != 0;
