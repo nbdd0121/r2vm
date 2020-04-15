@@ -2,10 +2,11 @@ use super::super::{IoContext, IoMemorySync, IrqPin};
 use super::Network as NetworkDevice;
 use byteorder::{ByteOrder, LE};
 use futures::channel::mpsc::Sender;
-use futures::future::AbortHandle;
+use futures::future::{poll_fn, AbortHandle};
 use futures::prelude::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
+use std::task::Poll;
 
 trait Mdio {
     fn read(&mut self, reg: u8) -> u16;
@@ -146,34 +147,33 @@ impl Xemaclite {
         let io_ctx = inner.io_ctx.clone();
         io_ctx.spawn(Box::pin(async move {
             while let Some(pong) = recv.next().await {
-                let packet = {
-                    let state = inner.state.lock();
+                poll_fn(|cx| {
+                    let mut state = inner.state.lock();
                     let buffer = if !pong {
                         // Double check
                         if !state.tx_status_ping {
-                            continue;
+                            return Poll::Ready(Ok(()));
                         }
                         &state.buffer[0..state.tx_len_ping as usize]
                     } else {
                         if !state.tx_status_pong {
-                            continue;
+                            return Poll::Ready(Ok(()));
                         }
                         &state.buffer[0x800..0x800 + state.tx_len_pong as usize]
                     };
-                    buffer.to_owned()
-                };
-                inner.net.send(&packet).await.unwrap();
-                {
-                    let mut state = inner.state.lock();
-                    if !pong {
-                        state.tx_status_ping = false;
-                    } else {
-                        state.tx_status_pong = false;
-                    }
-                    if state.global_irq_enabled && state.tx_irq_enabled {
-                        inner.irq.pulse();
-                    }
-                }
+                    inner.net.poll_send(cx, buffer).map_ok(|_| {
+                        if !pong {
+                            state.tx_status_ping = false;
+                        } else {
+                            state.tx_status_pong = false;
+                        }
+                        if state.global_irq_enabled && state.tx_irq_enabled {
+                            inner.irq.pulse();
+                        }
+                    })
+                })
+                .await
+                .unwrap();
             }
         }));
         sender
