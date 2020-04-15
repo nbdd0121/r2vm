@@ -6,10 +6,8 @@ use log::{error, warn};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
-use std::future::Future;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::raw::{c_char, c_int, c_void};
-use std::pin::Pin;
 use std::sync::{Arc, Weak};
 use std::task::{Poll, Waker};
 use std::{fmt, slice, str};
@@ -342,11 +340,15 @@ impl Network {
     ///
     /// # Result
     /// The number of bytes transmitted is returned.
-    pub async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
+    pub fn poll_send(
+        &self,
+        _cx: &mut std::task::Context,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
         unsafe {
             slirp_input(self.context.lock().slirp, buf.as_ptr(), buf.len() as i32);
         }
-        Ok(buf.len())
+        Poll::Ready(Ok(buf.len()))
     }
 
     /// Receive a packet from the interface. If the buffer is not large enough, the packet gets
@@ -354,39 +356,24 @@ impl Network {
     ///
     /// # Result
     /// The number of bytes copied into the buffer is returned.
-    pub async fn recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-        struct RecvFuture<'a>(&'a Network, &'a mut [u8]);
-
-        impl<'a> Future for RecvFuture<'a> {
-            type Output = std::io::Result<usize>;
-
-            fn poll(
-                mut self: Pin<&mut Self>,
-                cx: &mut std::task::Context<'_>,
-            ) -> Poll<Self::Output> {
-                let mut guard = self.0.context.lock();
-                match guard.packet.pop_front() {
-                    Some(buf) => {
-                        drop(guard);
-                        let len = self.1.len().min(buf.len());
-                        self.1[..len].copy_from_slice(&buf[..len]);
-                        Poll::Ready(Ok(len))
-                    }
-                    None => {
-                        guard.waker = Some(cx.waker().clone());
-                        Poll::Pending
-                    }
-                }
+    pub fn poll_recv(
+        &self,
+        cx: &mut std::task::Context,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let mut guard = self.context.lock();
+        match guard.packet.pop_front() {
+            Some(recv_buf) => {
+                drop(guard);
+                let len = buf.len().min(recv_buf.len());
+                buf[..len].copy_from_slice(&recv_buf[..len]);
+                Poll::Ready(Ok(len))
+            }
+            None => {
+                guard.waker = Some(cx.waker().clone());
+                Poll::Pending
             }
         }
-
-        impl<'a> Drop for RecvFuture<'a> {
-            fn drop(&mut self) {
-                self.0.context.lock().waker = None;
-            }
-        }
-
-        RecvFuture(self, buf).await
     }
 
     /// Forward a host port to a guest port.

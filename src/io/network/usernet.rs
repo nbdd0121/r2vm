@@ -1,7 +1,7 @@
-use async_trait::async_trait;
 use std::future::Future;
 use std::net::Ipv4Addr;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 
 pub struct Usernet {
     inner: usernet::Network,
@@ -50,13 +50,12 @@ impl Usernet {
     }
 }
 
-#[async_trait]
 impl super::Network for Usernet {
-    async fn send(&self, buf: &[u8]) -> std::io::Result<usize> {
-        self.inner.send(buf).await
+    fn poll_send(&self, cx: &mut Context, buf: &[u8]) -> Poll<std::io::Result<usize>> {
+        self.inner.poll_send(cx, buf)
     }
 
-    async fn recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.inner.recv(buf).await
+    fn poll_recv(&self, cx: &mut Context, buf: &mut [u8]) -> Poll<std::io::Result<usize>> {
+        self.inner.poll_recv(cx, buf)
     }
 }

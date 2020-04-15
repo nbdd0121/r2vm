@@ -1,8 +1,8 @@
-use async_trait::async_trait;
 use byteorder::{WriteBytesExt, LE};
 use parking_lot::Mutex;
 use std::fs::File;
 use std::io::{Result, Write};
+use std::task::{Context, Poll};
 
 use super::Network;
 
@@ -38,16 +38,24 @@ impl<T: Network> Logger<T> {
     }
 }
 
-#[async_trait]
 impl<T: Network> Network for Logger<T> {
-    async fn send(&self, buf: &[u8]) -> Result<usize> {
-        self.log(buf)?;
-        self.network.send(buf).await
+    fn poll_send(&self, ctx: &mut Context, buf: &[u8]) -> Poll<Result<usize>> {
+        match self.network.poll_send(ctx, buf) {
+            Poll::Ready(v) => {
+                self.log(buf)?;
+                Poll::Ready(v)
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 
-    async fn recv(&self, buf: &mut [u8]) -> Result<usize> {
-        let len = self.network.recv(buf).await?;
-        self.log(&buf[..len])?;
-        Ok(len)
+    fn poll_recv(&self, ctx: &mut Context, buf: &mut [u8]) -> Poll<Result<usize>> {
+        match self.network.poll_recv(ctx, buf) {
+            Poll::Ready(v) => {
+                self.log(buf)?;
+                Poll::Ready(v)
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
