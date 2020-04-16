@@ -7,6 +7,7 @@ pub mod util;
 pub mod config;
 pub mod emu;
 pub mod fiber;
+pub mod sim;
 
 use std::ffi::CString;
 use util::RoCell;

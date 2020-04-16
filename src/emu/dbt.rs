@@ -6,7 +6,8 @@
 //! | [RSP-8]  | return address                                       |   |   |   |
 //! | [RSP-16] | next translated PC, when executing a helper function |   |   |   |
 
-use super::interp::{Context, CACHE_LINE_LOG2_SIZE};
+use super::interp::Context;
+use crate::sim::model::{get_model, Model};
 use riscv::{Csr, Op};
 use std::convert::TryFrom;
 use x86::builder::*;
@@ -32,7 +33,8 @@ fn same_page(a: u64, b: u64) -> bool {
 
 #[inline]
 fn same_cache_line(a: u64, b: u64) -> bool {
-    a >> CACHE_LINE_LOG2_SIZE == b >> CACHE_LINE_LOG2_SIZE
+    let cache_line_size_log2 = get_model().cache_line_size_log2();
+    a >> cache_line_size_log2 == b >> cache_line_size_log2
 }
 
 extern "C" {
@@ -446,9 +448,9 @@ impl<'a> DbtCompiler<'a> {
 
         let offset = offset_of!(Context, shared.i_line);
 
-        // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
+        // RCX = idx = addr >> CACHE_LINE_SIZE_LOG2
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(get_model().cache_line_size_log2() as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
@@ -534,9 +536,9 @@ impl<'a> DbtCompiler<'a> {
 
         let offset = offset_of!(Context, shared.line);
 
-        // RCX = idx = addr >> CACHE_LINE_LOG2_SIZE
+        // RCX = idx = addr >> CACHE_LINE_SIZE_LOG2
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(CACHE_LINE_LOG2_SIZE as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(get_model().cache_line_size_log2() as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));

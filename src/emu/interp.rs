@@ -1,4 +1,5 @@
 use crate::io::IoMemorySync;
+use crate::sim::model::{get_model, Model};
 use crate::util::AtomicExt;
 use lazy_static::lazy_static;
 use parking_lot::{Condvar, Mutex, MutexGuard};
@@ -174,11 +175,12 @@ impl SharedContext {
     }
 
     pub fn protect_code(&self, page: u64) {
+        let cache_line_size_log2 = get_model().cache_line_size_log2();
         for line in self.line.iter() {
             let _ = line.tag.fetch_update_stable(
                 |value| {
                     let paddr =
-                        (value >> 1 << CACHE_LINE_LOG2_SIZE) ^ line.paddr.load(MemOrder::Relaxed);
+                        (value >> 1 << cache_line_size_log2) ^ line.paddr.load(MemOrder::Relaxed);
                     if paddr & !4095 == page { Some(value | 1) } else { None }
                 },
                 MemOrder::Relaxed,
@@ -301,10 +303,11 @@ impl Context {
         let mut virt_addr = addr;
         let mut phys_addr = 0;
         let mut virt_line = !addr;
+        let cache_line_size_log2 = get_model().cache_line_size_log2();
         for i in 0..slice.len() {
             // Enter a new cache line
-            if virt_addr >> CACHE_LINE_LOG2_SIZE != virt_line {
-                virt_line = virt_addr >> CACHE_LINE_LOG2_SIZE;
+            if virt_addr >> cache_line_size_log2 != virt_line {
+                virt_line = virt_addr >> cache_line_size_log2;
                 phys_addr = translate_read(self, virt_addr)?;
             }
             slice[i] = unsafe { *(phys_addr as *const u8) };
@@ -319,10 +322,11 @@ impl Context {
         let mut virt_addr = addr;
         let mut phys_addr = 0;
         let mut virt_line = !addr;
+        let cache_line_size_log2 = get_model().cache_line_size_log2();
         for i in 0..slice.len() {
             // Enter a new cache line
-            if virt_addr >> CACHE_LINE_LOG2_SIZE != virt_line {
-                virt_line = virt_addr >> CACHE_LINE_LOG2_SIZE;
+            if virt_addr >> cache_line_size_log2 != virt_line {
+                virt_line = virt_addr >> cache_line_size_log2;
                 phys_addr = translate_write(self, virt_addr)?;
             }
             unsafe { *(phys_addr as *mut u8) = slice[i] };
@@ -330,6 +334,52 @@ impl Context {
             phys_addr += 1;
         }
         Ok(())
+    }
+
+    /// Translate a virtual address into physical address. When exception happens `cause` and
+    /// `tval` are set and `Err` is returned.
+    pub fn translate_vaddr(&mut self, addr: u64, access: AccessType) -> Result<u64, ()> {
+        // Respect MPRV
+        let mut prv = self.prv;
+        if prv == 3 && self.mstatus & 0x20000 != 0 && access != AccessType::Execute {
+            prv = (self.mstatus >> 11) & 3;
+        }
+
+        // MMU off
+        if (self.satp >> 60) == 0 || prv == 3 {
+            return Ok(addr);
+        }
+
+        let pte = walk_page(self.satp, addr >> 12, |addr| crate::emu::read_memory(addr as usize));
+        match check_permission(pte, access, prv as u8, self.mstatus) {
+            Ok(_) => Ok(pte >> 10 << 12 | addr & 4095),
+            Err(_) => {
+                self.cause = match access {
+                    AccessType::Read => 13,
+                    AccessType::Write => 15,
+                    AccessType::Execute => 12,
+                };
+                self.tval = addr;
+                Err(())
+            }
+        }
+    }
+
+    /// Insert a cache line into the L0 instruction cache.
+    pub fn insert_instruction_cache_line(&mut self, vaddr: u64, paddr: u64) {
+        let idx = vaddr >> get_model().cache_line_size_log2();
+        let line: &CacheLine = &self.shared.i_line[(idx & 1023) as usize];
+        line.tag.store(idx, MemOrder::Relaxed);
+        line.paddr.store(paddr ^ vaddr, MemOrder::Relaxed);
+    }
+
+    /// Insert a cache line into the L0 data cache.
+    pub fn insert_data_cache_line(&mut self, vaddr: u64, paddr: u64, writable: bool) {
+        let idx = vaddr >> get_model().cache_line_size_log2();
+        let line: &CacheLine = &self.shared.line[(idx & 1023) as usize];
+        let tag = (idx << 1) | if writable { 0 } else { 1 };
+        line.tag.store(tag, MemOrder::Relaxed);
+        line.paddr.store(paddr ^ vaddr, MemOrder::Relaxed);
     }
 }
 
@@ -584,48 +634,14 @@ pub fn icache_invalidate(start: usize, end: usize) {
     }
 }
 
-fn translate(ctx: &mut Context, addr: u64, access: AccessType) -> Result<u64, ()> {
-    // Respect MPRV
-    let mut prv = ctx.prv;
-    if prv == 3 && ctx.mstatus & 0x20000 != 0 && access != AccessType::Execute {
-        prv = (ctx.mstatus >> 11) & 3;
-    }
-
-    // MMU off
-    if (ctx.satp >> 60) == 0 || prv == 3 {
-        return Ok(addr);
-    }
-
-    let pte = walk_page(ctx.satp, addr >> 12, |addr| crate::emu::read_memory(addr as usize));
-    match check_permission(pte, access, prv as u8, ctx.mstatus) {
-        Ok(_) => Ok(pte >> 10 << 12 | addr & 4095),
-        Err(_) => {
-            ctx.cause = match access {
-                AccessType::Read => 13,
-                AccessType::Write => 15,
-                AccessType::Execute => 12,
-            };
-            ctx.tval = addr;
-            Err(())
-        }
-    }
-}
-
-pub const CACHE_LINE_LOG2_SIZE: usize = 12;
-
 #[inline(never)]
 #[no_mangle]
 fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
-    let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let out = translate(ctx, addr, AccessType::Execute)?;
-    let line: &CacheLine = &ctx.shared.i_line[(idx & 1023) as usize];
-    line.tag.store(idx, MemOrder::Relaxed);
-    line.paddr.store(out ^ addr, MemOrder::Relaxed);
-    Ok(out)
+    get_model().instruction_access(ctx, addr)
 }
 
 fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
-    let idx = addr >> CACHE_LINE_LOG2_SIZE;
+    let idx = addr >> get_model().cache_line_size_log2();
     let line = &ctx.shared.i_line[(idx & 1023) as usize];
     let paddr = if line.tag.load(MemOrder::Relaxed) != idx {
         insn_translate_cache_miss(ctx, addr)?
@@ -638,12 +654,7 @@ fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
 #[inline(never)]
 #[export_name = "translate_cache_miss"]
 fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
-    let idx = addr >> CACHE_LINE_LOG2_SIZE;
-    let out = translate(ctx, addr, if write { AccessType::Write } else { AccessType::Read })?;
-    let line: &CacheLine = &ctx.shared.line[(idx & 1023) as usize];
-    let tag = (idx << 1) | if write { 0 } else { 1 };
-    line.tag.store(tag, MemOrder::Relaxed);
-    line.paddr.store(out ^ addr, MemOrder::Relaxed);
+    let out = get_model().data_access(ctx, addr, write)?;
     if write {
         icache_invalidate(out as usize, out as usize + 1);
     }
@@ -651,7 +662,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
 }
 
 fn translate_read(ctx: &mut Context, addr: u64) -> Result<usize, ()> {
-    let idx = addr >> CACHE_LINE_LOG2_SIZE;
+    let idx = addr >> get_model().cache_line_size_log2();
     let line = &ctx.shared.line[(idx & 1023) as usize];
     let paddr = if (line.tag.load(MemOrder::Relaxed) >> 1) != idx {
         translate_cache_miss(ctx, addr, false)?
@@ -667,7 +678,7 @@ fn read_vaddr<T>(ctx: &mut Context, addr: u64) -> Result<&'static T, ()> {
 }
 
 fn translate_write(ctx: &mut Context, addr: u64) -> Result<usize, ()> {
-    let idx = addr >> CACHE_LINE_LOG2_SIZE;
+    let idx = addr >> get_model().cache_line_size_log2();
     let line = &ctx.shared.line[(idx & 1023) as usize];
     let paddr = if line.tag.load(MemOrder::Relaxed) != (idx << 1) {
         translate_cache_miss(ctx, addr, true)?
@@ -842,8 +853,9 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             0
         }
         4 => {
-            let mask: u64 =
-                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize);
+            let mask: u64 = crate::emu::read_memory(
+                ctx.translate_vaddr(arg0, AccessType::Read).unwrap() as usize,
+            );
             for i in 0..crate::core_count() {
                 if mask & (1 << i) == 0 {
                     continue;
@@ -856,7 +868,9 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
-                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize)
+                crate::emu::read_memory(
+                    ctx.translate_vaddr(arg0, AccessType::Read).unwrap() as usize
+                )
             };
             for i in 0..crate::core_count() {
                 if mask & (1 << i) == 0 {
@@ -870,7 +884,9 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
-                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize)
+                crate::emu::read_memory(
+                    ctx.translate_vaddr(arg0, AccessType::Read).unwrap() as usize
+                )
             };
             global_sfence(mask, None, if arg2 == 4096 { Some(arg1 >> 12) } else { None });
             0
@@ -879,7 +895,9 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             let mask: u64 = if arg0 == 0 {
                 u64::max_value()
             } else {
-                crate::emu::read_memory(translate(ctx, arg0, AccessType::Read).unwrap() as usize)
+                crate::emu::read_memory(
+                    ctx.translate_vaddr(arg0, AccessType::Read).unwrap() as usize
+                )
             };
             global_sfence(
                 mask,
@@ -1027,7 +1045,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     }
 
     match *op {
-        Op::Illegal => { trap!(2, 0) }
+        Op::Illegal => trap!(2, 0),
         /* LOAD */
         Op::Lb { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
@@ -1035,17 +1053,23 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::Lh { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 1 != 0 { trap!(4, vaddr) }
+            if vaddr & 1 != 0 {
+                trap!(4, vaddr)
+            }
             write_reg!(rd, *read_vaddr::<u16>(ctx, vaddr)? as i16 as u64);
         }
         Op::Lw { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 3 != 0 { trap!(4, vaddr) }
+            if vaddr & 3 != 0 {
+                trap!(4, vaddr)
+            }
             write_reg!(rd, *read_vaddr::<u32>(ctx, vaddr)? as i32 as u64);
         }
         Op::Ld { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 7 != 0 { trap!(4, vaddr) }
+            if vaddr & 7 != 0 {
+                trap!(4, vaddr)
+            }
             write_reg!(rd, *read_vaddr::<u64>(ctx, vaddr)?);
         }
         Op::Lbu { rd, rs1, imm } => {
@@ -1054,18 +1078,24 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::Lhu { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 1 != 0 { trap!(4, vaddr) }
+            if vaddr & 1 != 0 {
+                trap!(4, vaddr)
+            }
             write_reg!(rd, *read_vaddr::<u16>(ctx, vaddr)? as u64);
         }
         Op::Lwu { rd, rs1, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 3 != 0 { trap!(4, vaddr) }
+            if vaddr & 3 != 0 {
+                trap!(4, vaddr)
+            }
             write_reg!(rd, *read_vaddr::<u32>(ctx, vaddr)? as u64);
         }
         /* OP-IMM */
         Op::Addi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1).wrapping_add(imm as u64)),
         Op::Slli { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) << imm),
-        Op::Slti { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i64) < (imm as i64)) as u64),
+        Op::Slti { rd, rs1, imm } => {
+            write_reg!(rd, ((read_reg!(rs1) as i64) < (imm as i64)) as u64)
+        }
         Op::Sltiu { rd, rs1, imm } => write_reg!(rd, (read_reg!(rs1) < (imm as u64)) as u64),
         Op::Xori { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) ^ (imm as u64)),
         Op::Srli { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) >> imm),
@@ -1076,9 +1106,13 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Fence => std::sync::atomic::fence(MemOrder::SeqCst),
         Op::FenceI => ctx.shared.clear_local_icache(),
         /* OP-IMM-32 */
-        Op::Addiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64),
+        Op::Addiw { rd, rs1, imm } => {
+            write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64)
+        }
         Op::Slliw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) << imm) as u64),
-        Op::Srliw { rd, rs1, imm } => write_reg!(rd, (((read_reg!(rs1) as u32) >> imm) as i32) as u64),
+        Op::Srliw { rd, rs1, imm } => {
+            write_reg!(rd, (((read_reg!(rs1) as u32) >> imm) as i32) as u64)
+        }
         Op::Sraiw { rd, rs1, imm } => write_reg!(rd, ((read_reg!(rs1) as i32) >> imm) as u64),
         /* STORE */
         Op::Sb { rs1, rs2, imm } => {
@@ -1088,19 +1122,25 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::Sh { rs1, rs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 1 != 0 { trap!(5, vaddr) }
+            if vaddr & 1 != 0 {
+                trap!(5, vaddr)
+            }
             let paddr = ptr_vaddr_x(ctx, vaddr)?;
             *paddr = read_reg!(rs2) as u16;
         }
         Op::Sw { rs1, rs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 3 != 0 { trap!(5, vaddr) }
+            if vaddr & 3 != 0 {
+                trap!(5, vaddr)
+            }
             let paddr = ptr_vaddr_x(ctx, vaddr)?;
             *paddr = read_reg!(rs2) as u32;
         }
         Op::Sd { rs1, rs2, imm } => {
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 7 != 0 { trap!(5, vaddr) }
+            if vaddr & 7 != 0 {
+                trap!(5, vaddr)
+            }
             let paddr = ptr_vaddr_x(ctx, vaddr)?;
             *paddr = read_reg!(rs2) as u64;
         }
@@ -1108,20 +1148,34 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Add { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_add(read_reg!(rs2))),
         Op::Sub { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1).wrapping_sub(read_reg!(rs2))),
         Op::Sll { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) << (read_reg!(rs2) & 63)),
-        Op::Slt { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i64) < (read_reg!(rs2) as i64)) as u64),
+        Op::Slt { rd, rs1, rs2 } => {
+            write_reg!(rd, ((read_reg!(rs1) as i64) < (read_reg!(rs2) as i64)) as u64)
+        }
         Op::Sltu { rd, rs1, rs2 } => write_reg!(rd, (read_reg!(rs1) < read_reg!(rs2)) as u64),
         Op::Xor { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) ^ read_reg!(rs2)),
         Op::Srl { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) >> (read_reg!(rs2) & 63)),
-        Op::Sra { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i64) >> (read_reg!(rs2) & 63)) as u64),
+        Op::Sra { rd, rs1, rs2 } => {
+            write_reg!(rd, ((read_reg!(rs1) as i64) >> (read_reg!(rs2) & 63)) as u64)
+        }
         Op::Or { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) | read_reg!(rs2)),
         Op::And { rd, rs1, rs2 } => write_reg!(rd, read_reg!(rs1) & read_reg!(rs2)),
         /* LUI */
         Op::Lui { rd, imm } => write_reg!(rd, imm as u64),
-        Op::Addw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(read_reg!(rs2) as i32)) as u64),
-        Op::Subw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_sub(read_reg!(rs2) as i32)) as u64),
-        Op::Sllw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32) << (read_reg!(rs2) & 31)) as u64),
-        Op::Srlw { rd, rs1, rs2 } => write_reg!(rd, (((read_reg!(rs1) as u32) >> (read_reg!(rs2) & 31)) as i32) as u64),
-        Op::Sraw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32) >> (read_reg!(rs2) & 31)) as u64),
+        Op::Addw { rd, rs1, rs2 } => {
+            write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(read_reg!(rs2) as i32)) as u64)
+        }
+        Op::Subw { rd, rs1, rs2 } => {
+            write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_sub(read_reg!(rs2) as i32)) as u64)
+        }
+        Op::Sllw { rd, rs1, rs2 } => {
+            write_reg!(rd, ((read_reg!(rs1) as i32) << (read_reg!(rs2) & 31)) as u64)
+        }
+        Op::Srlw { rd, rs1, rs2 } => {
+            write_reg!(rd, (((read_reg!(rs1) as u32) >> (read_reg!(rs2) & 31)) as i32) as u64)
+        }
+        Op::Sraw { rd, rs1, rs2 } => {
+            write_reg!(rd, ((read_reg!(rs1) as i32) >> (read_reg!(rs2) & 31)) as u64)
+        }
         /* AUIPC */
         Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc.wrapping_sub(4).wrapping_add(imm as u64)),
         /* BRANCH */
@@ -1158,7 +1212,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         /* JALR */
         Op::Jalr { rd, rs1, imm } => {
-            let new_pc = (read_reg!(rs1).wrapping_add(imm as u64)) &! 1;
+            let new_pc = (read_reg!(rs1).wrapping_add(imm as u64)) & !1;
             write_reg!(rd, ctx.pc);
             ctx.pc = new_pc;
         }
@@ -1168,11 +1222,11 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
         }
         /* SYSTEM */
-        Op::Ecall =>
-            match ctx.prv {
-                0 => {
-                    if crate::get_flags().prv == 0 {
-                        ctx.registers[10] = unsafe { crate::emu::syscall(
+        Op::Ecall => match ctx.prv {
+            0 => {
+                if crate::get_flags().prv == 0 {
+                    ctx.registers[10] = unsafe {
+                        crate::emu::syscall(
                             ctx.registers[17],
                             ctx.registers[10],
                             ctx.registers[11],
@@ -1180,28 +1234,14 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
                             ctx.registers[13],
                             ctx.registers[14],
                             ctx.registers[15],
-                        ) };
-                    } else {
-                        trap!(8, 0)
-                    }
-                }
-                1 => {
-                    if crate::get_flags().prv == 1 {
-                        ctx.registers[10] = sbi_call(
-                            ctx,
-                            ctx.registers[17],
-                            ctx.registers[10],
-                            ctx.registers[11],
-                            ctx.registers[12],
-                            ctx.registers[13],
                         )
-                    } else {
-                        trap!(9, 0)
-                    }
+                    };
+                } else {
+                    trap!(8, 0)
                 }
-                3 => {
-                    // Note: We provide SBI interface to our M-mode, so the firmware can simple a few things down.
-                    // This is non-standard.
+            }
+            1 => {
+                if crate::get_flags().prv == 1 {
                     ctx.registers[10] = sbi_call(
                         ctx,
                         ctx.registers[17],
@@ -1209,10 +1249,25 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
                         ctx.registers[11],
                         ctx.registers[12],
                         ctx.registers[13],
-                    );
+                    )
+                } else {
+                    trap!(9, 0)
                 }
-                _ => unreachable!(),
             }
+            3 => {
+                // Note: We provide SBI interface to our M-mode, so the firmware can simple a few things down.
+                // This is non-standard.
+                ctx.registers[10] = sbi_call(
+                    ctx,
+                    ctx.registers[17],
+                    ctx.registers[10],
+                    ctx.registers[11],
+                    ctx.registers[12],
+                    ctx.registers[13],
+                );
+            }
+            _ => unreachable!(),
+        },
         Op::Ebreak => trap!(3, 0),
         Op::Csrrw { rd, rs1, csr } => {
             let result = if rd != 0 { read_csr(ctx, csr)? } else { 0 };
@@ -1221,12 +1276,16 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::Csrrs { rd, rs1, csr } => {
             let result = read_csr(ctx, csr)?;
-            if rs1 != 0 { write_csr(ctx, csr, result | read_reg!(rs1))? }
+            if rs1 != 0 {
+                write_csr(ctx, csr, result | read_reg!(rs1))?
+            }
             write_reg!(rd, result);
         }
         Op::Csrrc { rd, rs1, csr } => {
             let result = read_csr(ctx, csr)?;
-            if rs1 != 0 { write_csr(ctx, csr, result &! read_reg!(rs1))? }
+            if rs1 != 0 {
+                write_csr(ctx, csr, result & !read_reg!(rs1))?
+            }
             write_reg!(rd, result);
         }
         Op::Csrrwi { rd, imm, csr } => {
@@ -1236,12 +1295,16 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::Csrrsi { rd, imm, csr } => {
             let result = read_csr(ctx, csr)?;
-            if imm != 0 { write_csr(ctx, csr, result | imm as u64)? }
+            if imm != 0 {
+                write_csr(ctx, csr, result | imm as u64)?
+            }
             write_reg!(rd, result);
         }
         Op::Csrrci { rd, imm, csr } => {
             let result = read_csr(ctx, csr)?;
-            if imm != 0 { write_csr(ctx, csr, result &! (imm as u64))? }
+            if imm != 0 {
+                write_csr(ctx, csr, result & !(imm as u64))?
+            }
             write_reg!(rd, result);
         }
 
@@ -1249,13 +1312,17 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Flw { frd, rs1, imm } => {
             ctx.test_and_set_fs()?;
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 3 != 0 { trap!(4, vaddr) }
+            if vaddr & 3 != 0 {
+                trap!(4, vaddr)
+            }
             write_fs!(frd, F32::new(*read_vaddr::<u32>(ctx, vaddr)?));
         }
         Op::Fsw { rs1, frs2, imm } => {
             ctx.test_and_set_fs()?;
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 3 != 0 { trap!(5, vaddr) }
+            if vaddr & 3 != 0 {
+                trap!(5, vaddr)
+            }
             let paddr = ptr_vaddr_x(ctx, vaddr)?;
             *paddr = read_fs!(frs2).0;
         }
@@ -1398,19 +1465,28 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::FmsubS { frd, frs1, frs2, frs3, rm } => {
             set_rm!(rm);
             clear_flags!();
-            write_fs!(frd, F32::fused_multiply_add(read_fs!(frs1), read_fs!(frs2), -read_fs!(frs3)));
+            write_fs!(
+                frd,
+                F32::fused_multiply_add(read_fs!(frs1), read_fs!(frs2), -read_fs!(frs3))
+            );
             update_flags!();
         }
         Op::FnmsubS { frd, frs1, frs2, frs3, rm } => {
             set_rm!(rm);
             clear_flags!();
-            write_fs!(frd, F32::fused_multiply_add(-read_fs!(frs1), read_fs!(frs2), read_fs!(frs3)));
+            write_fs!(
+                frd,
+                F32::fused_multiply_add(-read_fs!(frs1), read_fs!(frs2), read_fs!(frs3))
+            );
             update_flags!();
         }
         Op::FnmaddS { frd, frs1, frs2, frs3, rm } => {
             set_rm!(rm);
             clear_flags!();
-            write_fs!(frd, -F32::fused_multiply_add(read_fs!(frs1), read_fs!(frs2), read_fs!(frs3)));
+            write_fs!(
+                frd,
+                -F32::fused_multiply_add(read_fs!(frs1), read_fs!(frs2), read_fs!(frs3))
+            );
             update_flags!();
         }
 
@@ -1418,13 +1494,17 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::Fld { frd, rs1, imm } => {
             ctx.test_and_set_fs()?;
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 3 != 0 { trap!(4, vaddr) }
+            if vaddr & 3 != 0 {
+                trap!(4, vaddr)
+            }
             write_fd!(frd, F64::new(*read_vaddr::<u64>(ctx, vaddr)?));
         }
         Op::Fsd { rs1, frs2, imm } => {
             ctx.test_and_set_fs()?;
             let vaddr = read_reg!(rs1).wrapping_add(imm as u64);
-            if vaddr & 7 != 0 { trap!(5, vaddr) }
+            if vaddr & 7 != 0 {
+                trap!(5, vaddr)
+            }
             let paddr = ptr_vaddr_x(ctx, vaddr)?;
             *paddr = read_fd!(frs2).0;
         }
@@ -1579,19 +1659,28 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         Op::FmsubD { frd, frs1, frs2, frs3, rm } => {
             set_rm!(rm);
             clear_flags!();
-            write_fd!(frd, F64::fused_multiply_add(read_fd!(frs1), read_fd!(frs2), -read_fd!(frs3)));
+            write_fd!(
+                frd,
+                F64::fused_multiply_add(read_fd!(frs1), read_fd!(frs2), -read_fd!(frs3))
+            );
             update_flags!();
         }
         Op::FnmsubD { frd, frs1, frs2, frs3, rm } => {
             set_rm!(rm);
             clear_flags!();
-            write_fd!(frd, F64::fused_multiply_add(-read_fd!(frs1), read_fd!(frs2), read_fd!(frs3)));
+            write_fd!(
+                frd,
+                F64::fused_multiply_add(-read_fd!(frs1), read_fd!(frs2), read_fd!(frs3))
+            );
             update_flags!();
         }
         Op::FnmaddD { frd, frs1, frs2, frs3, rm } => {
             set_rm!(rm);
             clear_flags!();
-            write_fd!(frd, -F64::fused_multiply_add(read_fd!(frs1), read_fd!(frs2), read_fd!(frs3)));
+            write_fd!(
+                frd,
+                -F64::fused_multiply_add(read_fd!(frs1), read_fd!(frs2), read_fd!(frs3))
+            );
             update_flags!();
         }
 
@@ -1614,7 +1703,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             // If rs1 < 0, then the high bits of a should be all one, but the actual bits in exta
             // is all zero. Therefore we need to compensate this error by adding multiplying
             // 0xFFFFFFFF and b, which is effective -b.
-            if a < 0 { r = r.wrapping_sub(b) }
+            if a < 0 {
+                r = r.wrapping_sub(b)
+            }
             write_reg!(rd, r)
         }
         Op::Mulhu { rd, rs1, rs2 } => {
@@ -1646,7 +1737,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             let r = if b == 0 { a } else { a % b };
             write_reg!(rd, r);
         }
-        Op::Mulw { rd, rs1, rs2 } => write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_mul(read_reg!(rs2) as i32)) as u64),
+        Op::Mulw { rd, rs1, rs2 } => {
+            write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_mul(read_reg!(rs2) as i32)) as u64)
+        }
         Op::Divw { rd, rs1, rs2 } => {
             let a = read_reg!(rs1) as i32;
             let b = read_reg!(rs2) as i32;
@@ -1675,7 +1768,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         /* A-extension */
         Op::LrW { rd, rs1, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
             let value = ptr.load(MemOrder::SeqCst) as i32 as u64;
             write_reg!(rd, value);
@@ -1684,7 +1779,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::LrD { rd, rs1, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
             let value = ptr.load(MemOrder::SeqCst);
             write_reg!(rd, value);
@@ -1693,13 +1790,20 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::ScW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let result = if addr != ctx.lr_addr {
                 1
             } else {
                 let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
-                match ptr.compare_exchange(ctx.lr_value as u32, src, MemOrder::SeqCst, MemOrder::SeqCst) {
+                match ptr.compare_exchange(
+                    ctx.lr_value as u32,
+                    src,
+                    MemOrder::SeqCst,
+                    MemOrder::SeqCst,
+                ) {
                     Ok(_) => 0,
                     Err(_) => 1,
                 }
@@ -1708,7 +1812,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::ScD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let result = if addr != ctx.lr_addr {
                 1
@@ -1723,7 +1829,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoswapW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
             let current = ptr.swap(src, MemOrder::SeqCst);
@@ -1731,7 +1839,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoswapD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
             let current = ptr.swap(src, MemOrder::SeqCst);
@@ -1739,7 +1849,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoaddW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
             let current = ptr.fetch_add(src, MemOrder::SeqCst);
@@ -1747,7 +1859,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoaddD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
             let current = ptr.fetch_add(src, MemOrder::SeqCst);
@@ -1755,7 +1869,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoandW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
             let current = ptr.fetch_and(src, MemOrder::SeqCst);
@@ -1763,7 +1879,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoandD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
             let current = ptr.fetch_and(src, MemOrder::SeqCst);
@@ -1771,7 +1889,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoorW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
             let current = ptr.fetch_or(src, MemOrder::SeqCst);
@@ -1779,7 +1899,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoorD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
             let current = ptr.fetch_or(src, MemOrder::SeqCst);
@@ -1787,7 +1909,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoxorW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
             let current = ptr.fetch_xor(src, MemOrder::SeqCst);
@@ -1795,7 +1919,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmoxorD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
             let current = ptr.fetch_xor(src, MemOrder::SeqCst);
@@ -1803,7 +1929,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmominW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicI32>(ctx, addr)?;
             let current = ptr.fetch_min_stable(src as i32, MemOrder::SeqCst);
@@ -1811,7 +1939,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmominD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicI64>(ctx, addr)?;
             let current = ptr.fetch_min_stable(src as i64, MemOrder::SeqCst);
@@ -1819,7 +1949,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmomaxW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicI32>(ctx, addr)?;
             let current = ptr.fetch_max_stable(src as i32, MemOrder::SeqCst);
@@ -1827,7 +1959,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmomaxD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicI64>(ctx, addr)?;
             let current = ptr.fetch_max_stable(src as i64, MemOrder::SeqCst);
@@ -1835,7 +1969,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmominuW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
             let current = ptr.fetch_min_stable(src, MemOrder::SeqCst);
@@ -1843,7 +1979,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmominuD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
             let current = ptr.fetch_min_stable(src, MemOrder::SeqCst);
@@ -1851,7 +1989,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmomaxuW { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 3 != 0 { trap!(5, addr) }
+            if addr & 3 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
             let current = ptr.fetch_max_stable(src, MemOrder::SeqCst);
@@ -1859,7 +1999,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         }
         Op::AmomaxuD { rd, rs1, rs2, .. } => {
             let addr = read_reg!(rs1);
-            if addr & 7 != 0 { trap!(5, addr) }
+            if addr & 7 != 0 {
+                trap!(5, addr)
+            }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
             let current = ptr.fetch_max_stable(src, MemOrder::SeqCst);
@@ -1881,7 +2023,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             }
 
             // Set MIE according to MPIE
-            ctx.mstatus = (ctx.mstatus &! 0x8) | (ctx.mstatus & 0x80) >> 4;
+            ctx.mstatus = (ctx.mstatus & !0x8) | (ctx.mstatus & 0x80) >> 4;
             // Set MPIE to 1
             ctx.mstatus |= 0x80;
             // Set MPP to U
@@ -1908,20 +2050,22 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             if (ctx.mstatus & 0x20) != 0 {
                 ctx.mstatus |= 0x2;
             } else {
-                ctx.mstatus &=! 0x2;
+                ctx.mstatus &= !0x2;
             }
 
             // Set SPIE to 1
             ctx.mstatus |= 0x20;
             // Set SPP to U
-            ctx.mstatus &=! 0x100;
+            ctx.mstatus &= !0x100;
 
             if ctx.interrupt_pending() != 0 {
                 ctx.shared.alert()
             }
         }
         Op::Wfi => {
-            if crate::threaded() { ctx.shared.wait_alarm() }
+            if crate::threaded() {
+                ctx.shared.wait_alarm()
+            }
         }
         Op::SfenceVma { rs1, rs2 } => {
             let asid = if rs2 == 0 { None } else { Some(read_reg!(rs2) as u16) };
