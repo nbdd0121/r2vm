@@ -218,7 +218,7 @@ impl Op {
     }
 
     /// Print the instruction with optional pc information.
-    fn print(&self, fmt: &mut fmt::Formatter, compressed: bool, pc: Option<u64>) -> fmt::Result {
+    fn print(&self, fmt: &mut fmt::Formatter, pc: Option<u64>) -> fmt::Result {
         let mnemonic = self.mnemonic();
         let suffix = self.suffix();
         let len = mnemonic.len() + suffix.len();
@@ -233,8 +233,6 @@ impl Op {
             Op::Auipc { rd, imm } =>
                 write!(fmt, "{}, {:#x}",  register_name(rd), (imm as u32) >> 12)?,
             Op::Jal { rd, imm } => {
-                // Offset the immediate. Check out decode.rs for more details.
-                let imm = imm.wrapping_sub(if compressed { 2 } else { 0 });
                 let (sign, uimm) = if imm < 0 {
                     ('-', -imm)
                 } else {
@@ -252,8 +250,6 @@ impl Op {
             Op::Bge { rs1, rs2, imm } |
             Op::Bltu { rs1, rs2, imm } |
             Op::Bgeu { rs1, rs2, imm } => {
-                // Offset the immediate. Check out decode.rs for more details.
-                let imm = imm.wrapping_sub(if compressed { 2 } else { 0 });
                 let (sign, uimm) = if imm < 0 {
                     ('-', -imm)
                 } else {
@@ -453,7 +449,7 @@ impl Op {
 /// For compressed jump and branches, the immediate will be incorrect. Use `Op::pretty_print` instead.
 impl fmt::Display for Op {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        self.print(fmt, false, None)
+        self.print(fmt, None)
     }
 }
 
@@ -478,6 +474,6 @@ impl<'a> fmt::Display for Disasm<'a> {
         }
 
         write!(fmt, "        ")?;
-        self.op.print(fmt, self.bits & 3 != 3, Some(self.pc))
+        self.op.print(fmt, Some(self.pc))
     }
 }

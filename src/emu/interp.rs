@@ -911,7 +911,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             0
         }
         _ => {
-            error!("unknown sbi call {}", nr);
+            warn!("unknown sbi call {}", nr);
             (-2i64) as u64
         }
     }
@@ -940,8 +940,9 @@ pub fn init_fp() {
 // #endregion
 
 /// Perform a single step of instruction.
+/// This function assumes a post-incremented PC.
 /// This function does not check privilege level, so it must be checked ahead of time.
-fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
+fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
     macro_rules! read_reg {
         ($rs: expr) => {{
             let rs = $rs as usize;
@@ -1035,6 +1036,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
     }
     macro_rules! update_flags {
         () => {};
+    }
+    macro_rules! pc_pre {
+        () => {ctx.pc.wrapping_sub(if compressed { 2 } else { 4 })};
     }
     macro_rules! trap {
         ($cause: expr, $tval: expr) => {{
@@ -1177,37 +1181,37 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
             write_reg!(rd, ((read_reg!(rs1) as i32) >> (read_reg!(rs2) & 31)) as u64)
         }
         /* AUIPC */
-        Op::Auipc { rd, imm } => write_reg!(rd, ctx.pc.wrapping_sub(4).wrapping_add(imm as u64)),
+        Op::Auipc { rd, imm } => write_reg!(rd, pc_pre!().wrapping_add(imm as u64)),
         /* BRANCH */
         // Same as auipc, PC-relative instructions are relative to the origin pc instead of the incremented one.
         Op::Beq { rs1, rs2, imm } => {
             if read_reg!(rs1) == read_reg!(rs2) {
-                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
+                ctx.pc = pc_pre!().wrapping_add(imm as u64);
             }
         }
         Op::Bne { rs1, rs2, imm } => {
             if read_reg!(rs1) != read_reg!(rs2) {
-                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
+                ctx.pc = pc_pre!().wrapping_add(imm as u64);
             }
         }
         Op::Blt { rs1, rs2, imm } => {
             if (read_reg!(rs1) as i64) < (read_reg!(rs2) as i64) {
-                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
+                ctx.pc = pc_pre!().wrapping_add(imm as u64);
             }
         }
         Op::Bge { rs1, rs2, imm } => {
             if (read_reg!(rs1) as i64) >= (read_reg!(rs2) as i64) {
-                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
+                ctx.pc = pc_pre!().wrapping_add(imm as u64);
             }
         }
         Op::Bltu { rs1, rs2, imm } => {
             if read_reg!(rs1) < read_reg!(rs2) {
-                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
+                ctx.pc = pc_pre!().wrapping_add(imm as u64);
             }
         }
         Op::Bgeu { rs1, rs2, imm } => {
             if read_reg!(rs1) >= read_reg!(rs2) {
-                ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
+                ctx.pc = pc_pre!().wrapping_add(imm as u64);
             }
         }
         /* JALR */
@@ -1219,7 +1223,7 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
         /* JAL */
         Op::Jal { rd, imm } => {
             write_reg!(rd, ctx.pc);
-            ctx.pc = ctx.pc.wrapping_sub(4).wrapping_add(imm as u64);
+            ctx.pc = pc_pre!().wrapping_add(imm as u64);
         }
         /* SYSTEM */
         Op::Ecall => match ctx.prv {
@@ -2079,7 +2083,9 @@ fn step(ctx: &mut Context, op: &Op) -> Result<(), ()> {
 #[no_mangle]
 pub fn riscv_step(ctx: &mut Context, op: u64) -> Result<(), ()> {
     let op: Op = unsafe { std::mem::transmute(op) };
-    step(ctx, &op)
+    // The compressed bit is mainly used for PC offset calculation for PC-related operations,
+    // which we have taken care in DBT, so it won't matter.
+    step(ctx, &op, false)
 }
 
 fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize) {
@@ -2144,49 +2150,46 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
         // Note that this shouldn't be done if the fused macro-op can cross page boundary.
         if phys_pc_end & 4095 != 0 {
             match op {
-                Op::Beq { imm: 6, .. }
-                | Op::Bne { imm: 6, .. }
-                | Op::Blt { imm: 6, .. }
-                | Op::Bge { imm: 6, .. }
-                | Op::Bltu { imm: 6, .. }
-                | Op::Bgeu { imm: 6, .. } => {
-                    if let Ok((next_op, true, bits)) = read_insn(phys_pc_end as usize) {
-                        if phys_pc_end & 4095 == 0 {
-                            error!("OOOPS");
+                Op::Beq { imm, .. }
+                | Op::Bne { imm, .. }
+                | Op::Blt { imm, .. }
+                | Op::Bge { imm, .. }
+                | Op::Bltu { imm, .. }
+                | Op::Bgeu { imm, .. } => {
+                    if imm == if c { 4 } else { 6 } {
+                        if let Ok((next_op, true, bits)) = read_insn(phys_pc_end as usize) {
+                            if phys_pc_end & 4095 == 0 {
+                                error!("OOOPS");
+                            }
+                            // Currently we require the conditional executed instruction to not change
+                            // control flow.
+                            if crate::get_flags().disassemble {
+                                eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
+                            }
+                            phys_pc_end += 2;
+                            compiler.compile_cond_op(&op, c, &next_op, true);
+                            if phys_pc_end & 4095 == 0 {
+                                compiler.end();
+                                break;
+                            }
+                            continue;
                         }
-                        // Currently we require the conditional executed instruction to not change
-                        // control flow.
-                        if crate::get_flags().disassemble {
-                            eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
-                        }
-                        phys_pc_end += 2;
-                        compiler.compile_cond_op(&op, c, &next_op, true);
-                        if phys_pc_end & 4095 == 0 {
-                            compiler.end();
-                            break;
-                        }
-                        continue;
                     }
-                }
-                Op::Beq { imm: 8, .. }
-                | Op::Bne { imm: 8, .. }
-                | Op::Blt { imm: 8, .. }
-                | Op::Bge { imm: 8, .. }
-                | Op::Bltu { imm: 8, .. }
-                | Op::Bgeu { imm: 8, .. } => {
-                    if let Ok((next_op, false, bits)) = read_insn(phys_pc_end as usize) {
-                        // Currently we require the conditional executed instruction to not change
-                        // control flow.
-                        if crate::get_flags().disassemble {
-                            eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
+                    if imm == if c { 6 } else { 8 } {
+                        if let Ok((next_op, false, bits)) = read_insn(phys_pc_end as usize) {
+                            // Currently we require the conditional executed instruction to not change
+                            // control flow.
+                            if crate::get_flags().disassemble {
+                                eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
+                            }
+                            phys_pc_end += 4;
+                            compiler.compile_cond_op(&op, c, &next_op, false);
+                            if phys_pc_end & 4095 == 0 {
+                                compiler.end();
+                                break;
+                            }
+                            continue;
                         }
-                        phys_pc_end += 4;
-                        compiler.compile_cond_op(&op, c, &next_op, false);
-                        if phys_pc_end & 4095 == 0 {
-                            compiler.end();
-                            break;
-                        }
-                        continue;
                     }
                 }
                 _ => (),

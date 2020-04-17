@@ -19,7 +19,7 @@ use crate::io::virtio::Network;
 pub mod interp;
 #[rustfmt::skip]
 mod abi;
-mod dbt;
+pub mod dbt;
 mod event;
 pub mod loader;
 pub mod signal;

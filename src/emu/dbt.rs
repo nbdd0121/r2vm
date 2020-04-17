@@ -326,7 +326,7 @@ impl<'a> DbtCompiler<'a> {
     //
     // #endregion
 
-    fn emit_branch(&mut self, rs1: u8, rs2: u8, imm: i32, mut cc: ConditionCode) {
+    fn emit_branch(&mut self, rs1: u8, rs2: u8, imm: i32, mut cc: ConditionCode, compressed: bool) {
         // Compare and set flags.
         // If either operand is 0, it should be treated specially.
         // We didn't handle the case of rs1 == rs2 specially because that's very unlikely, so we
@@ -344,8 +344,11 @@ impl<'a> DbtCompiler<'a> {
 
         let jcc_not = self.emit_jcc_long(!cc);
 
+        // Offset of PC before the branch instruction relative to pc_start.
+        let pre_pc_offset = self.pc_end.wrapping_sub(if compressed { 2 } else { 4 });
+
         // Adjust PC, instret and minstret.
-        let pc_offset = self.pc_end.wrapping_add(imm as i64).wrapping_sub(4);
+        let pc_offset = pre_pc_offset.wrapping_add(imm as i64);
         self.emit(Add(Mem(memory_of!(pc)), Imm(pc_offset)));
         self.pre_adjust_instret();
 
@@ -354,8 +357,7 @@ impl<'a> DbtCompiler<'a> {
         self.cycles += 1;
         self.emit_interrupt_check();
 
-        let target =
-            self.pc_start.wrapping_add(self.pc_end as u64).wrapping_add(imm as u64).wrapping_sub(4);
+        let target = self.pc_start.wrapping_add(pc_offset as u64);
 
         // emit_icache_access will fill ebx with values in case of an exception happening.
         // We would like to produce correct ebx which is all 0.
@@ -384,7 +386,7 @@ impl<'a> DbtCompiler<'a> {
         self.patch(jcc_not, label_not);
     }
 
-    fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32, comp: bool) {
+    fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32, compressed: bool) {
         self.pre_adjust_instret();
 
         self.load_reg(Register::RAX, rs1);
@@ -395,7 +397,7 @@ impl<'a> DbtCompiler<'a> {
 
         if rd != 0 {
             self.emit(Mov(Reg(Register::RDX), OpMem(memory_of!(pc))));
-            self.emit(Add(Register::RDX.into(), Imm(self.pc_cur + if comp { 2 } else { 4 })));
+            self.emit(Add(Register::RDX.into(), Imm(self.pc_cur + if compressed { 2 } else { 4 })));
             self.emit(Mov(loc_of_register(rd), OpReg(Register::RDX)));
         }
 
@@ -406,10 +408,10 @@ impl<'a> DbtCompiler<'a> {
         self.emit_chain_tail();
     }
 
-    fn emit_jal(&mut self, rd: u8, imm: i32, comp: bool) {
+    fn emit_jal(&mut self, rd: u8, imm: i32, compressed: bool) {
         self.pre_adjust_instret();
-        let pc_offset = self.pc_cur + if comp { 2 } else { 4 };
-        let imm_from_end = (imm as i64).wrapping_sub(4);
+        let pc_offset = self.pc_cur + if compressed { 2 } else { 4 };
+        let imm_from_end = (imm as i64).wrapping_sub(if compressed { 2 } else { 4 });
 
         if rd != 0 {
             self.emit(Mov(Register::RAX.into(), memory_of!(pc).into()));
@@ -1681,12 +1683,12 @@ impl<'a> DbtCompiler<'a> {
                 self.store_reg(rd, Register::RAX);
             }
             /* BRANCH */
-            Op::Beq { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Equal),
-            Op::Bne { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::NotEqual),
-            Op::Blt { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Less),
-            Op::Bge { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::GreaterEqual),
-            Op::Bltu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Below),
-            Op::Bgeu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::AboveEqual),
+            Op::Beq { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Equal, comp),
+            Op::Bne { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::NotEqual, comp),
+            Op::Blt { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Less, comp),
+            Op::Bge { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::GreaterEqual, comp),
+            Op::Bltu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Below, comp),
+            Op::Bgeu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::AboveEqual, comp),
             /* JALR */
             Op::Jalr { rd, rs1, imm } => self.emit_jalr(rd, rs1, imm, comp),
             /* JAL */
