@@ -7,7 +7,7 @@
 //! | [RSP-16] | next translated PC, when executing a helper function |   |   |   |
 
 use super::interp::Context;
-use crate::sim::model::{get_model, Model};
+use crate::sim::model::{get_model, Model, PipelineModel};
 use riscv::{Csr, Op};
 use std::convert::TryFrom;
 use x86::builder::*;
@@ -79,6 +79,8 @@ pub struct DbtCompiler<'a> {
     /// Useful only in lockstep mode.
     cycles: usize,
 
+    pub(super) model: Option<Box<dyn PipelineModel>>,
+
     /// The offset past the speculative guard.
     pub speculative_len: usize,
 }
@@ -121,8 +123,22 @@ impl<'a> DbtCompiler<'a> {
             pc_cur: 0,
             instret: 0,
             cycles: 0,
+            model: Some(get_model().pipeline_model()),
             speculative_len: 0,
         }
+    }
+
+    /// Do something with the pipeline model. This method is needed because `self` owns
+    /// model but `PipelineModel` needs both a mutable reference of self and model.
+    fn with_model<R>(&mut self, f: impl FnOnce(&mut Self, &mut dyn PipelineModel) -> R) -> R {
+        let mut model = self.model.take().unwrap();
+        let ret = f(self, &mut *model);
+        self.model = Some(model);
+        ret
+    }
+
+    pub fn insert_cycle_count(&mut self, count: usize) {
+        self.cycles += count;
     }
 
     fn emit(&mut self, op: X86Op) {
@@ -326,7 +342,15 @@ impl<'a> DbtCompiler<'a> {
     //
     // #endregion
 
-    fn emit_branch(&mut self, rs1: u8, rs2: u8, imm: i32, mut cc: ConditionCode, compressed: bool) {
+    fn emit_branch(
+        &mut self,
+        rs1: u8,
+        rs2: u8,
+        imm: i32,
+        mut cc: ConditionCode,
+        op: &Op,
+        compressed: bool,
+    ) {
         // Compare and set flags.
         // If either operand is 0, it should be treated specially.
         // We didn't handle the case of rs1 == rs2 specially because that's very unlikely, so we
@@ -354,7 +378,7 @@ impl<'a> DbtCompiler<'a> {
 
         // Emit interrupt check, and set cycles in cycle-accurate mode
         let old_cycles = self.cycles;
-        self.cycles += 1;
+        self.with_model(|this, model| model.after_taken_branch(this, op, compressed));
         self.emit_interrupt_check();
 
         let target = self.pc_start.wrapping_add(pc_offset as u64);
@@ -386,7 +410,7 @@ impl<'a> DbtCompiler<'a> {
         self.patch(jcc_not, label_not);
     }
 
-    fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32, compressed: bool) {
+    fn emit_jalr(&mut self, rd: u8, rs1: u8, imm: i32, op: &Op, compressed: bool) {
         self.pre_adjust_instret();
 
         self.load_reg(Register::RAX, rs1);
@@ -403,12 +427,12 @@ impl<'a> DbtCompiler<'a> {
 
         self.emit(Mov(Mem(memory_of!(pc)), OpReg(Register::RAX)));
 
-        self.cycles += 1;
+        self.with_model(|this, model| model.after_instruction(this, op, compressed));
         self.emit_interrupt_check();
         self.emit_chain_tail();
     }
 
-    fn emit_jal(&mut self, rd: u8, imm: i32, compressed: bool) {
+    fn emit_jal(&mut self, rd: u8, imm: i32, op: &Op, compressed: bool) {
         self.pre_adjust_instret();
         let pc_offset = self.pc_cur + if compressed { 2 } else { 4 };
         let imm_from_end = (imm as i64).wrapping_sub(if compressed { 2 } else { 4 });
@@ -423,7 +447,7 @@ impl<'a> DbtCompiler<'a> {
             self.emit(Add(memory_of!(pc).into(), Imm(imm_from_end.wrapping_add(pc_offset))));
         }
 
-        self.cycles += 1;
+        self.with_model(|this, model| model.after_instruction(this, op, compressed));
         self.emit_interrupt_check();
 
         let pc_end = self.pc_start.wrapping_add(self.pc_end as u64);
@@ -1683,16 +1707,16 @@ impl<'a> DbtCompiler<'a> {
                 self.store_reg(rd, Register::RAX);
             }
             /* BRANCH */
-            Op::Beq { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Equal, comp),
-            Op::Bne { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::NotEqual, comp),
-            Op::Blt { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Less, comp),
-            Op::Bge { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::GreaterEqual, comp),
-            Op::Bltu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Below, comp),
-            Op::Bgeu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::AboveEqual, comp),
+            Op::Beq { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Equal, op, comp),
+            Op::Bne { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::NotEqual, op, comp),
+            Op::Blt { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Less, op, comp),
+            Op::Bge { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::GreaterEqual, op, comp),
+            Op::Bltu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::Below, op, comp),
+            Op::Bgeu { rs1, rs2, imm } => self.emit_branch(rs1, rs2, imm, ConditionCode::AboveEqual, op, comp),
             /* JALR */
-            Op::Jalr { rd, rs1, imm } => self.emit_jalr(rd, rs1, imm, comp),
+            Op::Jalr { rd, rs1, imm } => self.emit_jalr(rd, rs1, imm, op, comp),
             /* JAL */
-            Op::Jal { rd, imm } => self.emit_jal(rd, imm, comp),
+            Op::Jal { rd, imm } => self.emit_jal(rd, imm, op, comp),
             /* SYSTEM */
             Op::Csrrw { csr, .. } |
             Op::Csrrs { csr, .. } |
@@ -1716,7 +1740,7 @@ impl<'a> DbtCompiler<'a> {
                 self.emit_step_call(op);
                 self.pc_cur = backup.0;
                 self.instret = backup.1;
-                self.cycles += 1;
+                self.with_model(|this, model| model.after_instruction(this, op, comp));
                 self.emit_interrupt_check();
                 self.emit_chain_tail();
             }
@@ -2011,7 +2035,7 @@ impl<'a> DbtCompiler<'a> {
                 self.emit_step_call(op);
                 self.pc_cur = backup.0;
                 self.instret = backup.1;
-                self.cycles += 1;
+                self.with_model(|this, model| model.after_instruction(this, op, comp));
                 self.emit_interrupt_check();
                 self.emit_chain_tail();
             }
@@ -2050,10 +2074,9 @@ impl<'a> DbtCompiler<'a> {
             }
         }
 
-        // Actually emit the op
+        self.with_model(|this, model| model.before_instruction(this, op, compressed));
         self.emit_op(op, compressed);
-
-        self.cycles += 1;
+        self.with_model(|this, model| model.after_instruction(this, op, compressed));
 
         // Advance counters
         self.pc_cur = self.pc_end;
@@ -2098,7 +2121,10 @@ impl<'a> DbtCompiler<'a> {
 
         // In non-threaded mode, generate a yield call.
         // This is done before we start the sequence as we cannot do it between the macro-op.
-        self.cycles += 1;
+        self.with_model(|this, model| {
+            model.before_instruction(this, bop, bcomp);
+            model.after_instruction(this, bop, bcomp);
+        });
         self.before_side_effect();
 
         // Compare and set flags.
@@ -2122,10 +2148,11 @@ impl<'a> DbtCompiler<'a> {
 
         // Emit the conditionally executed op.
         self.pc_cur += blen as i64;
+        self.with_model(|this, model| model.before_instruction(this, op, comp));
         self.emit_op(op, comp);
 
         // In non-threaded mode, generate a yield call.
-        self.cycles += 1;
+        self.with_model(|this, model| model.after_instruction(this, op, comp));
         self.before_side_effect();
 
         let label_fin = self.label();
@@ -2149,6 +2176,7 @@ impl<'a> DbtCompiler<'a> {
         self.emit_helper_jcc(ConditionCode::NotEqual, helper_pred_miss);
 
         self.speculative_len = self.len;
+        self.with_model(|this, model| model.begin_block(this, pc));
     }
 
     /// Generate slow path.
@@ -2297,11 +2325,20 @@ fn icache_cross_miss(ctx: &mut Context, pc: u64, patch: usize, insn: u32) {
 
     let slice = unsafe { std::slice::from_raw_parts_mut(patch as *mut u8, PAGE_CROSS_RESERVATION) };
     let mut compiler = DbtCompiler::new(slice);
+    // This is a hack. We did this to signal that the PC is already post-incremented.
     compiler.pc_start = pc + 2;
     compiler.pc_cur = -4;
     compiler.pc_end = 0;
     compiler.instret = -1;
+    compiler.with_model(|this, model| {
+        // Signal that this block starts at the page boundary rather than `pc - 2`, to avoid the model
+        // accounting for any misaligned block start penalty because if an instruction goes across a
+        // page its first half is fetched already.
+        model.begin_block(this, pc);
+        model.before_instruction(this, &op, false);
+    });
     compiler.emit_op(&op, false);
+
     let unreachable = match op {
         Op::Beq { .. }
         | Op::Bne { .. }
@@ -2311,8 +2348,9 @@ fn icache_cross_miss(ctx: &mut Context, pc: u64, patch: usize, insn: u32) {
         | Op::Bgeu { .. } => false,
         op => op.can_change_control_flow(),
     };
+
     if !unreachable {
-        compiler.cycles += 1;
+        compiler.with_model(|this, model| model.after_instruction(this, &op, false));
         compiler.emit_interrupt_check();
         compiler.emit_chain_tail();
     }

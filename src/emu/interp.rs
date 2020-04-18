@@ -1038,7 +1038,9 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         () => {};
     }
     macro_rules! pc_pre {
-        () => {ctx.pc.wrapping_sub(if compressed { 2 } else { 4 })};
+        () => {
+            ctx.pc.wrapping_sub(if compressed { 2 } else { 4 })
+        };
     }
     macro_rules! trap {
         ($cause: expr, $tval: expr) => {{
@@ -2148,7 +2150,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
         // The way we generate code is a bit slow for branches. The mini-optimisation here
         // captures conditional execution patterns.
         // Note that this shouldn't be done if the fused macro-op can cross page boundary.
-        if phys_pc_end & 4095 != 0 {
+        if phys_pc_end & 4095 != 0 && compiler.model.as_ref().unwrap().can_fuse_cond_op() {
             match op {
                 Op::Beq { imm, .. }
                 | Op::Bne { imm, .. }
@@ -2158,11 +2160,6 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
                 | Op::Bgeu { imm, .. } => {
                     if imm == if c { 4 } else { 6 } {
                         if let Ok((next_op, true, bits)) = read_insn(phys_pc_end as usize) {
-                            if phys_pc_end & 4095 == 0 {
-                                error!("OOOPS");
-                            }
-                            // Currently we require the conditional executed instruction to not change
-                            // control flow.
                             if crate::get_flags().disassemble {
                                 eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
                             }
@@ -2177,8 +2174,6 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
                     }
                     if imm == if c { 6 } else { 8 } {
                         if let Ok((next_op, false, bits)) = read_insn(phys_pc_end as usize) {
-                            // Currently we require the conditional executed instruction to not change
-                            // control flow.
                             if crate::get_flags().disassemble {
                                 eprintln!("{}", next_op.pretty_print(phys_pc_end, bits));
                             }
