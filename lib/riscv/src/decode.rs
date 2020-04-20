@@ -32,7 +32,7 @@ fn csr(bits: u32) -> u16 {
 }
 
 fn i_imm(bits: u32) -> i32 {
-    ((bits as i32) >> 20)
+    (bits as i32) >> 20
 }
 
 fn s_imm(bits: u32) -> i32 {

@@ -206,7 +206,7 @@ unsafe extern "C" fn handle_winch(
 static WINCH: std::sync::Once = std::sync::Once::new();
 
 lazy_static! {
-    pub static ref CONSOLE: Console = { Console::new() };
+    pub static ref CONSOLE: Console =  Console::new() ;
 }
 
 pub fn console_init() {
