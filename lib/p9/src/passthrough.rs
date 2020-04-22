@@ -161,6 +161,19 @@ impl FileSystem for Passthrough {
         Ok(File { path: pathbuf, meta, fd: Some(fd), dir: None })
     }
 
+    fn symlink(
+        &mut self,
+        file: &mut Self::File,
+        name: &str,
+        symtgt: &str,
+        _gid: u32,
+    ) -> std::io::Result<Self::File> {
+        let pathbuf = file.path.join(name);
+        std::os::unix::fs::symlink(symtgt, &pathbuf)?;
+        let meta = std::fs::symlink_metadata(&pathbuf)?;
+        Ok(File { path: pathbuf, meta, fd: None, dir: None })
+    }
+
     fn readdir(
         &mut self,
         file: &mut Self::File,

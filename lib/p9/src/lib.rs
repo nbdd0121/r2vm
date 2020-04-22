@@ -39,6 +39,13 @@ pub trait FileSystem {
         mode: u32,
         gid: u32,
     ) -> Result<Self::File>;
+    fn symlink(
+        &mut self,
+        file: &mut Self::File,
+        name: &str,
+        symtgt: &str,
+        gid: u32,
+    ) -> Result<Self::File>;
     fn readdir(
         &mut self,
         file: &mut Self::File,
@@ -100,6 +107,12 @@ impl<T: FileSystem> P9Handler<T> {
                 *file = newfile;
                 let qid = file.qid();
                 Fcall::Rlcreate { qid, iounit: self.iounit }
+            }
+            Fcall::Tsymlink { fid, name, symtgt, gid } => {
+                let file = self.fids.get_mut(&fid).unwrap();
+                let mut newfile = self.fs.symlink(file, &name, &symtgt, gid)?;
+                let qid = newfile.qid();
+                Fcall::Rsymlink { qid }
             }
             Fcall::Tstatfs { fid } => {
                 let file = self.fids.get_mut(&fid).unwrap();
