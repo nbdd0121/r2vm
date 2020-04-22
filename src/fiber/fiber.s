@@ -23,7 +23,7 @@ fiber_save_raw:
     # Retrieve the fiber base pointer
     mov rbp, rsp
     and rbp, -0x200000
-    add rbp, 32
+    add rbp, 64
     jmp rax
 
 # Restore all non-volatile registers and return
@@ -78,7 +78,7 @@ fiber_sleep:
     # Retrieve the fiber base pointer
     mov rbp, rsp
     and rbp, -0x200000
-    add rbp, 32
+    add rbp, 64
 
     call fiber_sleep_raw
 
@@ -110,8 +110,8 @@ fiber_start:
     mov rbp, rdi
     movabs rax, offset fiber_exit
 1:
-    mov [rbp - 32 + 0x200000 - 16], rsp
-    mov [rbp - 32 + 0x200000 - 24], rax
+    mov [rbp - 64 + 0x200000 - 16], rsp
+    mov [rbp - 64 + 0x200000 - 24], rax
     mov rbp, [rbp - 16]
     cmp rbp, rdi
     jne 1b
@@ -124,7 +124,7 @@ fiber_exit:
     mov rsp, [rsp]
     mov rax, rbp
     and rax, -0x200000
-    add rax, 32
+    add rax, 64
 
     jmp fiber_restore_ret_raw
 
@@ -132,5 +132,5 @@ fiber_exit:
 fiber_current:
     mov rax, rsp
     and rax, -0x200000
-    add rax, 32
+    add rax, 64
     ret

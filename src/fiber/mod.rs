@@ -25,19 +25,19 @@ impl FiberStack {
         if map == libc::MAP_FAILED {
             panic!("cannot create fiber stack");
         }
-        let stack = FiberStack(std::num::NonZeroUsize::new(map as usize + 32).unwrap());
+        let stack = FiberStack(std::num::NonZeroUsize::new(map as usize + 64).unwrap());
         stack.init();
         stack
     }
 
     #[allow(dead_code)]
     unsafe fn deallocate(self) {
-        libc::free((self.0.get() - 32) as _)
+        libc::free((self.0.get() - 64) as _)
     }
 
     fn init(self) {
         unsafe {
-            *self.sp() = self.0.get() - 32 + 0x200000 - 32;
+            *self.sp() = self.0.get() - 64 + 0x200000 - 32;
             *self.next() = self;
             *self.prev() = self;
         }
@@ -76,7 +76,7 @@ impl Fiber {
     }
 
     pub fn set_fn(&self, f: fn()) {
-        unsafe { *((self.0.data_pointer() - 32 + 0x200000 - 32) as *mut usize) = f as usize };
+        unsafe { *((self.0.data_pointer() - 64 + 0x200000 - 32) as *mut usize) = f as usize };
     }
 
     /// Yield the current fiber for `num` many times.
