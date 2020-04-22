@@ -393,7 +393,7 @@ pub fn main() {
                 }
             }
             &ExitReason::Exit(code) => {
-                print_stats(&mut contexts);
+                print_stats(&mut contexts).unwrap();
                 std::process::exit(code);
             }
             ExitReason::ClearStats => {
@@ -405,9 +405,10 @@ pub fn main() {
                     ctx.instret = 0;
                     ctx.minstret = 0;
                 }
+                crate::sim::get_memory_model().reset_stats();
             }
             ExitReason::PrintStats => {
-                print_stats(&mut contexts);
+                print_stats(&mut contexts).unwrap();
             }
         }
 
@@ -421,7 +422,7 @@ pub fn main() {
 pub static mut TIME_BASE: std::time::Duration = std::time::Duration::from_secs(0);
 pub static mut CYCLE_BASE: u64 = 0;
 
-fn print_stats(ctxs: &[&mut emu::interp::Context]) {
+fn print_stats(ctxs: &[&mut emu::interp::Context]) -> std::io::Result<()> {
     use std::io::Write;
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
@@ -429,8 +430,8 @@ fn print_stats(ctxs: &[&mut emu::interp::Context]) {
     let mut stderr = stderr.lock();
     let time = unsafe { util::cpu_time() - TIME_BASE };
     let cycle = unsafe { event_loop().cycle() - CYCLE_BASE } as i64;
-    writeln!(stderr, "TIME = {:?}", time).unwrap();
-    writeln!(stderr, "CYCLE = {}", cycle).unwrap();
+    writeln!(stderr, "TIME = {:?}", time)?;
+    writeln!(stderr, "CYCLE = {}", cycle)?;
     let mut instret = 0;
     let mut minstret = 0;
     for ctx in ctxs {
@@ -440,8 +441,10 @@ fn print_stats(ctxs: &[&mut emu::interp::Context]) {
             stderr,
             "Hart {}: INSTRET = {}, MINSTRET = {}",
             ctx.hartid, ctx.instret, ctx.minstret
-        )
-        .unwrap();
+        )?;
     }
-    writeln!(stderr, "Total: INSTRET = {}, MINSTRET = {}", instret, minstret).unwrap();
+    writeln!(stderr, "Total: INSTRET = {}, MINSTRET = {}", instret, minstret)?;
+    writeln!(stderr)?;
+    crate::sim::get_memory_model().print_stats(&mut stderr)?;
+    Ok(())
 }

@@ -174,6 +174,36 @@ impl SharedContext {
         }
     }
 
+    pub fn invalidate_cache_virtual(&self, addr: u64) {
+        let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
+        let idx = (addr >> cache_line_size_log2) as usize & 1023;
+        self.line[idx].invalidate();
+    }
+
+    pub fn invalidate_cache_physical(&self, addr: u64) {
+        let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
+        let interval = 1 << (12 - cache_line_size_log2);
+        let start_idx = (addr >> cache_line_size_log2) as usize & (interval - 1);
+        for i in (start_idx..1024).step_by(interval) {
+            self.line[i].invalidate();
+        }
+    }
+
+    pub fn invalidate_icache_virtual(&self, addr: u64) {
+        let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
+        let idx = (addr >> cache_line_size_log2) as usize & 1023;
+        self.i_line[idx].invalidate();
+    }
+
+    pub fn invalidate_icache_physical(&self, addr: u64) {
+        let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
+        let interval = 1 << (12 - cache_line_size_log2);
+        let start_idx = (addr >> cache_line_size_log2) as usize & (interval - 1);
+        for i in (start_idx..1024).step_by(interval) {
+            self.i_line[i].invalidate();
+        }
+    }
+
     pub fn protect_code(&self, page: u64) {
         let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
         for line in self.line.iter() {
@@ -835,13 +865,13 @@ pub fn icache_reset() {
 }
 
 /// Broadcast sfence
-fn global_sfence(mask: u64, _asid: Option<u16>, _vpn: Option<u64>) {
+fn global_sfence(ctx: &mut Context, mask: u64, asid: Option<u16>, vpn: Option<u64>) {
+    get_memory_model().before_sfence_vma(ctx, mask, asid, vpn);
     for i in 0..crate::core_count() {
         if mask & (1 << i) == 0 {
             continue;
         }
         let ctx = crate::shared_context(i);
-
         ctx.clear_local_cache();
         ctx.clear_local_icache();
     }
@@ -882,6 +912,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
                     ctx.translate_vaddr(arg0, AccessType::Read).unwrap() as usize
                 )
             };
+            get_memory_model().before_fence_i(ctx, mask);
             for i in 0..crate::core_count() {
                 if mask & (1 << i) == 0 {
                     continue;
@@ -898,7 +929,7 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
                     ctx.translate_vaddr(arg0, AccessType::Read).unwrap() as usize
                 )
             };
-            global_sfence(mask, None, if arg2 == 4096 { Some(arg1 >> 12) } else { None });
+            global_sfence(ctx, mask, None, if arg2 == 4096 { Some(arg1 & !4095) } else { None });
             0
         }
         7 => {
@@ -910,9 +941,10 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
                 )
             };
             global_sfence(
+                ctx,
                 mask,
                 Some(arg3 as u16),
-                if arg2 == 4096 { Some(arg1 >> 12) } else { None },
+                if arg2 == 4096 { Some(arg1 & !4095) } else { None },
             );
             0
         }
@@ -1120,7 +1152,10 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         Op::Andi { rd, rs1, imm } => write_reg!(rd, read_reg!(rs1) & (imm as u64)),
         /* MISC-MEM */
         Op::Fence => std::sync::atomic::fence(MemOrder::SeqCst),
-        Op::FenceI => ctx.shared.clear_local_icache(),
+        Op::FenceI => {
+            get_memory_model().before_fence_i(ctx, 1 << ctx.hartid);
+            ctx.shared.clear_local_icache();
+        }
         /* OP-IMM-32 */
         Op::Addiw { rd, rs1, imm } => {
             write_reg!(rd, ((read_reg!(rs1) as i32).wrapping_add(imm)) as u64)
@@ -2085,8 +2120,8 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         }
         Op::SfenceVma { rs1, rs2 } => {
             let asid = if rs2 == 0 { None } else { Some(read_reg!(rs2) as u16) };
-            let vpn = if rs1 == 0 { None } else { Some(read_reg!(rs1) >> 12) };
-            global_sfence(1 << ctx.hartid, asid, vpn)
+            let vpn = if rs1 == 0 { None } else { Some(read_reg!(rs1) & !4095) };
+            global_sfence(ctx, 1 << ctx.hartid, asid, vpn)
         }
     }
     Ok(())

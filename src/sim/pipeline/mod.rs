@@ -32,13 +32,7 @@ pub trait PipelineModel {
 #[derive(Default)]
 pub struct AtomicModel;
 
-impl PipelineModel for AtomicModel {
-    fn begin_block(&mut self, compiler: &mut DbtCompiler, _pc: u64) {
-        // We need at least to yield occasionally in atomic model, otherwise non-threaded mode
-        // will dead lock because other fibers are never executed.
-        compiler.insert_cycle_count(1);
-    }
-}
+impl PipelineModel for AtomicModel {}
 
 /// An simple timing execution model, where each instruction takes 1 cycle to execute.
 #[derive(Default)]

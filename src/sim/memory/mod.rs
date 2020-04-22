@@ -31,6 +31,27 @@ pub trait MemoryModel: Sync {
         ctx.insert_data_cache_line(addr, paddr, write);
         Ok(paddr)
     }
+
+    /// Hook to execute before a fence.i instruction. `mask` provides bit mask of harts for remote invalidation.
+    fn before_fence_i(&self, _ctx: &mut Context, _mask: u64) {}
+
+    // Hook to execute before a sfence.vma instruction. `mask` provides bit mask of harts for remote invalidation.
+    fn before_sfence_vma(
+        &self,
+        _ctx: &mut Context,
+        _mask: u64,
+        _asid: Option<u16>,
+        _vaddr: Option<u64>,
+    ) {
+    }
+
+    /// Reset all statistics
+    fn reset_stats(&self) {}
+
+    /// Print relevant statistics counter
+    fn print_stats(&self, _writer: &mut dyn std::io::Write) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]

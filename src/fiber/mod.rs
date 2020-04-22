@@ -84,8 +84,11 @@ impl Fiber {
     /// Note: this signature is marked safe just for convience.
     /// If the current code is running under fiber then it is completely safe to call this, but
     /// it will just crash if the current code is not running inside fiber.
+    #[inline]
     pub fn sleep(num: usize) {
-        unsafe { fiber_sleep(num - 1) }
+        if num > 0 {
+            unsafe { fiber_sleep(num - 1) }
+        }
     }
 
     pub fn scratchpad<T>() -> *mut T {
