@@ -1,5 +1,5 @@
 use crate::io::IoMemorySync;
-use crate::sim::model::{get_model, Model};
+use crate::sim::get_memory_model;
 use crate::util::AtomicExt;
 use lazy_static::lazy_static;
 use parking_lot::{Condvar, Mutex, MutexGuard};
@@ -175,7 +175,7 @@ impl SharedContext {
     }
 
     pub fn protect_code(&self, page: u64) {
-        let cache_line_size_log2 = get_model().cache_line_size_log2();
+        let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
         for line in self.line.iter() {
             let _ = line.tag.fetch_update_stable(
                 |value| {
@@ -303,7 +303,7 @@ impl Context {
         let mut virt_addr = addr;
         let mut phys_addr = 0;
         let mut virt_line = !addr;
-        let cache_line_size_log2 = get_model().cache_line_size_log2();
+        let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
         for i in 0..slice.len() {
             // Enter a new cache line
             if virt_addr >> cache_line_size_log2 != virt_line {
@@ -322,7 +322,7 @@ impl Context {
         let mut virt_addr = addr;
         let mut phys_addr = 0;
         let mut virt_line = !addr;
-        let cache_line_size_log2 = get_model().cache_line_size_log2();
+        let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
         for i in 0..slice.len() {
             // Enter a new cache line
             if virt_addr >> cache_line_size_log2 != virt_line {
@@ -367,7 +367,7 @@ impl Context {
 
     /// Insert a cache line into the L0 instruction cache.
     pub fn insert_instruction_cache_line(&mut self, vaddr: u64, paddr: u64) {
-        let idx = vaddr >> get_model().cache_line_size_log2();
+        let idx = vaddr >> get_memory_model().cache_line_size_log2();
         let line: &CacheLine = &self.shared.i_line[(idx & 1023) as usize];
         line.tag.store(idx, MemOrder::Relaxed);
         line.paddr.store(paddr ^ vaddr, MemOrder::Relaxed);
@@ -375,7 +375,7 @@ impl Context {
 
     /// Insert a cache line into the L0 data cache.
     pub fn insert_data_cache_line(&mut self, vaddr: u64, paddr: u64, writable: bool) {
-        let idx = vaddr >> get_model().cache_line_size_log2();
+        let idx = vaddr >> get_memory_model().cache_line_size_log2();
         let line: &CacheLine = &self.shared.line[(idx & 1023) as usize];
         let tag = (idx << 1) | if writable { 0 } else { 1 };
         line.tag.store(tag, MemOrder::Relaxed);
@@ -637,11 +637,11 @@ pub fn icache_invalidate(start: usize, end: usize) {
 #[inline(never)]
 #[no_mangle]
 fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
-    get_model().instruction_access(ctx, addr)
+    get_memory_model().instruction_access(ctx, addr)
 }
 
 fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
-    let idx = addr >> get_model().cache_line_size_log2();
+    let idx = addr >> get_memory_model().cache_line_size_log2();
     let line = &ctx.shared.i_line[(idx & 1023) as usize];
     let paddr = if line.tag.load(MemOrder::Relaxed) != idx {
         insn_translate_cache_miss(ctx, addr)?
@@ -654,7 +654,7 @@ fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
 #[inline(never)]
 #[export_name = "translate_cache_miss"]
 fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
-    let out = get_model().data_access(ctx, addr, write)?;
+    let out = get_memory_model().data_access(ctx, addr, write)?;
     if write {
         icache_invalidate(out as usize, out as usize + 1);
     }
@@ -662,7 +662,7 @@ fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64
 }
 
 fn translate_read(ctx: &mut Context, addr: u64) -> Result<usize, ()> {
-    let idx = addr >> get_model().cache_line_size_log2();
+    let idx = addr >> get_memory_model().cache_line_size_log2();
     let line = &ctx.shared.line[(idx & 1023) as usize];
     let paddr = if (line.tag.load(MemOrder::Relaxed) >> 1) != idx {
         translate_cache_miss(ctx, addr, false)?
@@ -678,7 +678,7 @@ fn read_vaddr<T>(ctx: &mut Context, addr: u64) -> Result<&'static T, ()> {
 }
 
 fn translate_write(ctx: &mut Context, addr: u64) -> Result<usize, ()> {
-    let idx = addr >> get_model().cache_line_size_log2();
+    let idx = addr >> get_memory_model().cache_line_size_log2();
     let line = &ctx.shared.line[(idx & 1023) as usize];
     let paddr = if line.tag.load(MemOrder::Relaxed) != (idx << 1) {
         translate_cache_miss(ctx, addr, true)?
@@ -2090,7 +2090,12 @@ pub fn riscv_step(ctx: &mut Context, op: u64) -> Result<(), ()> {
     step(ctx, &op, false)
 }
 
-fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize) {
+fn translate_code(
+    ctx: &mut Context,
+    icache: &mut ICache,
+    prv: u64,
+    phys_pc: u64,
+) -> (usize, usize) {
     let mut phys_pc_end = phys_pc;
 
     if crate::get_flags().disassemble {
@@ -2107,7 +2112,7 @@ fn translate_code(icache: &mut ICache, prv: u64, phys_pc: u64) -> (usize, usize)
         code = icache.space();
     }
 
-    let mut compiler = super::dbt::DbtCompiler::new(code);
+    let mut compiler = super::dbt::DbtCompiler::new(ctx, code);
     compiler.begin(phys_pc);
 
     loop {
@@ -2274,7 +2279,7 @@ extern "C" fn find_block(ctx: &mut Context) -> (usize, usize) {
                 }
             }
             std::mem::drop(prot);
-            translate_code(&mut icache, ctx.prv, phys_pc)
+            translate_code(ctx, &mut icache, ctx.prv, phys_pc)
         }
     }
 }

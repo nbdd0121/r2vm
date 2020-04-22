@@ -7,7 +7,7 @@
 //! | [RSP-16] | next translated PC, when executing a helper function |   |   |   |
 
 use super::interp::Context;
-use crate::sim::model::{get_model, Model, PipelineModel};
+use crate::sim::{get_memory_model, new_pipeline_model, PipelineModel};
 use riscv::{Csr, Op};
 use std::convert::TryFrom;
 use x86::builder::*;
@@ -33,7 +33,7 @@ fn same_page(a: u64, b: u64) -> bool {
 
 #[inline]
 fn same_cache_line(a: u64, b: u64) -> bool {
-    let cache_line_size_log2 = get_model().cache_line_size_log2();
+    let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
     a >> cache_line_size_log2 == b >> cache_line_size_log2
 }
 
@@ -112,7 +112,7 @@ enum SlowPath {
 }
 
 impl<'a> DbtCompiler<'a> {
-    pub fn new(code: &'a mut [u8]) -> DbtCompiler {
+    pub fn new(ctx: &'a mut Context, code: &'a mut [u8]) -> Self {
         DbtCompiler {
             buffer: code,
             len: 0,
@@ -123,7 +123,7 @@ impl<'a> DbtCompiler<'a> {
             pc_cur: 0,
             instret: 0,
             cycles: 0,
-            model: Some(get_model().pipeline_model()),
+            model: Some(new_pipeline_model(ctx.hartid as usize)),
             speculative_len: 0,
         }
     }
@@ -476,7 +476,7 @@ impl<'a> DbtCompiler<'a> {
 
         // RCX = idx = addr >> CACHE_LINE_SIZE_LOG2
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(get_model().cache_line_size_log2() as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(get_memory_model().cache_line_size_log2() as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
@@ -564,7 +564,7 @@ impl<'a> DbtCompiler<'a> {
 
         // RCX = idx = addr >> CACHE_LINE_SIZE_LOG2
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
-        self.emit(Shr(Reg(Register::RCX), Imm(get_model().cache_line_size_log2() as i64)));
+        self.emit(Shr(Reg(Register::RCX), Imm(get_memory_model().cache_line_size_log2() as i64)));
 
         // EAX = (idx & 1023) * 16
         self.emit(Mov(Reg(Register::EAX), OpReg(Register::ECX)));
@@ -2324,7 +2324,7 @@ fn icache_cross_miss(ctx: &mut Context, pc: u64, patch: usize, insn: u32) {
     }
 
     let slice = unsafe { std::slice::from_raw_parts_mut(patch as *mut u8, PAGE_CROSS_RESERVATION) };
-    let mut compiler = DbtCompiler::new(slice);
+    let mut compiler = DbtCompiler::new(ctx, slice);
     // This is a hack. We did this to signal that the PC is already post-incremented.
     compiler.pc_start = pc + 2;
     compiler.pc_cur = -4;

@@ -32,8 +32,8 @@ impl<T> RoCell<T> {
         std::ptr::write((*this.0.get()).as_mut_ptr(), value);
     }
 
-    pub unsafe fn replace(this: &Self, value: T) {
-        std::mem::replace(&mut *(*this.0.get()).as_mut_ptr(), value);
+    pub unsafe fn replace(this: &Self, value: T) -> T {
+        std::mem::replace(&mut *(*this.0.get()).as_mut_ptr(), value)
     }
 }
 

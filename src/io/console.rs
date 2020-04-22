@@ -86,7 +86,8 @@ impl Console {
                         std::io::stdin().read_exact(std::slice::from_mut(&mut buffer)).unwrap();
                         match buffer {
                             b't' => {
-                                crate::shutdown(crate::ExitReason::SetThreaded(!crate::threaded()));
+                                let model_id = if crate::get_flags().model_id == 0 { 1 } else { 0 };
+                                crate::shutdown(crate::ExitReason::SwitchModel(model_id));
                                 continue;
                             }
                             b'x' => {
@@ -206,7 +207,7 @@ unsafe extern "C" fn handle_winch(
 static WINCH: std::sync::Once = std::sync::Once::new();
 
 lazy_static! {
-    pub static ref CONSOLE: Console =  Console::new() ;
+    pub static ref CONSOLE: Console = Console::new();
 }
 
 pub fn console_init() {

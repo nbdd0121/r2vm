@@ -45,6 +45,9 @@ pub struct Flags {
     // Whether threaded mode should be used
     thread: bool,
 
+    /// The active model ID used
+    model_id: usize,
+
     /// Dump FDT option
     dump_fdt: Option<String>,
 }
@@ -55,6 +58,7 @@ static mut FLAGS: Flags = Flags {
     prv: 1,
     perf: false,
     thread: true,
+    model_id: 0,
     dump_fdt: None,
 };
 
@@ -92,7 +96,7 @@ lazy_static! {
 
 /// Reason for exiting executors
 enum ExitReason {
-    SetThreaded(bool),
+    SwitchModel(usize),
     Exit(i32),
 }
 
@@ -366,20 +370,27 @@ pub fn main() {
         }
 
         match EXIT_REASON.lock().as_ref().unwrap() {
-            &ExitReason::SetThreaded(threaded) => {
+            &ExitReason::SwitchModel(id) => {
                 unsafe {
+                    crate::sim::switch_model(id);
+                    FLAGS.model_id = id;
+                    let threaded = !crate::sim::get_memory_model().require_lockstep();
                     FLAGS.thread = threaded;
+                    info!("switching to model={} threaded={}", id, threaded);
                 }
-                info!("switching to mode threaded={}", threaded);
+
+                // Remove translation cache and L0 I$ and D$
+                emu::interp::icache_reset();
+                for ctx in contexts.iter_mut() {
+                    ctx.shared.clear_local_cache();
+                    ctx.shared.clear_local_icache();
+                }
             }
             &ExitReason::Exit(code) => {
                 print_stats(&mut contexts);
                 std::process::exit(code);
             }
         }
-
-        // Remove old translation cache
-        emu::interp::icache_reset();
 
         // Alert all contexts in case they having interrupts yet to process
         for i in 0..core_count() {

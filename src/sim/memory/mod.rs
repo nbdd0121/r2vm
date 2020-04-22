@@ -1,17 +1,18 @@
 use crate::emu::interp::Context;
 use riscv::mmu::AccessType;
 
-pub use super::pipeline::{AtomicModel, PipelineModel};
+pub trait MemoryModel: Sync {
+    /// Whether lock-step execution is required for this model's simulation.
+    /// For cycle-level simulation you would want this to be true, but if no cache coherency is
+    /// simulated **and** only rough metrics are needed it's okay to set it to false.
+    fn require_lockstep(&self) -> bool {
+        true
+    }
 
-#[inline]
-pub fn get_model() -> &'static dyn Model {
-    &DefaultModel
-}
-
-pub trait Model {
-    /// log2 of the cache line size
+    /// log2 of the cache line size. By default it is 6 (64B). This should at least be 3 (8B) and
+    /// at most be 12 (4096B, 1 page).
     fn cache_line_size_log2(&self) -> u32 {
-        12
+        6
     }
 
     /// Called when an instruction memory access occurs and the cache line does not reside in the
@@ -30,15 +31,22 @@ pub trait Model {
         ctx.insert_data_cache_line(addr, paddr, write);
         Ok(paddr)
     }
-
-    /// Create a pipeline model associated with this model.
-    fn pipeline_model(&self) -> Box<dyn PipelineModel>;
 }
 
-pub struct DefaultModel;
+#[derive(Default)]
+pub struct AtomicModel;
 
-impl Model for DefaultModel {
-    fn pipeline_model(&self) -> Box<dyn PipelineModel> {
-        Box::new(AtomicModel::default())
+impl MemoryModel for AtomicModel {
+    fn require_lockstep(&self) -> bool {
+        false
+    }
+
+    fn cache_line_size_log2(&self) -> u32 {
+        12
     }
 }
+
+#[derive(Default)]
+pub struct SimpleModel;
+
+impl MemoryModel for SimpleModel {}
