@@ -1730,7 +1730,8 @@ impl<'a> DbtCompiler<'a> {
                 Csr::Instreth |
                 // SATP shouldn't belong here, but somehow Linux assumes setting SATP changes
                 // addressing mode immediately...
-                Csr::Satp => true,
+                Csr::Satp |
+                Csr(0x800) | Csr(0x801) => true,
                 _ => false,
             } => {
                 self.pre_adjust_pc_instret(comp);

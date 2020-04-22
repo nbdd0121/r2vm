@@ -581,6 +581,16 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
             ctx.shared.assert(0x222 & value);
         }
         Csr::Minstret => ctx.instret = value,
+        Csr(0x800) if cfg!(feature = "simcsr") => {
+            crate::shutdown(crate::ExitReason::SwitchModel(value as usize));
+        }
+        Csr(0x801) if cfg!(feature = "simcsr") => {
+            crate::shutdown(if value == 0 {
+                crate::ExitReason::ClearStats
+            } else {
+                crate::ExitReason::PrintStats
+            });
+        }
         _ => {
             error!("write illegal csr {:x} = {:x}", csr.0, value);
             ctx.cause = 2;

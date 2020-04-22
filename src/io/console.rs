@@ -94,6 +94,10 @@ impl Console {
                                 println!("Terminated");
                                 crate::shutdown(crate::ExitReason::Exit(0));
                             }
+                            b'p' => {
+                                crate::shutdown(crate::ExitReason::PrintStats);
+                                continue;
+                            }
                             b'c' => unsafe {
                                 libc::raise(libc::SIGTRAP);
                             },

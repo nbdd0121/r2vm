@@ -98,6 +98,8 @@ lazy_static! {
 enum ExitReason {
     SwitchModel(usize),
     Exit(i32),
+    ClearStats,
+    PrintStats,
 }
 
 fn shutdown(reason: ExitReason) {
@@ -153,7 +155,7 @@ pub fn main() {
                 FLAGS.disassemble = true;
             },
             "--perf" => unsafe { FLAGS.perf = true },
-            "--lockstep" => unsafe { FLAGS.thread = false },
+            "--lockstep" => unsafe { FLAGS.model_id = 1 },
             "--help" => {
                 eprintln!(usage_string!(), interp_name);
                 std::process::exit(0);
@@ -324,6 +326,10 @@ pub fn main() {
         }
     }
 
+    unsafe {
+        crate::sim::switch_model(FLAGS.model_id);
+    }
+
     loop {
         fibers[0].set_fn(|| {
             let this: &emu::EventLoop = unsafe { &*fiber::Fiber::scratchpad() };
@@ -390,6 +396,19 @@ pub fn main() {
                 print_stats(&mut contexts);
                 std::process::exit(code);
             }
+            ExitReason::ClearStats => {
+                unsafe {
+                    crate::TIME_BASE = crate::util::cpu_time();
+                    crate::CYCLE_BASE = crate::event_loop().cycle();
+                }
+                for ctx in contexts.iter_mut() {
+                    ctx.instret = 0;
+                    ctx.minstret = 0;
+                }
+            }
+            ExitReason::PrintStats => {
+                print_stats(&mut contexts);
+            }
         }
 
         // Alert all contexts in case they having interrupts yet to process
@@ -399,11 +418,30 @@ pub fn main() {
     }
 }
 
+pub static mut TIME_BASE: std::time::Duration = std::time::Duration::from_secs(0);
+pub static mut CYCLE_BASE: u64 = 0;
+
 fn print_stats(ctxs: &[&mut emu::interp::Context]) {
-    println!("TIME = {:?}", util::cpu_time());
-    println!("CYCLE = {:x}", event_loop().cycle());
-    for i in 0..ctxs.len() {
-        let ctx = &ctxs[i];
-        println!("Hart {}: INSTRET = {:x}, MINSTRET = {:x}", i, ctx.instret, ctx.minstret);
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+    let _stdout = stdout.lock();
+    let mut stderr = stderr.lock();
+    let time = unsafe { util::cpu_time() - TIME_BASE };
+    let cycle = unsafe { event_loop().cycle() - CYCLE_BASE } as i64;
+    writeln!(stderr, "TIME = {:?}", time).unwrap();
+    writeln!(stderr, "CYCLE = {}", cycle).unwrap();
+    let mut instret = 0;
+    let mut minstret = 0;
+    for ctx in ctxs {
+        instret += ctx.instret;
+        minstret += ctx.minstret;
+        writeln!(
+            stderr,
+            "Hart {}: INSTRET = {}, MINSTRET = {}",
+            ctx.hartid, ctx.instret, ctx.minstret
+        )
+        .unwrap();
     }
+    writeln!(stderr, "Total: INSTRET = {}, MINSTRET = {}", instret, minstret).unwrap();
 }

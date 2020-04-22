@@ -43,7 +43,8 @@ panic = "abort"
 debug = true
 
 [features]
-default = ["usernet", "float"]
+default = ["usernet", "float", "simcsr"]
 float = []
 direct = []
 sanitize = []
+simcsr = []
