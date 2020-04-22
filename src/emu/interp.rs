@@ -90,7 +90,8 @@ pub struct SharedContext {
 impl SharedContext {
     pub fn new() -> Self {
         // Check the constant used in helper.s
-        assert_eq!(offset_of!(Context, cause), 32 * 8 + 16);
+        assert_eq!(offset_of!(Context, pc), 0x100);
+        assert_eq!(offset_of!(Context, instret), 0x108);
 
         SharedContext {
             mip: AtomicU64::new(0),
@@ -235,10 +236,14 @@ pub struct Context {
     pub pc: u64,
     pub instret: u64,
 
-    // Note that changing the position of this field would need to change the hard-fixed constant
-    // in assembly.
     pub cause: u64,
     pub tval: u64,
+
+    // Performance counters
+    pub minstret: u64,
+    /// We want each hart to own its own mcycle counter. This is to account WFI instructin where
+    /// cycles are effectively stopped, or when lock-step execution is not enforced.
+    pub cycle_offset: i64,
 
     pub shared: SharedContext,
 
@@ -275,7 +280,6 @@ pub struct Context {
     pub prv: u64,
 
     pub hartid: u64,
-    pub minstret: u64,
 }
 
 impl Context {
@@ -314,6 +318,11 @@ impl Context {
             } else {
                 0
             })
+    }
+
+    /// Get the mcycle register of this hart.
+    pub fn get_mcycle(&self) -> u64 {
+        crate::event_loop().get_lockstep_cycles().wrapping_add(self.cycle_offset as u64)
     }
 
     /// Re-check interrupt status, potentially wake up WFI
@@ -436,7 +445,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
         }
         Csr::Cycle => {
             ctx.test_counter(0)?;
-            crate::event_loop().cycle()
+            ctx.get_mcycle()
         }
         Csr::Time => {
             ctx.test_counter(1)?;
@@ -489,7 +498,7 @@ fn read_csr(ctx: &mut Context, csr: Csr) -> Result<u64, ()> {
         Csr::Mcause => ctx.mcause,
         Csr::Mtval => ctx.mtval,
         Csr::Mip => ctx.shared.mip.load(MemOrder::Relaxed),
-        Csr::Mcycle => crate::event_loop().cycle(),
+        Csr::Mcycle => ctx.get_mcycle(),
         Csr::Mtime => crate::event_loop().time(),
         Csr::Minstret => ctx.instret - 1,
         _ => {

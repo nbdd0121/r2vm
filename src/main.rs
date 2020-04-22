@@ -275,6 +275,7 @@ pub fn main() {
             prv: 0,
             hartid: i as u64,
             minstret: 0,
+            cycle_offset: 0,
         };
         // x0 must always be 0
         newctx.registers[0] = 0;
@@ -328,6 +329,8 @@ pub fn main() {
 
     unsafe {
         crate::sim::switch_model(FLAGS.model_id);
+        let threaded = !crate::sim::get_memory_model().require_lockstep();
+        FLAGS.thread = threaded;
     }
 
     loop {
@@ -398,12 +401,14 @@ pub fn main() {
             }
             ExitReason::ClearStats => {
                 unsafe {
-                    crate::TIME_BASE = crate::util::cpu_time();
-                    crate::CYCLE_BASE = crate::event_loop().cycle();
+                    crate::CPU_TIME_BASE = crate::util::cpu_time();
+                    crate::CYCLE_TIME_BASE = crate::event_loop().cycle();
+                    crate::CYCLE_BASE = crate::event_loop().get_lockstep_cycles();
                 }
                 for ctx in contexts.iter_mut() {
                     ctx.instret = 0;
                     ctx.minstret = 0;
+                    ctx.cycle_offset = 0;
                 }
                 crate::sim::get_memory_model().reset_stats();
             }
@@ -419,7 +424,8 @@ pub fn main() {
     }
 }
 
-pub static mut TIME_BASE: std::time::Duration = std::time::Duration::from_secs(0);
+pub static mut CPU_TIME_BASE: std::time::Duration = std::time::Duration::from_secs(0);
+pub static mut CYCLE_TIME_BASE: u64 = 0;
 pub static mut CYCLE_BASE: u64 = 0;
 
 fn print_stats(ctxs: &[&mut emu::interp::Context]) -> std::io::Result<()> {
@@ -428,22 +434,25 @@ fn print_stats(ctxs: &[&mut emu::interp::Context]) -> std::io::Result<()> {
     let stderr = std::io::stderr();
     let _stdout = stdout.lock();
     let mut stderr = stderr.lock();
-    let time = unsafe { util::cpu_time() - TIME_BASE };
-    let cycle = unsafe { event_loop().cycle() - CYCLE_BASE } as i64;
-    writeln!(stderr, "TIME = {:?}", time)?;
-    writeln!(stderr, "CYCLE = {}", cycle)?;
+    let cpu_time = unsafe { util::cpu_time() - CPU_TIME_BASE };
+    let cycle_time = unsafe { event_loop().cycle() - CYCLE_TIME_BASE };
+    writeln!(stderr, "CPU TIME = {:?}", cpu_time)?;
+    writeln!(stderr, "CYCLE TIME = {}", cycle_time)?;
     let mut instret = 0;
     let mut minstret = 0;
+    let mut cycle = 0;
     for ctx in ctxs {
         instret += ctx.instret;
         minstret += ctx.minstret;
+        let mcycle = unsafe { ctx.get_mcycle() - CYCLE_BASE };
+        cycle += mcycle;
         writeln!(
             stderr,
-            "Hart {}: INSTRET = {}, MINSTRET = {}",
-            ctx.hartid, ctx.instret, ctx.minstret
+            "Hart {}: CYCLE = {}, INSTRET = {}, MINSTRET = {}",
+            ctx.hartid, mcycle, ctx.instret, ctx.minstret
         )?;
     }
-    writeln!(stderr, "Total: INSTRET = {}, MINSTRET = {}", instret, minstret)?;
+    writeln!(stderr, "Total: CYCLE = {}, INSTRET = {}, MINSTRET = {}", cycle, instret, minstret)?;
     writeln!(stderr)?;
     crate::sim::get_memory_model().print_stats(&mut stderr)?;
     Ok(())

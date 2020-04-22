@@ -52,6 +52,10 @@ pub struct EventLoop {
     // This has to be a Box to allow repr(C)
     events: Mutex<BinaryHeap<Entry>>,
     shutdown: AtomicBool,
+    /// The base when we need to know how many cycles are spent in lock-step. When switching from
+    /// lockstep mode to non-lockstep mode, `cycle` will be updated, so it does not reflect number
+    /// of cycles in lockstep mode, we therefore need a base to keep track.
+    lockstep_cycle_base: AtomicU64,
 }
 
 extern "C" {
@@ -64,6 +68,7 @@ impl EventLoop {
     pub fn new() -> EventLoop {
         EventLoop {
             cycle: AtomicU64::new(0),
+            lockstep_cycle_base: AtomicU64::new(0),
             next_event: AtomicU64::new(u64::max_value()),
             epoch: crate::util::RoCell::new(Instant::now()),
             condvar: Condvar::new(),
@@ -81,7 +86,10 @@ impl EventLoop {
         // threaded counters.
         if crate::threaded() {
             // This won't conflict with `event_loop_wait` as they are in different mode.
-            self.cycle.store(self.cycle(), Ordering::Relaxed);
+            let cycle = self.cycle();
+            let lockstep_cycle = self.get_lockstep_cycles();
+            self.cycle.store(cycle, Ordering::Relaxed);
+            self.lockstep_cycle_base.store(cycle - lockstep_cycle, Ordering::Relaxed);
         } else {
             // Calculate number of micros since now. We can only round-up as cycle shouldn't go back.
             let micro = (self.cycle() + 99) / 100;
@@ -98,6 +106,11 @@ impl EventLoop {
         self.shutdown.store(true, Ordering::Relaxed);
         // Queue a no-op event to wake the loop up.
         self.queue(0, Box::new(|| {}));
+    }
+
+    /// Query the number of cycles spent in lockstep execution mode.
+    pub fn get_lockstep_cycles(&self) -> u64 {
+        self.cycle.load(Ordering::Relaxed) - self.lockstep_cycle_base.load(Ordering::Relaxed)
     }
 
     /// Query the current cycle count.

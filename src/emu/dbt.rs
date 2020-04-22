@@ -50,6 +50,7 @@ extern "C" {
     fn helper_icache_cross_miss();
     fn helper_patch_direct_jump();
     fn helper_check_interrupt();
+    fn helper_wfi();
     fn helper_san_fail();
     fn helper_pred_miss();
 }
@@ -328,7 +329,9 @@ impl<'a> DbtCompiler<'a> {
         if self.cycles == 0 {
             return;
         }
-        if !crate::threaded() {
+        if crate::threaded() {
+            self.emit(Add(memory_of!(cycle_offset).into(), Imm(self.cycles as i64)));
+        } else {
             if self.cycles == 1 {
                 self.emit_helper_call(fiber_yield_raw);
             } else {
@@ -2120,7 +2123,6 @@ impl<'a> DbtCompiler<'a> {
             _ => unreachable!(),
         };
 
-        // In non-threaded mode, generate a yield call.
         // This is done before we start the sequence as we cannot do it between the macro-op.
         self.with_model(|this, model| {
             model.before_instruction(this, bop, bcomp);
@@ -2152,7 +2154,6 @@ impl<'a> DbtCompiler<'a> {
         self.with_model(|this, model| model.before_instruction(this, op, comp));
         self.emit_op(op, comp);
 
-        // In non-threaded mode, generate a yield call.
         self.with_model(|this, model| model.after_instruction(this, op, comp));
         self.before_side_effect();
 
