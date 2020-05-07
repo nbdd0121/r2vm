@@ -972,12 +972,12 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
 //
 
 fn get_rounding_mode() -> softfp::RoundingMode {
-    let ctx = unsafe { &(*crate::fiber::Fiber::scratchpad::<Context>()).shared };
+    let ctx = unsafe { &(*fiber::Fiber::scratchpad::<Context>()).shared };
     ctx.rm.load(MemOrder::Relaxed).try_into().unwrap()
 }
 
 fn set_exception_flags(flags: softfp::ExceptionFlags) {
-    let ctx = unsafe { &(*crate::fiber::Fiber::scratchpad::<Context>()).shared };
+    let ctx = unsafe { &(*fiber::Fiber::scratchpad::<Context>()).shared };
     ctx.fflags.fetch_or(flags.bits(), MemOrder::Relaxed);
 }
 
@@ -2448,7 +2448,7 @@ pub fn trap(ctx: &mut Context) {
         ctx.pc = ctx.mtvec;
     }
 
-    crate::fiber::Fiber::sleep(1)
+    fiber::Fiber::sleep(1)
 }
 
 /// Handle a misaligned load/store.
@@ -2515,7 +2515,7 @@ pub fn handle_misalign(ctx: &mut Context, addr: u64) -> Result<(), ()> {
     ctx.pc += if compressed { 2 } else { 4 };
     ctx.instret += 1;
     ctx.minstret += 1;
-    crate::fiber::Fiber::sleep(1);
+    fiber::Fiber::sleep(1);
 
     Ok(())
 }
