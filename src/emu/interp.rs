@@ -1,6 +1,6 @@
 use crate::io::IoMemorySync;
 use crate::sim::get_memory_model;
-use crate::util::AtomicExt;
+use atomic_ext::AtomicExt;
 use lazy_static::lazy_static;
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use riscv::{mmu::*, Csr, Op};
@@ -209,13 +209,13 @@ impl SharedContext {
         let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
         for line in self.line.iter() {
             let _ = line.tag.fetch_update_stable(
+                MemOrder::Relaxed,
+                MemOrder::Relaxed,
                 |value| {
                     let paddr =
                         (value >> 1 << cache_line_size_log2) ^ line.paddr.load(MemOrder::Relaxed);
                     if paddr & !4095 == page { Some(value | 1) } else { None }
                 },
-                MemOrder::Relaxed,
-                MemOrder::Relaxed,
             );
         }
     }
