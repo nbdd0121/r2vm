@@ -3,11 +3,11 @@ extern crate log;
 #[macro_use]
 extern crate offset_of;
 
-pub mod io;
-pub mod util;
 pub mod config;
 pub mod emu;
+pub mod io;
 pub mod sim;
+pub mod util;
 
 use std::ffi::CString;
 use util::RoCell;

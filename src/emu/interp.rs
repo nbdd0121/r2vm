@@ -208,15 +208,11 @@ impl SharedContext {
     pub fn protect_code(&self, page: u64) {
         let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
         for line in self.line.iter() {
-            let _ = line.tag.fetch_update_stable(
-                MemOrder::Relaxed,
-                MemOrder::Relaxed,
-                |value| {
-                    let paddr =
-                        (value >> 1 << cache_line_size_log2) ^ line.paddr.load(MemOrder::Relaxed);
-                    if paddr & !4095 == page { Some(value | 1) } else { None }
-                },
-            );
+            let _ = line.tag.fetch_update_stable(MemOrder::Relaxed, MemOrder::Relaxed, |value| {
+                let paddr =
+                    (value >> 1 << cache_line_size_log2) ^ line.paddr.load(MemOrder::Relaxed);
+                if paddr & !4095 == page { Some(value | 1) } else { None }
+            });
         }
     }
 }

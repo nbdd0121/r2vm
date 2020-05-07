@@ -75,6 +75,8 @@ pub trait IoContext: Send + Sync {
     fn time(&self) -> Duration;
 
     /// Get a [`Future`] that is triggered at the supplied time since the epoch.
+    ///
+    /// [`Future`]: std::future::Future
     fn on_time(&self, time: Duration) -> BoxFuture<'static, ()>;
 
     /// Spawn a task.

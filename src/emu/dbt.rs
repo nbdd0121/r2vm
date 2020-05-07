@@ -50,7 +50,6 @@ extern "C" {
     fn helper_icache_cross_miss();
     fn helper_patch_direct_jump();
     fn helper_check_interrupt();
-    fn helper_wfi();
     fn helper_san_fail();
     fn helper_pred_miss();
 }

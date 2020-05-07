@@ -308,166 +308,157 @@ impl Op {
     pub fn get_regs(self) -> (u8, u8, u8) {
         match self {
             Op::Illegal => (0, 0, 0),
-            Op::Lui { rd, .. } |
-            Op::Auipc { rd, .. } => (rd, 0, 0),
+            Op::Lui { rd, .. } | Op::Auipc { rd, .. } => (rd, 0, 0),
             Op::Jal { rd, .. } => (rd, 0, 0),
-            Op::Beq { rs1, rs2, .. } |
-            Op::Bne { rs1, rs2, .. } |
-            Op::Blt { rs1, rs2, .. } |
-            Op::Bge { rs1, rs2, .. } |
-            Op::Bltu { rs1, rs2, .. } |
-            Op::Bgeu { rs1, rs2, .. } => (0, rs1, rs2),
-            Op::Lb { rd, rs1, .. } |
-            Op::Lh { rd, rs1, .. } |
-            Op::Lw { rd, rs1, .. } |
-            Op::Ld { rd, rs1, .. } |
-            Op::Lbu { rd, rs1, .. } |
-            Op::Lhu { rd, rs1, .. } |
-            Op::Lwu { rd, rs1, .. } => (rd, rs1, 0),
+            Op::Beq { rs1, rs2, .. }
+            | Op::Bne { rs1, rs2, .. }
+            | Op::Blt { rs1, rs2, .. }
+            | Op::Bge { rs1, rs2, .. }
+            | Op::Bltu { rs1, rs2, .. }
+            | Op::Bgeu { rs1, rs2, .. } => (0, rs1, rs2),
+            Op::Lb { rd, rs1, .. }
+            | Op::Lh { rd, rs1, .. }
+            | Op::Lw { rd, rs1, .. }
+            | Op::Ld { rd, rs1, .. }
+            | Op::Lbu { rd, rs1, .. }
+            | Op::Lhu { rd, rs1, .. }
+            | Op::Lwu { rd, rs1, .. } => (rd, rs1, 0),
             Op::Jalr { rd, rs1, .. } => (rd, rs1, 0),
             Op::Fence => (0, 0, 0),
             Op::FenceI => (0, 0, 0),
-            Op::Ecall |
-            Op::Ebreak => (0, 0, 0),
-            Op::Mret |
-            Op::Sret => (0, 0, 0),
+            Op::Ecall | Op::Ebreak => (0, 0, 0),
+            Op::Mret | Op::Sret => (0, 0, 0),
             Op::Wfi => (0, 0, 0),
             Op::SfenceVma { rs1, rs2 } => (0, rs1, rs2),
-            Op::Sb { rs1, rs2, .. } |
-            Op::Sh { rs1, rs2, .. } |
-            Op::Sw { rs1, rs2, .. } |
-            Op::Sd { rs1, rs2, .. } => (0, rs1, rs2),
-            Op::Addi { rd, rs1, .. } |
-            Op::Slti { rd, rs1, .. } |
-            Op::Sltiu { rd, rs1, .. } |
-            Op::Xori { rd, rs1, .. } |
-            Op::Ori { rd, rs1, .. } |
-            Op::Andi { rd, rs1, .. } |
-            Op::Addiw { rd, rs1, .. } |
-            Op::Slli { rd, rs1, .. } |
-            Op::Srli { rd, rs1, .. } |
-            Op::Srai { rd, rs1, .. } |
-            Op::Slliw { rd, rs1, .. } |
-            Op::Srliw { rd, rs1, .. } |
-            Op::Sraiw { rd, rs1, .. } => (rd, rs1, 0),
-            Op::Add { rd, rs1, rs2 } |
-            Op::Sub { rd, rs1, rs2 } |
-            Op::Sll { rd, rs1, rs2 } |
-            Op::Slt { rd, rs1, rs2 } |
-            Op::Sltu { rd, rs1, rs2 } |
-            Op::Xor { rd, rs1, rs2 } |
-            Op::Srl { rd, rs1, rs2 } |
-            Op::Sra { rd, rs1, rs2 } |
-            Op::Or { rd, rs1, rs2 } |
-            Op::And { rd, rs1, rs2 } |
-            Op::Addw { rd, rs1, rs2 } |
-            Op::Subw { rd, rs1, rs2 } |
-            Op::Sllw { rd, rs1, rs2 } |
-            Op::Srlw { rd, rs1, rs2 } |
-            Op::Sraw { rd, rs1, rs2 } => (rd, rs1, rs2),
+            Op::Sb { rs1, rs2, .. }
+            | Op::Sh { rs1, rs2, .. }
+            | Op::Sw { rs1, rs2, .. }
+            | Op::Sd { rs1, rs2, .. } => (0, rs1, rs2),
+            Op::Addi { rd, rs1, .. }
+            | Op::Slti { rd, rs1, .. }
+            | Op::Sltiu { rd, rs1, .. }
+            | Op::Xori { rd, rs1, .. }
+            | Op::Ori { rd, rs1, .. }
+            | Op::Andi { rd, rs1, .. }
+            | Op::Addiw { rd, rs1, .. }
+            | Op::Slli { rd, rs1, .. }
+            | Op::Srli { rd, rs1, .. }
+            | Op::Srai { rd, rs1, .. }
+            | Op::Slliw { rd, rs1, .. }
+            | Op::Srliw { rd, rs1, .. }
+            | Op::Sraiw { rd, rs1, .. } => (rd, rs1, 0),
+            Op::Add { rd, rs1, rs2 }
+            | Op::Sub { rd, rs1, rs2 }
+            | Op::Sll { rd, rs1, rs2 }
+            | Op::Slt { rd, rs1, rs2 }
+            | Op::Sltu { rd, rs1, rs2 }
+            | Op::Xor { rd, rs1, rs2 }
+            | Op::Srl { rd, rs1, rs2 }
+            | Op::Sra { rd, rs1, rs2 }
+            | Op::Or { rd, rs1, rs2 }
+            | Op::And { rd, rs1, rs2 }
+            | Op::Addw { rd, rs1, rs2 }
+            | Op::Subw { rd, rs1, rs2 }
+            | Op::Sllw { rd, rs1, rs2 }
+            | Op::Srlw { rd, rs1, rs2 }
+            | Op::Sraw { rd, rs1, rs2 } => (rd, rs1, rs2),
             Op::Mul { rd, rs1, rs2 } => (rd, rs1, rs2),
-            Op::Mulh { rd, rs1, rs2 } |
-            Op::Mulhsu { rd, rs1, rs2 } |
-            Op::Mulhu { rd, rs1, rs2 } => (rd, rs1, rs2),
-            Op::Div { rd, rs1, rs2 } |
-            Op::Divu { rd, rs1, rs2 } |
-            Op::Rem { rd, rs1, rs2 } |
-            Op::Remu { rd, rs1, rs2 } => (rd, rs1, rs2),
+            Op::Mulh { rd, rs1, rs2 }
+            | Op::Mulhsu { rd, rs1, rs2 }
+            | Op::Mulhu { rd, rs1, rs2 } => (rd, rs1, rs2),
+            Op::Div { rd, rs1, rs2 }
+            | Op::Divu { rd, rs1, rs2 }
+            | Op::Rem { rd, rs1, rs2 }
+            | Op::Remu { rd, rs1, rs2 } => (rd, rs1, rs2),
             Op::Mulw { rd, rs1, rs2 } => (rd, rs1, rs2),
-            Op::Divw { rd, rs1, rs2 } |
-            Op::Divuw { rd, rs1, rs2 } |
-            Op::Remw { rd, rs1, rs2 } |
-            Op::Remuw { rd, rs1, rs2 } => (rd, rs1, rs2),
-            Op::Csrrw { rd, rs1, .. } |
-            Op::Csrrs { rd, rs1, .. } |
-            Op::Csrrc { rd, rs1, .. } => (rd, rs1, 0),
-            Op::Csrrwi { rd, .. } |
-            Op::Csrrsi { rd, .. } |
-            Op::Csrrci { rd, .. } => (rd, 0, 0),
-            Op::LrW { rd, rs1, .. } |
-            Op::LrD { rd, rs1, .. } => (rd, rs1, 0),
-            Op::ScW { rd, rs1, rs2, .. } |
-            Op::ScD { rd, rs1, rs2, .. } |
-            Op::AmoswapW { rd, rs1, rs2, .. } |
-            Op::AmoswapD { rd, rs1, rs2, .. } |
-            Op::AmoaddW { rd, rs1, rs2, .. } |
-            Op::AmoaddD { rd, rs1, rs2, .. } |
-            Op::AmoxorW { rd, rs1, rs2, .. } |
-            Op::AmoxorD { rd, rs1, rs2, .. } |
-            Op::AmoandW { rd, rs1, rs2, .. } |
-            Op::AmoandD { rd, rs1, rs2, .. } |
-            Op::AmoorW { rd, rs1, rs2, .. } |
-            Op::AmoorD { rd, rs1, rs2, .. } |
-            Op::AmominW { rd, rs1, rs2, .. } |
-            Op::AmominD { rd, rs1, rs2, .. } |
-            Op::AmomaxW { rd, rs1, rs2, .. } |
-            Op::AmomaxD { rd, rs1, rs2, .. } |
-            Op::AmominuW { rd, rs1, rs2, .. } |
-            Op::AmominuD { rd, rs1, rs2, .. } |
-            Op::AmomaxuW { rd, rs1, rs2, .. } |
-            Op::AmomaxuD { rd, rs1, rs2, .. } => (rd, rs1, rs2),
-            Op::Flw { rs1, .. } |
-            Op::Fld { rs1, .. } => (0, rs1, 0),
-            Op::Fsw { rs1, .. } |
-            Op::Fsd { rs1, .. } => (0, rs1, 0),
-            Op::FaddS { .. } |
-            Op::FsubS { .. } |
-            Op::FmulS { .. } |
-            Op::FdivS { .. } |
-            Op::FsgnjS { .. } |
-            Op::FsgnjnS { .. } |
-            Op::FsgnjxS { .. } |
-            Op::FminS { .. } |
-            Op::FmaxS { .. } |
-            Op::FaddD { .. } |
-            Op::FsubD { .. } |
-            Op::FmulD { .. } |
-            Op::FdivD { .. } |
-            Op::FsgnjD { .. } |
-            Op::FsgnjnD { .. } |
-            Op::FsgnjxD { .. } |
-            Op::FminD { .. } |
-            Op::FmaxD { .. } => (0, 0, 0),
-            Op::FsqrtS { .. } |
-            Op::FsqrtD { .. } |
-            Op::FcvtSD { .. } |
-            Op::FcvtDS { .. } => (0, 0, 0),
-            Op::FcvtWS { rd, .. } |
-            Op::FcvtWuS { rd, .. } |
-            Op::FcvtLS { rd, .. } |
-            Op::FcvtLuS { rd, .. } |
-            Op::FmvXW { rd, .. } |
-            Op::FclassS { rd, .. } |
-            Op::FcvtWD { rd, .. } |
-            Op::FcvtWuD { rd, .. } |
-            Op::FcvtLD { rd, .. } |
-            Op::FcvtLuD { rd, .. } |
-            Op::FmvXD { rd, .. } |
-            Op::FclassD { rd, .. } => (rd, 0, 0),
-            Op::FcvtSW { rs1, ..} |
-            Op::FcvtSWu { rs1, ..} |
-            Op::FcvtSL { rs1, ..} |
-            Op::FcvtSLu { rs1, ..} |
-            Op::FmvWX { rs1, .. } |
-            Op::FcvtDW { rs1, ..} |
-            Op::FcvtDWu { rs1, ..} |
-            Op::FcvtDL { rs1, ..} |
-            Op::FcvtDLu { rs1, ..} |
-            Op::FmvDX { rs1, .. } => (0, rs1, 0),
-            Op::FeqS { rd, .. } |
-            Op::FltS { rd, .. } |
-            Op::FleS { rd, .. } |
-            Op::FeqD { rd, .. } |
-            Op::FltD { rd, .. } |
-            Op::FleD { rd, .. } => (rd, 0, 0),
-            Op::FmaddS { .. } |
-            Op::FmsubS { .. } |
-            Op::FnmsubS { .. } |
-            Op::FnmaddS { .. } |
-            Op::FmaddD { .. } |
-            Op::FmsubD { .. } |
-            Op::FnmsubD { .. } |
-            Op::FnmaddD { .. } => (0, 0, 0),
+            Op::Divw { rd, rs1, rs2 }
+            | Op::Divuw { rd, rs1, rs2 }
+            | Op::Remw { rd, rs1, rs2 }
+            | Op::Remuw { rd, rs1, rs2 } => (rd, rs1, rs2),
+            Op::Csrrw { rd, rs1, .. } | Op::Csrrs { rd, rs1, .. } | Op::Csrrc { rd, rs1, .. } => {
+                (rd, rs1, 0)
+            }
+            Op::Csrrwi { rd, .. } | Op::Csrrsi { rd, .. } | Op::Csrrci { rd, .. } => (rd, 0, 0),
+            Op::LrW { rd, rs1, .. } | Op::LrD { rd, rs1, .. } => (rd, rs1, 0),
+            Op::ScW { rd, rs1, rs2, .. }
+            | Op::ScD { rd, rs1, rs2, .. }
+            | Op::AmoswapW { rd, rs1, rs2, .. }
+            | Op::AmoswapD { rd, rs1, rs2, .. }
+            | Op::AmoaddW { rd, rs1, rs2, .. }
+            | Op::AmoaddD { rd, rs1, rs2, .. }
+            | Op::AmoxorW { rd, rs1, rs2, .. }
+            | Op::AmoxorD { rd, rs1, rs2, .. }
+            | Op::AmoandW { rd, rs1, rs2, .. }
+            | Op::AmoandD { rd, rs1, rs2, .. }
+            | Op::AmoorW { rd, rs1, rs2, .. }
+            | Op::AmoorD { rd, rs1, rs2, .. }
+            | Op::AmominW { rd, rs1, rs2, .. }
+            | Op::AmominD { rd, rs1, rs2, .. }
+            | Op::AmomaxW { rd, rs1, rs2, .. }
+            | Op::AmomaxD { rd, rs1, rs2, .. }
+            | Op::AmominuW { rd, rs1, rs2, .. }
+            | Op::AmominuD { rd, rs1, rs2, .. }
+            | Op::AmomaxuW { rd, rs1, rs2, .. }
+            | Op::AmomaxuD { rd, rs1, rs2, .. } => (rd, rs1, rs2),
+            Op::Flw { rs1, .. } | Op::Fld { rs1, .. } => (0, rs1, 0),
+            Op::Fsw { rs1, .. } | Op::Fsd { rs1, .. } => (0, rs1, 0),
+            Op::FaddS { .. }
+            | Op::FsubS { .. }
+            | Op::FmulS { .. }
+            | Op::FdivS { .. }
+            | Op::FsgnjS { .. }
+            | Op::FsgnjnS { .. }
+            | Op::FsgnjxS { .. }
+            | Op::FminS { .. }
+            | Op::FmaxS { .. }
+            | Op::FaddD { .. }
+            | Op::FsubD { .. }
+            | Op::FmulD { .. }
+            | Op::FdivD { .. }
+            | Op::FsgnjD { .. }
+            | Op::FsgnjnD { .. }
+            | Op::FsgnjxD { .. }
+            | Op::FminD { .. }
+            | Op::FmaxD { .. } => (0, 0, 0),
+            Op::FsqrtS { .. } | Op::FsqrtD { .. } | Op::FcvtSD { .. } | Op::FcvtDS { .. } => {
+                (0, 0, 0)
+            }
+            Op::FcvtWS { rd, .. }
+            | Op::FcvtWuS { rd, .. }
+            | Op::FcvtLS { rd, .. }
+            | Op::FcvtLuS { rd, .. }
+            | Op::FmvXW { rd, .. }
+            | Op::FclassS { rd, .. }
+            | Op::FcvtWD { rd, .. }
+            | Op::FcvtWuD { rd, .. }
+            | Op::FcvtLD { rd, .. }
+            | Op::FcvtLuD { rd, .. }
+            | Op::FmvXD { rd, .. }
+            | Op::FclassD { rd, .. } => (rd, 0, 0),
+            Op::FcvtSW { rs1, .. }
+            | Op::FcvtSWu { rs1, .. }
+            | Op::FcvtSL { rs1, .. }
+            | Op::FcvtSLu { rs1, .. }
+            | Op::FmvWX { rs1, .. }
+            | Op::FcvtDW { rs1, .. }
+            | Op::FcvtDWu { rs1, .. }
+            | Op::FcvtDL { rs1, .. }
+            | Op::FcvtDLu { rs1, .. }
+            | Op::FmvDX { rs1, .. } => (0, rs1, 0),
+            Op::FeqS { rd, .. }
+            | Op::FltS { rd, .. }
+            | Op::FleS { rd, .. }
+            | Op::FeqD { rd, .. }
+            | Op::FltD { rd, .. }
+            | Op::FleD { rd, .. } => (rd, 0, 0),
+            Op::FmaddS { .. }
+            | Op::FmsubS { .. }
+            | Op::FnmsubS { .. }
+            | Op::FnmaddS { .. }
+            | Op::FmaddD { .. }
+            | Op::FmsubD { .. }
+            | Op::FnmsubD { .. }
+            | Op::FnmaddD { .. } => (0, 0, 0),
         }
     }
 }
