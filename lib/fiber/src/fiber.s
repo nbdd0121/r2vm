@@ -6,6 +6,11 @@
 
 .global fiber_start
 
+OFFSET_DATA = -64
+OFFSET_NEXT = 16 + OFFSET_DATA
+OFFSET_CYCLES_TO_SLEEP = 40 + OFFSET_DATA
+OFFSET_STACK_POINTER = 56 + OFFSET_DATA
+
 # Save all non-volatile registers.
 # will destroy RAX and set RBP to the fiber base pointer
 .global fiber_save_raw
@@ -23,7 +28,7 @@ fiber_save_raw:
     # Retrieve the fiber base pointer
     mov rbp, rsp
     and rbp, -0x200000
-    add rbp, 64
+    add rbp, -OFFSET_DATA
     jmp rax
 
 # Restore all non-volatile registers and return
@@ -46,21 +51,21 @@ fiber_restore_ret_raw:
 # - all registers other than rsp and rbp are saved properly, as they will be clobbered upon return
 fiber_sleep_raw:
     # Save number of cycles to sleep
-    mov [rbp - 24], rdi
+    mov [rbp + OFFSET_CYCLES_TO_SLEEP], rdi
 fiber_yield_raw:
     # Save current stack pointer
-    mov [rbp - 32], rsp
+    mov [rbp + OFFSET_STACK_POINTER], rsp
 1:
     # Move to next fiber
-    mov rbp, [rbp - 16]
+    mov rbp, [rbp + OFFSET_NEXT]
     # If this field is non-zero, it means that we have more cycles to sleep.
-    cmp qword ptr [rbp - 24], 0
+    cmp qword ptr [rbp + OFFSET_CYCLES_TO_SLEEP], 0
     jnz 2f
     # Restore stack pointer
-    mov rsp, [rbp - 32]
+    mov rsp, [rbp + OFFSET_STACK_POINTER]
     ret
 2:
-    sub qword ptr [rbp - 24], 1
+    sub qword ptr [rbp + OFFSET_CYCLES_TO_SLEEP], 1
     jmp 1b
 
 # Yield the fiber "rdi + 1" many times.
@@ -78,7 +83,7 @@ fiber_sleep:
     # Retrieve the fiber base pointer
     mov rbp, rsp
     and rbp, -0x200000
-    add rbp, 64
+    add rbp, -OFFSET_DATA
 
     call fiber_sleep_raw
 
@@ -110,13 +115,13 @@ fiber_start:
     mov rbp, rdi
     movabs rax, offset fiber_exit
 1:
-    mov [rbp - 64 + 0x200000 - 16], rsp
-    mov [rbp - 64 + 0x200000 - 24], rax
-    mov rbp, [rbp - 16]
+    mov [rbp + OFFSET_DATA + 0x200000 - 16], rsp
+    mov [rbp + OFFSET_DATA + 0x200000 - 24], rax
+    mov rbp, [rbp + OFFSET_NEXT]
     cmp rbp, rdi
     jne 1b
 
-    mov rsp, [rbp - 32]
+    mov rsp, [rbp + OFFSET_STACK_POINTER]
     ret
 
 fiber_exit:
@@ -124,7 +129,7 @@ fiber_exit:
     mov rsp, [rsp]
     mov rax, rbp
     and rax, -0x200000
-    add rax, 64
+    add rax, -OFFSET_DATA
 
     jmp fiber_restore_ret_raw
 
@@ -132,5 +137,5 @@ fiber_exit:
 fiber_current:
     mov rax, rsp
     and rax, -0x200000
-    add rax, 64
+    add rax, -OFFSET_DATA
     ret

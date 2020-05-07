@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 libc = "0.2"
+offset_of = { path = "../offset_of" }
 
 [build-dependencies]
 cc = "1.0"
