@@ -9,6 +9,7 @@
 OFFSET_DATA = -64
 OFFSET_NEXT = 16 + OFFSET_DATA
 OFFSET_CYCLES_TO_SLEEP = 40 + OFFSET_DATA
+OFFSET_NEXT_AVAIL = 48 + OFFSET_DATA
 OFFSET_STACK_POINTER = 56 + OFFSET_DATA
 
 # Save all non-volatile registers.
@@ -57,7 +58,7 @@ fiber_yield_raw:
     mov [rbp + OFFSET_STACK_POINTER], rsp
 1:
     # Move to next fiber
-    mov rbp, [rbp + OFFSET_NEXT]
+    mov rbp, [rbp + OFFSET_NEXT_AVAIL]
     # If this field is non-zero, it means that we have more cycles to sleep.
     cmp qword ptr [rbp + OFFSET_CYCLES_TO_SLEEP], 0
     jnz 2f

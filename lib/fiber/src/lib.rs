@@ -1,7 +1,15 @@
 #[macro_use]
 extern crate offset_of;
 
+use parking_lot::{Condvar as PCondvar, Mutex as PMutex};
 use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+mod map;
+mod mutex;
+mod park;
+
+pub use mutex::{Condvar, Mutex, MutexGuard, RawMutex};
 
 extern "C" {
     fn fiber_start(cell: FiberStack) -> FiberStack;
@@ -32,10 +40,10 @@ struct FiberData {
     group: *const FiberGroupData,
     prev: FiberStack,
     next: FiberStack,
-    _pad0: usize,
-    _pad1: usize,
+    paused: AtomicBool,
+    _pad: usize,
     cycles_to_sleep: usize,
-    _pad2: usize,
+    next_avail: std::sync::atomic::AtomicUsize,
     stack_pointer: usize,
 }
 
@@ -45,6 +53,7 @@ impl FiberStack {
         assert_eq!(std::mem::size_of::<FiberData>(), 64);
         assert_eq!(offset_of!(FiberData, next), 16);
         assert_eq!(offset_of!(FiberData, cycles_to_sleep), 40);
+        assert_eq!(offset_of!(FiberData, next_avail), 48);
         assert_eq!(offset_of!(FiberData, stack_pointer), 56);
 
         // Allocate 2M memory for stack. This must be aligned properly to allow efficient context
@@ -72,9 +81,11 @@ impl FiberStack {
     fn init(self) {
         unsafe {
             let data = self.data();
-            data.stack_pointer = self.0.get() - 64 + 0x200000 - 32;
+            data.stack_pointer = self.0.get() - std::mem::size_of::<FiberData>() + 0x200000 - 32;
             data.next = self;
             data.prev = self;
+            data.next_avail.store(self.0.get(), Ordering::Relaxed);
+            data.paused = AtomicBool::new(false);
             data.cycles_to_sleep = 0;
         }
     }
@@ -123,6 +134,8 @@ struct FiberGroupData {
     fibers: Vec<Fiber>,
     first: Option<FiberStack>,
     last: Option<FiberStack>,
+    mutex: PMutex<()>,
+    condvar: PCondvar,
 }
 
 // Box to have a stable address
@@ -134,6 +147,8 @@ impl FiberGroup {
             fibers: Vec::new(),
             first: None,
             last: None,
+            mutex: PMutex::new(()),
+            condvar: PCondvar::new(),
         }))
     }
 
@@ -155,9 +170,13 @@ impl FiberGroup {
                 let last_data = last.data();
                 let next = last_data.next;
                 let next_data = next.data();
+                let next_avail = last_data.next_avail.load(Ordering::Relaxed);
                 next_data.prev = fiber.0;
                 fiber_data.next = next;
+                fiber_data.next_avail.store(next_avail, Ordering::Relaxed);
                 last_data.next = fiber.0;
+                // The newly inserted fiber is available.
+                last_data.next_avail.store((fiber.0).0.get(), Ordering::Relaxed);
                 fiber_data.prev = last;
             }
 
@@ -166,10 +185,81 @@ impl FiberGroup {
         inner.fibers.push(fiber);
     }
 
+    unsafe fn prepare_pause(stack: FiberStack) {
+        stack.data().paused.store(true, Ordering::Relaxed);
+    }
+
+    /// Put the fiber into sleep. Note that the current thread must be executing this FiberGroup.
+    ///
+    /// Returns true if awaken already.
+    unsafe fn pause(stack: FiberStack) -> bool {
+        let group = &*stack.data().group;
+
+        // All modifications to fiber structures must hold the lock.
+        let mut guard = group.mutex.lock();
+
+        // Unpause has been called on thie fiber between `prepare_pause` and `pause`.
+        if !stack.data().paused.load(Ordering::Relaxed) {
+            return true;
+        }
+
+        // Wait until there is a fiber to schedule
+        while stack.data().next_avail.load(Ordering::Relaxed) == stack.0.get() {
+            group.condvar.wait(&mut guard);
+            // This fiber has been waken up
+            if !stack.data().paused.load(Ordering::Relaxed) {
+                return true;
+            }
+        }
+
+        let mut prev = stack.data().prev;
+        loop {
+            let prev_data = prev.data();
+            // Safe to do this store because we have exclusive acceess to this field.
+            prev_data
+                .next_avail
+                .store(stack.data().next_avail.load(Ordering::Relaxed), Ordering::Relaxed);
+            if !prev_data.paused.load(Ordering::Relaxed) {
+                break;
+            }
+            prev = prev_data.prev;
+        }
+
+        false
+    }
+
+    unsafe fn unpause(stack: FiberStack) {
+        let fiber = stack.data();
+        let group = &*fiber.group;
+
+        // All modifications to fiber structures must hold the lock.
+        let mut _guard = group.mutex.lock();
+
+        fiber.paused.store(false, Ordering::Relaxed);
+        let mut prev = fiber.prev;
+        loop {
+            let prev_data = prev.data();
+            // Safe to do this: if the fiber group is currently running and is accessing this field
+            // during an yield operation it will either yield to the old fiber or the new one,
+            // both of which are available to run.
+            prev_data.next_avail.store(stack.0.get(), Ordering::Relaxed);
+            if !prev_data.paused.load(Ordering::Relaxed) {
+                break;
+            }
+            prev = prev_data.prev;
+        }
+
+        // Wake up the fiber thread if currently no fiber is available.
+        group.condvar.notify_all();
+    }
+
     /// Start executing this fiber group. Exits when there are no running fibers.
     /// The ownership of all fibers are returned (THIS IS A HACK).
     pub fn run(&mut self) -> Vec<Fiber> {
-        IN_FIBER.with(|x| x.set(true));
+        IN_FIBER.with(|x| {
+            assert!(!x.get(), "FiberGroup re-entry");
+            x.set(true)
+        });
         let inner = &mut self.0;
         loop {
             // Run fiber group. Function will return when any fiber exits.
@@ -184,6 +274,8 @@ impl FiberGroup {
                 return std::mem::replace(&mut inner.fibers, Vec::new());
             }
             unsafe {
+                Self::prepare_pause(stack);
+                Self::pause(stack);
                 let prev = stack.data().prev;
                 if stack == inner.first.unwrap() {
                     inner.first = Some(next);
