@@ -1,8 +1,9 @@
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate offset_of;
 
 pub mod io;
-#[macro_use]
 pub mod util;
 pub mod config;
 pub mod emu;

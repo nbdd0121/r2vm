@@ -5,7 +5,18 @@ authors = ["Gary Guo <gary@garyguo.net>"]
 edition = "2018"
 
 [workspace]
-members = ["lib/softfp", "lib/p9", "lib/x86", "lib/riscv", "lib/fdt", "lib/libslirp-sys", "lib/usernet", "lib/atomic_ext", "lib/fiber"]
+members = [
+    "lib/softfp",
+    "lib/p9",
+    "lib/x86",
+    "lib/riscv",
+    "lib/fdt",
+    "lib/libslirp-sys",
+    "lib/usernet",
+    "lib/atomic_ext",
+    "lib/fiber",
+    "lib/offset_of",
+]
 
 [build-dependencies]
 cc = "1.0"
@@ -32,6 +43,7 @@ riscv = { path = "lib/riscv" }
 fdt = { path = "lib/fdt" }
 atomic_ext = { path = "lib/atomic_ext" }
 fiber = { path = "lib/fiber" }
+offset_of = { path = "lib/offset_of" }
 
 [patch.crates-io]
 libslirp-sys = { path = "lib/libslirp-sys" }

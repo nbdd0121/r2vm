@@ -2,12 +2,6 @@ mod ro_cell;
 pub mod spin;
 pub use ro_cell::RoCell;
 
-macro_rules! offset_of {
-    ($ty:ty, $($field:ident).*) => {
-        unsafe { &(*(std::ptr::null() as *const $ty)) $(.$field)* as *const _ as usize }
-    }
-}
-
 pub fn cpu_time() -> std::time::Duration {
     unsafe {
         let mut timespec = std::mem::MaybeUninit::uninit();
