@@ -22,6 +22,7 @@ Options:
   --disassemble         Log decoded instructions.
   --perf                Generate /tmp/perf-<PID>.map for perf tool.
   --lockstep            Use lockstep non-threaded mode for execution.
+  --wfi-nop             Treat WFI as nops in lock-step mode.
   --sysroot             Change the sysroot to a non-default value.
   --dump-fdt            Save FDT to the specified path.
   --help                Display this help message.
@@ -48,6 +49,9 @@ pub struct Flags {
     /// The active model ID used
     model_id: usize,
 
+    /// Whether WFI should be treated as NOP in lock-step mode
+    wfi_nop: bool,
+
     /// Dump FDT option
     dump_fdt: Option<String>,
 }
@@ -59,6 +63,7 @@ static mut FLAGS: Flags = Flags {
     perf: false,
     thread: true,
     model_id: 0,
+    wfi_nop: false,
     dump_fdt: None,
 };
 
@@ -156,6 +161,7 @@ pub fn main() {
             },
             "--perf" => unsafe { FLAGS.perf = true },
             "--lockstep" => unsafe { FLAGS.model_id = 1 },
+            "--wfi-nop" => unsafe { FLAGS.wfi_nop = true },
             "--help" => {
                 eprintln!(usage_string!(), interp_name);
                 std::process::exit(0);

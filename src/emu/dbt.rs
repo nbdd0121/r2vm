@@ -2020,7 +2020,9 @@ impl<'a> DbtCompiler<'a> {
 
             /* Privileged */
             Op::Wfi => {
-                if crate::threaded() { self.emit_step_call(op) }
+                if crate::threaded() || !crate::get_flags().wfi_nop {
+                    self.emit_step_call(op)
+                }
             }
 
             /* OPs that can disrupt control flow */

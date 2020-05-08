@@ -2,7 +2,7 @@ use crate::io::IoMemorySync;
 use crate::sim::get_memory_model;
 use atomic_ext::AtomicExt;
 use lazy_static::lazy_static;
-use parking_lot::{Condvar, Mutex, MutexGuard};
+use parking_lot::{Mutex, MutexGuard};
 use riscv::{mmu::*, Csr, Op};
 use softfp::{self, F32, F64};
 use std::collections::{BTreeMap, BTreeSet};
@@ -77,11 +77,11 @@ pub struct SharedContext {
     /// is executed we want to wait until an alarm is available. Ideally we protect alarm with a
     /// mutex and then we can use Condvar and other OS thread primitives. However as `alarm` is
     /// also used in assembly, we cannot put it in the Mutex. Therefore this mutex has content ()
-    /// and thus is only used when paired with the Condvar. Box are used for C-layout compat.
-    pub wfi_mutex: Box<Mutex<()>>,
+    /// and thus is only used when paired with the Condvar.
+    pub wfi_mutex: fiber::Mutex<()>,
 
     /// Condvar for supporting WFI. Used in pair with the mutex.
-    pub wfi_condvar: Box<Condvar>,
+    pub wfi_condvar: fiber::Condvar,
 
     /// Tasks that needs to be running on the hart-specific thread, such as manipulating I-Cache.
     pub tasks: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
@@ -92,6 +92,8 @@ impl SharedContext {
         // Check the constant used in helper.s
         assert_eq!(offset_of!(Context, pc), 0x100);
         assert_eq!(offset_of!(Context, instret), 0x108);
+        assert_eq!(offset_of!(Context, cycle_offset), 0x128);
+        assert_eq!(offset_of!(Context, shared.alarm), 0x130);
 
         SharedContext {
             mip: AtomicU64::new(0),
@@ -112,8 +114,8 @@ impl SharedContext {
             },
             rm: AtomicU32::new(0),
             fflags: AtomicU32::new(0),
-            wfi_mutex: Box::new(Mutex::new(())),
-            wfi_condvar: Box::new(Condvar::new()),
+            wfi_mutex: fiber::Mutex::new(()),
+            wfi_condvar: fiber::Condvar::new(),
             tasks: Mutex::new(Vec::new()),
         }
     }
@@ -2119,9 +2121,11 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             }
         }
         Op::Wfi => {
-            if crate::threaded() {
-                ctx.shared.wait_alarm()
-            }
+            let cycle_before = crate::event_loop().get_lockstep_cycles();
+            ctx.shared.wait_alarm();
+            // Make sure lockstep cycle count did not increase when sleeping in WFI
+            let cycle_after = crate::event_loop().get_lockstep_cycles();
+            ctx.cycle_offset -= (cycle_after - cycle_before) as i64;
         }
         Op::SfenceVma { rs1, rs2 } => {
             let asid = if rs2 == 0 { None } else { Some(read_reg!(rs2) as u16) };
