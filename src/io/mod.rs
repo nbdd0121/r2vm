@@ -72,12 +72,12 @@ pub trait IoContext: Send + Sync {
     fn write_u16(&self, addr: u64, value: u16);
 
     /// Get the current time since an arbitary epoch.
-    fn time(&self) -> Duration;
+    fn now(&self) -> Duration;
 
     /// Get a [`Future`] that is triggered at the supplied time since the epoch.
     ///
     /// [`Future`]: std::future::Future
-    fn on_time(&self, time: Duration) -> BoxFuture<'static, ()>;
+    fn create_timer(&self, time: Duration) -> BoxFuture<'static, ()>;
 
     /// Spawn a task.
     ///

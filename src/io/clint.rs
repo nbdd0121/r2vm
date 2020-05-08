@@ -71,7 +71,7 @@ impl IoMemorySync for Clint {
                 }
             }
             0xBFF8 => {
-                let time = inner.io_ctx.time().as_micros() as u64;
+                let time = inner.io_ctx.now().as_micros() as u64;
                 if size == 8 {
                     time
                 } else {
@@ -114,16 +114,16 @@ impl IoMemorySync for Clint {
                 inner.mtimecmp[hart] = value;
 
                 let new_time = Duration::from_micros(value);
-                let triggered = new_time <= inner.io_ctx.time();
+                let triggered = new_time <= inner.io_ctx.now();
                 inner.mtip_irqs[hart].set_level(triggered);
                 if !triggered {
-                    let timer = inner.io_ctx.on_time(new_time);
+                    let timer = inner.io_ctx.create_timer(new_time);
                     let self_arc = inner.self_ref.upgrade().unwrap();
                     inner.io_ctx.spawn(Box::pin(async move {
                         timer.await;
                         let inner = self_arc.inner.lock();
                         inner.mtip_irqs[hart].set_level(
-                            inner.mtimecmp[hart] <= inner.io_ctx.time().as_micros() as u64,
+                            inner.mtimecmp[hart] <= inner.io_ctx.now().as_micros() as u64,
                         );
                     }));
                 }

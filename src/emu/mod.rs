@@ -56,11 +56,11 @@ impl crate::io::IoContext for DirectIoContext {
         }
     }
 
-    fn time(&self) -> Duration {
+    fn now(&self) -> Duration {
         Duration::from_micros(crate::event_loop().time())
     }
 
-    fn on_time(&self, time: Duration) -> BoxFuture<'static, ()> {
+    fn create_timer(&self, time: Duration) -> BoxFuture<'static, ()> {
         Box::pin(crate::event_loop().on_time(time.as_micros() as u64))
     }
 
@@ -226,7 +226,7 @@ fn init_network(sys: &mut IoSystem) {
         let mac = eui48::MacAddress::parse_str(&config.config.mac)
             .expect("unexpected mac address")
             .to_array();
-        let usernet = Usernet::new();
+        let usernet = Usernet::new(Arc::new(DirectIoContext));
         for fwd in config.config.forward.iter() {
             usernet
                 .add_host_forward(

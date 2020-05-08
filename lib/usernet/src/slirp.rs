@@ -1,15 +1,15 @@
-use libslirp_sys::*;
-use std::io::{Read, Write};
-
 use crate::Context;
+use libslirp_sys::*;
 use log::{error, warn};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::raw::{c_char, c_int, c_void};
 use std::sync::{Arc, Weak};
 use std::task::{Poll, Waker};
+use std::time::Duration;
 use std::{fmt, slice, str};
 
 extern "C" {
@@ -93,7 +93,7 @@ extern "C" fn guest_error(msg: *const c_char, _opaque: *mut c_void) {
 
 extern "C" fn clock_get_ns(opaque: *mut c_void) -> i64 {
     let inner = unsafe { &mut *(opaque as *mut Inner) };
-    inner.context.now() as i64
+    inner.context.now().as_nanos() as i64
 }
 
 extern "C" fn timer_new(
@@ -120,7 +120,7 @@ extern "C" fn timer_mod(timer: *mut c_void, expire_time: i64, opaque: *mut c_voi
     let timer = unsafe { Arc::from_raw(timer as *mut Timer) };
 
     // Calculate the deadline for scheduling a timer.
-    let time = inner.context.now() + expire_time as u64 * 1000000;
+    let time = inner.context.now() + Duration::from_millis(expire_time.max(0) as u64);
 
     // Replace the task
     let future = inner.context.create_timer(time);

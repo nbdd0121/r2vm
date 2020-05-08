@@ -1,30 +1,33 @@
+use super::super::IoContext;
 use std::future::Future;
 use std::net::Ipv4Addr;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 pub struct Usernet {
     inner: usernet::Network,
 }
 
-struct EventLoopContext;
+struct EventLoopContext(Arc<dyn IoContext>);
 
 impl usernet::Context for EventLoopContext {
-    fn now(&mut self) -> u64 {
-        crate::event_loop().time() * 1000
+    fn now(&mut self) -> Duration {
+        self.0.now()
     }
 
-    fn create_timer(&mut self, time: u64) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-        Box::pin(crate::event_loop().on_time(time / 1000))
+    fn create_timer(&mut self, time: Duration) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+        self.0.create_timer(time)
     }
 
     fn spawn(&mut self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        crate::event_loop().spawn(future);
+        self.0.spawn(future)
     }
 }
 
 impl Usernet {
-    pub fn new() -> Self {
+    pub fn new(io_ctx: Arc<dyn IoContext>) -> Self {
         let usernet_opt = usernet::Config {
             restricted: false,
             ipv4: Some(Default::default()),
@@ -34,7 +37,7 @@ impl Usernet {
             dns_suffixes: Vec::new(),
             domainname: None,
         };
-        let usernet = usernet::Network::new(&usernet_opt, EventLoopContext);
+        let usernet = usernet::Network::new(&usernet_opt, EventLoopContext(io_ctx));
         Self { inner: usernet }
     }
 

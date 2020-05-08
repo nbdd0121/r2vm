@@ -5,6 +5,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 mod config;
 mod slirp;
@@ -20,10 +21,10 @@ pub use slirp::Network;
 /// decided by the user, and not bundled to the dependency of this library.
 pub trait Context {
     /// Get the current time, in nanoseconds, relative to an arbitary reference point.
-    fn now(&mut self) -> u64;
+    fn now(&mut self) -> Duration;
 
     /// Create a timer that fires at specified time point relative to the reference.
-    fn create_timer(&mut self, time: u64) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+    fn create_timer(&mut self, time: Duration) -> Pin<Box<dyn Future<Output = ()> + Send>>;
 
     /// Spawn a task to run until completion.
     fn spawn(&mut self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
