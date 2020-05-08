@@ -14,6 +14,8 @@ pub struct RawMutex {
 impl RawMutex {
     #[cold]
     fn lock_slow(&self) {
+        let in_fiber = super::in_fiber();
+
         let mut spinwait = 0;
         let mut state = self.locked.load(Ordering::Relaxed);
         loop {
@@ -31,8 +33,22 @@ impl RawMutex {
                 continue;
             }
 
+            // Though the fiber mutex is primarily for fiber consumption, occasionally it might be
+            // invoked from non-fiber threads (e.g. interact with condition variable). We could
+            // either augment park/unpark to handle these, but for simplicity just let it spin.
+            if !in_fiber {
+                std::sync::atomic::spin_loop_hint();
+                continue;
+            }
+
             // If no queue is there, wait a few times
-            if state & PARKED_BIT == 0 && spinwait < 10 {
+            if state & PARKED_BIT == 0 && spinwait < 20 {
+                if spinwait < 10 {
+                    std::sync::atomic::spin_loop_hint();
+                } else {
+                    // We already know we're in fiber, call asm directly.
+                    unsafe { super::fiber_sleep(0) };
+                }
                 spinwait += 1;
                 state = self.locked.load(Ordering::Relaxed);
                 continue;
@@ -153,11 +169,13 @@ impl Condvar {
     fn wait_slow(&self, mutex: &RawMutex) {
         park(
             self as *const _ as usize,
-            || true,
             || {
                 if !self.has_queue.load(Ordering::Relaxed) {
                     self.has_queue.store(true, Ordering::Relaxed);
                 }
+                true
+            },
+            || {
                 mutex.unlock();
             },
         );

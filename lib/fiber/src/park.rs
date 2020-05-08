@@ -27,6 +27,9 @@ lazy_static! {
 }
 
 pub fn park(key: usize, validate: impl FnOnce() -> bool, before_sleep: impl FnOnce()) {
+    // Required before calling fiber_current.
+    super::assert_in_fiber();
+
     let cur = unsafe { fiber_current() };
     let mut entry = WaitEntry { fiber: cur, next: None };
 

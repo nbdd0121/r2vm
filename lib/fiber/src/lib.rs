@@ -21,6 +21,16 @@ thread_local! {
     static IN_FIBER: Cell<bool> = Cell::new(false);
 }
 
+#[inline]
+fn in_fiber() -> bool {
+    IN_FIBER.with(|x| x.get())
+}
+
+#[inline]
+fn assert_in_fiber() {
+    assert!(in_fiber(), "not in fiber");
+}
+
 /// A `FiberStack` is the basic data structure that keeps fiber.
 ///
 /// A `FiberStack` is always aligned at 2MB boundary, and is exactly 2MB in size. This design
@@ -113,7 +123,7 @@ impl Fiber {
     /// Yield the current fiber for `num` many times.
     #[inline]
     pub fn sleep(num: usize) {
-        IN_FIBER.with(|x| assert!(x.get(), "not in fiber"));
+        assert_in_fiber();
         if num > 0 {
             unsafe { fiber_sleep(num - 1) }
         }
