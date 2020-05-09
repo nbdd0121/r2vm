@@ -38,6 +38,7 @@ impl RawMutex {
             // either augment park/unpark to handle these, but for simplicity just let it spin.
             if !in_fiber {
                 std::sync::atomic::spin_loop_hint();
+                state = self.locked.load(Ordering::Relaxed);
                 continue;
             }
 
