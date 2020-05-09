@@ -108,9 +108,14 @@ helper_pred_miss:
 
 .global fiber_interp_run
 fiber_interp_run:
+    call fiber_save_raw
+    call 1f
+    jmp fiber_restore_ret_raw
+
+1:
     mov rdi, rbp
     sub rsp, 8
     call find_block
     add rsp, 8
     call rdx
-    jmp fiber_interp_run
+    jmp 1b
