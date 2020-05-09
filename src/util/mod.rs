@@ -1,5 +1,4 @@
 mod ro_cell;
-pub mod spin;
 pub use ro_cell::RoCell;
 
 pub fn cpu_time() -> std::time::Duration {
