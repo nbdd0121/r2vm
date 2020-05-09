@@ -9,6 +9,7 @@ pub mod io;
 pub mod sim;
 pub mod util;
 
+use std::cell::UnsafeCell;
 use std::ffi::CString;
 use util::RoCell;
 
@@ -242,9 +243,8 @@ pub fn main() {
     let num_cores = if get_flags().prv == 0 { 1 } else { CONFIG.core };
 
     // Create a fiber for event-driven simulation, e.g. timer, I/O
-    let event_fiber = fiber::Fiber::new();
-    unsafe { std::ptr::write(event_fiber.data_pointer(), emu::EventLoop::new()) };
-    unsafe { RoCell::init(&EVENT_LOOP, &*event_fiber.data_pointer()) }
+    let event_fiber = fiber::FiberContext::new(emu::EventLoop::new());
+    unsafe { RoCell::init(&EVENT_LOOP, std::mem::transmute(event_fiber.data::<emu::EventLoop>())) }
     fibers.push(event_fiber);
 
     for i in 0..num_cores {
@@ -292,11 +292,8 @@ pub fn main() {
             newctx.mcounteren = 0b111;
         }
 
-        let fiber = fiber::Fiber::new();
-        let ptr = fiber.data_pointer();
-        unsafe {
-            std::ptr::write(ptr, newctx);
-        }
+        let fiber = fiber::FiberContext::new(UnsafeCell::new(newctx));
+        let ptr = fiber.data::<UnsafeCell<emu::interp::Context>>().get();
         contexts.push(unsafe { &mut *ptr });
         shared_contexts.push(unsafe { &(*ptr).shared });
         fibers.push(fiber);
@@ -340,27 +337,29 @@ pub fn main() {
     }
 
     loop {
-        fibers[0].set_fn(|| {
-            let this: &emu::EventLoop = unsafe { &*fiber::Fiber::scratchpad() };
-            this.event_loop()
-        });
-        for fiber in &mut fibers[1..] {
-            fiber.set_fn(|| unsafe { fiber_interp_run() });
-        }
+        let fn_of_idx = |idx| -> fn() {
+            if idx == 0 {
+                || {
+                    fiber::with_context(|data: &emu::EventLoop| data.event_loop());
+                }
+            } else {
+                || unsafe { fiber_interp_run() }
+            }
+        };
 
         if !crate::threaded() {
             // Run multiple fibers in the same group.
-            let mut group = fiber::FiberGroup::new();
-            for fiber in fibers {
-                group.add(fiber);
-            }
-            fibers = group.run();
+            fiber::FiberGroup::with(|group| {
+                for (idx, fiber) in fibers.iter_mut().enumerate() {
+                    group.spawn(fiber, fn_of_idx(idx));
+                }
+            });
         } else {
             // Run one fiber per thread.
             let handles: Vec<_> = fibers
                 .into_iter()
                 .enumerate()
-                .map(|(idx, fiber)| {
+                .map(|(idx, mut fiber)| {
                     let name = if idx == 0 {
                         "event-loop".to_owned()
                     } else {
@@ -374,9 +373,10 @@ pub fn main() {
                     std::thread::Builder::new()
                         .name(name)
                         .spawn(move || {
-                            let mut group = fiber::FiberGroup::new();
-                            group.add(fiber);
-                            group.run().pop().unwrap()
+                            fiber::FiberGroup::with(|group| {
+                                group.spawn(&mut fiber, fn_of_idx(idx));
+                            });
+                            fiber
                         })
                         .unwrap()
                 })

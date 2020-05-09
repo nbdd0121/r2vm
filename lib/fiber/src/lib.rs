@@ -2,6 +2,7 @@
 extern crate offset_of;
 
 use parking_lot::{Condvar as PCondvar, Mutex as PMutex};
+use std::any::Any;
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,14 +22,37 @@ thread_local! {
     static IN_FIBER: Cell<bool> = Cell::new(false);
 }
 
+/// Checks if the current thread is in fiber context.
 #[inline]
-fn in_fiber() -> bool {
+pub fn in_fiber() -> bool {
     IN_FIBER.with(|x| x.get())
 }
 
 #[inline]
 fn assert_in_fiber() {
     assert!(in_fiber(), "not in fiber");
+}
+
+/// Yield the current fiber for `num` many times.
+///
+/// # Panics
+///
+/// This function will `panic!()` if the current thread is not in fiber context.
+#[inline]
+pub fn sleep(num: usize) {
+    assert_in_fiber();
+    if num > 0 {
+        unsafe { fiber_sleep(num - 1) }
+    }
+}
+
+fn get_vtable_from_any(ptr: *const dyn Any) -> *const () {
+    unsafe { std::mem::transmute::<_, (*const (), *const ())>(ptr).1 }
+}
+
+#[inline]
+fn construct_ptr_from_vtable(ptr: *const (), vtable: *const ()) -> *const dyn Any {
+    unsafe { std::mem::transmute((ptr, vtable)) }
 }
 
 /// A `FiberStack` is the basic data structure that keeps fiber.
@@ -51,7 +75,7 @@ struct FiberData {
     prev: FiberStack,
     next: FiberStack,
     paused: AtomicBool,
-    _pad: usize,
+    vtable: *const (),
     cycles_to_sleep: usize,
     next_avail: std::sync::atomic::AtomicUsize,
     stack_pointer: usize,
@@ -75,11 +99,9 @@ impl FiberStack {
         let stack = FiberStack(
             std::num::NonZeroUsize::new(map as usize + std::mem::size_of::<FiberData>()).unwrap(),
         );
-        stack.init();
         stack
     }
 
-    #[allow(dead_code)]
     unsafe fn deallocate(self) {
         libc::free((self.0.get() - std::mem::size_of::<FiberData>()) as _)
     }
@@ -103,45 +125,107 @@ impl FiberStack {
     fn data_pointer(self) -> usize {
         self.0.get()
     }
-}
 
-pub struct Fiber(FiberStack);
-
-impl Fiber {
-    pub fn new() -> Fiber {
-        Fiber(FiberStack::allocate())
+    fn set_fn(&self, f: fn()) {
+        unsafe { *((self.data_pointer() - 64 + 0x200000 - 32) as *mut usize) = f as usize };
     }
 
-    pub fn data_pointer<T>(&self) -> *mut T {
+    #[inline]
+    fn data_ptr_any(self) -> *const dyn Any {
+        unsafe { construct_ptr_from_vtable(self.0.get() as *const (), self.data().vtable) }
+    }
+}
+
+/// Context for fiber, which can store some data.
+pub struct FiberContext(FiberStack);
+
+impl FiberContext {
+    /// Construct a new `FiberContext` with supplied data.
+    pub fn new<T: Any + Send>(data: T) -> Self {
+        let ret = Self(FiberStack::allocate());
+        unsafe {
+            ret.0.data().vtable = get_vtable_from_any(&data);
+            std::ptr::write(ret.0.data_pointer() as _, data);
+        }
+        ret
+    }
+
+    /// Retrieve the pointer to the underlying context data of this Fiber.
+    ///
+    /// Unlike `data()`, this method will not check the `T` is same as the originally supplied `T`.
+    pub unsafe fn data_ptr<T: Any + Send>(&self) -> *const T {
         self.0.data_pointer() as _
     }
 
-    pub fn set_fn(&self, f: fn()) {
-        unsafe { *((self.0.data_pointer() - 64 + 0x200000 - 32) as *mut usize) = f as usize };
+    /// Retrieve the [`Any`] reference to the underlying context data of this Fiber.
+    pub fn any_data(&self) -> &dyn Any {
+        unsafe { &*self.0.data_ptr_any() }
     }
 
-    /// Yield the current fiber for `num` many times.
+    /// Try to retrieve the reference to the underlying context data of this Fiber.
+    ///
+    /// If `T` supplied is not the `T` used when calling `FiberContext::new`, `None` is returned.
     #[inline]
-    pub fn sleep(num: usize) {
-        assert_in_fiber();
-        if num > 0 {
-            unsafe { fiber_sleep(num - 1) }
-        }
+    pub fn try_data<T: Any + Send>(&self) -> Option<&T> {
+        self.any_data().downcast_ref()
     }
 
-    pub fn scratchpad<T>() -> *mut T {
-        unsafe { fiber_current().data_pointer() as _ }
+    /// Retrieve the reference to the underlying context data of this Fiber.
+    ///
+    /// `T` supplied must be the same `T` used when calling `FiberContext::new`, or calling this
+    /// method will panic.
+    #[inline]
+    pub fn data<T: Any + Send>(&self) -> &T {
+        self.try_data().unwrap()
     }
 }
 
-impl Drop for Fiber {
+impl Drop for FiberContext {
     fn drop(&mut self) {
-        panic!("dropping fiber");
+        unsafe {
+            std::ptr::drop_in_place(self.0.data_ptr_any() as *mut dyn Any);
+            self.0.deallocate();
+        }
     }
+}
+
+/// Retrieve the [`Any`] reference to the underlying context data of the current fiber.
+///
+/// # Panics
+///
+/// This function will `panic!()` if the current thread is not in fiber context.
+#[inline]
+pub fn with_any_context<R>(callback: impl FnOnce(&dyn Any) -> R) -> R {
+    assert_in_fiber();
+    let ptr = unsafe { &*fiber_current().data_ptr_any() };
+    callback(ptr)
+}
+
+/// Try to retrieve the reference to the underlying context data of the current fiber.
+///
+/// If the `T` supplied is not the `T` used when calling `FiberContext::new`, `None` is returned.
+///
+/// # Panics
+///
+/// This function will `panic!()` if the current thread is not in fiber context.
+#[inline]
+pub fn try_with_context<T: Any + Send, R>(callback: impl FnOnce(&T) -> R) -> Option<R> {
+    with_any_context(|any| any.downcast_ref().map(callback))
+}
+
+/// Retrieve the reference to the underlying context data of the current fiber.
+///
+/// # Panics
+///
+/// This function will `panic!()` if the current thread is not in fiber context.
+/// This function will also panic when the `T` supplied is not the `T` used when calling
+/// `FiberContext::new`.
+#[inline]
+pub fn with_context<T: Any + Send, R>(callback: impl FnOnce(&T) -> R) -> R {
+    with_any_context(|any| callback(any.downcast_ref().unwrap()))
 }
 
 struct FiberGroupData {
-    fibers: Vec<Fiber>,
     first: Option<FiberStack>,
     last: Option<FiberStack>,
     mutex: PMutex<()>,
@@ -149,21 +233,39 @@ struct FiberGroupData {
 }
 
 // Box to have a stable address
-pub struct FiberGroup(Box<FiberGroupData>);
+/// Group of fibers that are cooperatively scheduled on the same thread.
+pub struct FiberGroup<'a>(Box<FiberGroupData>, std::marker::PhantomData<&'a mut FiberContext>);
 
-impl FiberGroup {
-    pub fn new() -> FiberGroup {
-        FiberGroup(Box::new(FiberGroupData {
-            fibers: Vec::new(),
-            first: None,
-            last: None,
-            mutex: PMutex::new(()),
-            condvar: PCondvar::new(),
-        }))
+impl<'a> FiberGroup<'a> {
+    fn new() -> Self {
+        FiberGroup(
+            Box::new(FiberGroupData {
+                first: None,
+                last: None,
+                mutex: PMutex::new(()),
+                condvar: PCondvar::new(),
+            }),
+            std::marker::PhantomData,
+        )
     }
 
-    /// Add a fiber to this fiber group.
-    pub fn add(&mut self, fiber: Fiber) {
+    // Takes a mut borrow of `fiber` so that this avoid any `fiber::data()` to be alive, avoid the
+    // fiber to be deallocated during execution.
+    fn spawn_fn(&mut self, fiber: &'a mut FiberContext, f: Box<dyn FnOnce() + 'a>) {
+        fiber.0.init();
+
+        // The last word is unused elsewhere, so we use it to pass data to the closure below.
+        let ptr = (fiber.0).0.get() - std::mem::size_of::<FiberData>() + 0x200000 - 8;
+        unsafe { std::ptr::write(ptr as *mut _, Box::new(f)) };
+
+        fiber.0.set_fn(|| {
+            let ptr = unsafe { fiber_current() }.0.get() - std::mem::size_of::<FiberData>()
+                + 0x200000
+                - 8;
+            let box_fn: Box<Box<dyn FnOnce() + 'a>> = unsafe { std::ptr::read(ptr as *mut _) };
+            box_fn();
+        });
+
         let inner = &mut *self.0;
 
         let fiber_data = unsafe { fiber.0.data() };
@@ -192,7 +294,11 @@ impl FiberGroup {
 
             inner.last = Some(fiber.0);
         }
-        inner.fibers.push(fiber);
+    }
+
+    /// Add a fiber to this fiber group.
+    pub fn spawn(&mut self, fiber: &'a mut FiberContext, f: impl FnOnce() + 'a) {
+        self.spawn_fn(fiber, Box::new(f));
     }
 
     unsafe fn prepare_pause(stack: FiberStack) {
@@ -265,7 +371,7 @@ impl FiberGroup {
 
     /// Start executing this fiber group. Exits when there are no running fibers.
     /// The ownership of all fibers are returned (THIS IS A HACK).
-    pub fn run(&mut self) -> Vec<Fiber> {
+    fn run(&mut self) {
         IN_FIBER.with(|x| {
             assert!(!x.get(), "FiberGroup re-entry");
             x.set(true)
@@ -276,12 +382,11 @@ impl FiberGroup {
             let stack = unsafe { fiber_start(inner.first.unwrap()) };
             let next = unsafe { stack.data().next };
             if stack == next {
-                stack.init();
                 // The removing fiber is the only fiber, returning
                 inner.first = None;
                 inner.last = None;
                 IN_FIBER.with(|x| x.set(false));
-                return std::mem::replace(&mut inner.fibers, Vec::new());
+                return;
             }
             unsafe {
                 Self::prepare_pause(stack);
@@ -296,16 +401,24 @@ impl FiberGroup {
                 prev.data().next = next;
                 next.data().prev = prev;
             }
-            // Prepare for next use
-            stack.init();
         }
+    }
+
+    /// Create a `FiberGroup` and run all fibers added within the `closure` until completion.
+    pub fn with(closure: impl FnOnce(&mut Self)) {
+        let mut group = FiberGroup::new();
+        {
+            let borrow = &mut group;
+            closure(borrow);
+        }
+        group.run();
     }
 }
 
-impl Drop for FiberGroup {
+// User shouldn't care because FiberGroup cannot be directly constructed
+#[doc(hidden)]
+impl<'a> Drop for FiberGroup<'a> {
     fn drop(&mut self) {
-        if self.0.first.is_some() {
-            panic!("dropping fiber");
-        }
+        assert!(self.0.first.is_none(), "fiber group cannot be dropped without running");
     }
 }

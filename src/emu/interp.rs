@@ -5,6 +5,7 @@ use lazy_static::lazy_static;
 use parking_lot::{Mutex, MutexGuard};
 use riscv::{mmu::*, Csr, Op};
 use softfp::{self, F32, F64};
+use std::cell::UnsafeCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryInto;
 use std::sync::atomic::Ordering as MemOrder;
@@ -970,13 +971,17 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
 //
 
 fn get_rounding_mode() -> softfp::RoundingMode {
-    let ctx = unsafe { &(*fiber::Fiber::scratchpad::<Context>()).shared };
-    ctx.rm.load(MemOrder::Relaxed).try_into().unwrap()
+    fiber::with_context(|data: &UnsafeCell<Context>| {
+        let ctx = unsafe { &(*data.get()).shared };
+        ctx.rm.load(MemOrder::Relaxed).try_into().unwrap()
+    })
 }
 
 fn set_exception_flags(flags: softfp::ExceptionFlags) {
-    let ctx = unsafe { &(*fiber::Fiber::scratchpad::<Context>()).shared };
-    ctx.fflags.fetch_or(flags.bits(), MemOrder::Relaxed);
+    fiber::with_context(|data: &UnsafeCell<Context>| {
+        let ctx = unsafe { &(*data.get()).shared };
+        ctx.fflags.fetch_or(flags.bits(), MemOrder::Relaxed);
+    })
 }
 
 /// Initialise softfp environemnt
@@ -2448,7 +2453,7 @@ pub fn trap(ctx: &mut Context) {
         ctx.pc = ctx.mtvec;
     }
 
-    fiber::Fiber::sleep(1)
+    fiber::sleep(1)
 }
 
 /// Handle a misaligned load/store.
@@ -2515,7 +2520,7 @@ pub fn handle_misalign(ctx: &mut Context, addr: u64) -> Result<(), ()> {
     ctx.pc += if compressed { 2 } else { 4 };
     ctx.instret += 1;
     ctx.minstret += 1;
-    fiber::Fiber::sleep(1);
+    fiber::sleep(1);
 
     Ok(())
 }

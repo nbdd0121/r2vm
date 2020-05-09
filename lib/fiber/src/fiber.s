@@ -107,7 +107,7 @@ fiber_start:
     # To ensure that we are capable of returning from any exiting fiber, we need to fill
     # top of each fiber stack with this format:
     # +-----------+
-    # | 0         | // This is necessary as AMD64 requires 16-byte stack alignment
+    # | Pad       | // This is necessary as AMD64 requires 16-byte stack alignment
     # +-----------+
     # | Saved RSP |
     # +-----------+
