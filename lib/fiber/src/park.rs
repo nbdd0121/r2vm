@@ -8,10 +8,12 @@ use super::raw::fiber_sleep;
 use super::{fiber_current, FiberGroup, FiberStack};
 use lazy_static::lazy_static;
 use std::ptr::NonNull;
+use std::sync::atomic::Ordering;
 
 #[derive(Clone, Copy)]
 struct WaitEntry {
     fiber: FiberStack,
+    token: UnparkToken,
     next: Option<NonNull<WaitEntry>>,
 }
 
@@ -27,12 +29,19 @@ lazy_static! {
         super::map::ConcurrentMap::new();
 }
 
-pub fn park(key: usize, validate: impl FnOnce() -> bool, before_sleep: impl FnOnce()) {
+#[derive(Clone, Copy, Debug)]
+pub struct UnparkToken(pub usize);
+
+pub fn park(
+    key: usize,
+    validate: impl FnOnce() -> bool,
+    before_sleep: impl FnOnce(),
+) -> Option<UnparkToken> {
     // Required before calling fiber_current.
     super::assert_in_fiber();
 
     let cur = unsafe { fiber_current() };
-    let mut entry = WaitEntry { fiber: cur, next: None };
+    let mut entry = WaitEntry { fiber: cur, token: UnparkToken(0), next: None };
 
     let valid = WAIT_LIST_MAP.with(key, |list| {
         // Deadlock prevention: must acquire group lock after list lock.
@@ -57,7 +66,7 @@ pub fn park(key: usize, validate: impl FnOnce() -> bool, before_sleep: impl FnOn
     });
 
     if !valid {
-        return;
+        return None;
     }
 
     before_sleep();
@@ -68,21 +77,30 @@ pub fn park(key: usize, validate: impl FnOnce() -> bool, before_sleep: impl FnOn
             fiber_sleep(0);
         }
     };
+
+    std::sync::atomic::fence(Ordering::Acquire);
+    Some(entry.token)
 }
 
-pub fn unpark_all(key: usize) {
+pub fn unpark_all(key: usize, token: UnparkToken) {
     let list = WAIT_LIST_MAP.with(key, |list| list.take());
     if let Some(list) = list {
         let mut ptr = Some(list.head);
         while let Some(mut entry) = ptr {
             let entry = unsafe { entry.as_mut() };
+            entry.token = token;
             unsafe { FiberGroup::unpause(entry.fiber) };
             ptr = entry.next;
         }
     }
 }
 
-pub fn unpark_one(key: usize, callback: impl FnOnce(bool)) {
+pub struct UnparkResult {
+    pub unparked: bool,
+    pub have_more: bool,
+}
+
+pub fn unpark_one(key: usize, callback: impl FnOnce(UnparkResult) -> UnparkToken) {
     let fiber = WAIT_LIST_MAP.with(key, |list| {
         let ret = if let Some(ref mut inner) = list {
             let entry = unsafe { &mut *inner.head.as_ptr() };
@@ -90,11 +108,12 @@ pub fn unpark_one(key: usize, callback: impl FnOnce(bool)) {
                 None => *list = None,
                 Some(next) => inner.head = next,
             }
+            entry.token = callback(UnparkResult { unparked: true, have_more: list.is_some() });
             Some(entry.fiber)
         } else {
+            callback(UnparkResult { unparked: false, have_more: list.is_some() });
             None
         };
-        callback(list.is_some());
         ret
     });
     if let Some(fiber) = fiber {

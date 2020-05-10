@@ -1,4 +1,4 @@
-use super::park::{park, unpark_all, unpark_one};
+use super::park::{park, unpark_all, unpark_one, UnparkToken};
 use atomic_ext::AtomicExt;
 use lock_api::RawMutex as LRawMutex;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -85,8 +85,9 @@ impl RawMutex {
 
     #[cold]
     fn unlock_slow(&self) {
-        unpark_one(self as *const _ as usize, |have_more| {
-            self.locked.store(if have_more { PARKED_BIT } else { 0 }, Ordering::Release);
+        unpark_one(self as *const _ as usize, |result| {
+            self.locked.store(if result.have_more { PARKED_BIT } else { 0 }, Ordering::Release);
+            UnparkToken(0)
         });
     }
 }
@@ -154,17 +155,18 @@ pub struct Condvar {
 impl Condvar {
     #[cold]
     fn notify_one_slow(&self) {
-        unpark_one(self as *const _ as usize, |have_more| {
-            if !have_more {
+        unpark_one(self as *const _ as usize, |result| {
+            if !result.have_more {
                 self.has_queue.store(false, Ordering::Relaxed);
             }
+            UnparkToken(0)
         });
     }
 
     #[cold]
     fn notify_all_slow(&self) {
         self.has_queue.store(false, Ordering::Relaxed);
-        unpark_all(self as *const _ as usize);
+        unpark_all(self as *const _ as usize, UnparkToken(0));
     }
 
     fn wait_slow(&self, mutex: &RawMutex) {
