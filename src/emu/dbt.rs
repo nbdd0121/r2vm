@@ -8,6 +8,7 @@
 
 use super::interp::Context;
 use crate::sim::{get_memory_model, new_pipeline_model, PipelineModel};
+use fiber::raw::{fiber_sleep_raw, fiber_yield_raw};
 use riscv::{Csr, Op};
 use std::convert::TryFrom;
 use x86::builder::*;
@@ -40,8 +41,6 @@ fn same_cache_line(a: u64, b: u64) -> bool {
 extern "C" {
     fn read_csr();
     fn write_csr();
-    fn fiber_yield_raw();
-    fn fiber_sleep_raw();
     fn riscv_step();
     fn helper_trap();
     fn helper_misalign();

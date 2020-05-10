@@ -48,7 +48,7 @@ impl RawMutex {
                     std::sync::atomic::spin_loop_hint();
                 } else {
                     // We already know we're in fiber, call asm directly.
-                    unsafe { super::fiber_sleep(0) };
+                    unsafe { super::raw::fiber_sleep(0) };
                 }
                 spinwait += 1;
                 state = self.locked.load(Ordering::Relaxed);

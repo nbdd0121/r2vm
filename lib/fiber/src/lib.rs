@@ -9,13 +9,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 mod map;
 mod mutex;
 mod park;
+pub mod raw;
 
 pub use mutex::{Condvar, Mutex, MutexGuard, RawMutex};
 
 extern "C" {
     fn fiber_start(cell: FiberStack) -> FiberStack;
     fn fiber_current() -> FiberStack;
-    fn fiber_sleep(num: usize);
 }
 
 thread_local! {
@@ -42,7 +42,7 @@ fn assert_in_fiber() {
 pub fn sleep(num: usize) {
     assert_in_fiber();
     if num > 0 {
-        unsafe { fiber_sleep(num - 1) }
+        unsafe { raw::fiber_sleep(num - 1) }
     }
 }
 

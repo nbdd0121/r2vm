@@ -4,7 +4,8 @@
 //! * https://webkit.org/blog/6161/locking-in-webkit/
 //! * https://docs.rs/parking_lot
 
-use super::{fiber_current, fiber_sleep, FiberGroup, FiberStack};
+use super::raw::fiber_sleep;
+use super::{fiber_current, FiberGroup, FiberStack};
 use lazy_static::lazy_static;
 use std::ptr::NonNull;
 
