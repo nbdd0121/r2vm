@@ -10,8 +10,10 @@ mod map;
 mod mutex;
 mod park;
 pub mod raw;
+mod rwlock;
 
 pub use mutex::{Condvar, Mutex, MutexGuard, RawMutex};
+pub use rwlock::{RawRwLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 extern "C" {
     fn fiber_start(cell: FiberStack) -> FiberStack;
