@@ -1,5 +1,5 @@
 use crate::util::RoCell;
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Write};
@@ -23,13 +23,12 @@ pub static EXEC_PATH: RoCell<CString> = unsafe { RoCell::new_uninit() };
 /// it will be redirected.
 pub static SYSROOT: RoCell<PathBuf> = unsafe { RoCell::new_uninit() };
 
-lazy_static! {
-    /// The reference point when the user space asks for the current time. This is to allow
-    /// user-space applications to do timing properly in lockstep mode.
-    static ref EPOCH: Duration = {
-        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap() - Duration::from_micros(crate::event_loop().time())
-    };
-}
+/// The reference point when the user space asks for the current time. This is to allow
+/// user-space applications to do timing properly in lockstep mode.
+static EPOCH: Lazy<Duration> = Lazy::new(|| {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap()
+        - Duration::from_micros(crate::event_loop().time())
+});
 
 /// Initialise brk when program is being loaded. Should not be called after execution has started.
 pub unsafe fn init_brk(brk: u64) {

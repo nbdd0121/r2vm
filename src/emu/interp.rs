@@ -1,7 +1,7 @@
 use crate::io::IoMemorySync;
 use crate::sim::get_memory_model;
 use atomic_ext::AtomicExt;
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use parking_lot::{Mutex, MutexGuard};
 use riscv::{mmu::*, Csr, Op};
 use softfp::{self, F32, F64};
@@ -813,50 +813,56 @@ impl ICache {
     }
 }
 
-lazy_static! {
-    static ref ICACHE: Vec<Mutex<ICache>> = {
-        let core_count = crate::core_count();
-        let size = HEAP_SIZE * core_count;
-        let ptr = unsafe { libc::mmap(0x7ffec0000000 as *mut _, size as _, libc::PROT_READ|libc::PROT_WRITE|libc::PROT_EXEC, libc::MAP_ANONYMOUS | libc::MAP_PRIVATE, -1, 0) };
-        assert_eq!(ptr, 0x7ffec0000000 as *mut _);
-        let ptr = ptr as usize;
-        let mut vec = Vec::with_capacity(core_count);
-        for i in 0..core_count {
-            vec.push(Mutex::new(ICache::new(ptr + HEAP_SIZE * i)));
-        }
-
-        if crate::get_flags().perf {
-            use std::io::Write;
-            let mut perf_map = std::fs::File::create(format!("/tmp/perf-{}.map", std::process::id())).unwrap();
-            writeln!(perf_map, "{:x} {:x} (dbt code)", ptr, size).unwrap();
-        }
-
-        vec
+static ICACHE: Lazy<Vec<Mutex<ICache>>> = Lazy::new(|| {
+    let core_count = crate::core_count();
+    let size = HEAP_SIZE * core_count;
+    let ptr = unsafe {
+        libc::mmap(
+            0x7ffec0000000 as *mut _,
+            size as _,
+            libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC,
+            libc::MAP_ANONYMOUS | libc::MAP_PRIVATE,
+            -1,
+            0,
+        )
     };
+    assert_eq!(ptr, 0x7ffec0000000 as *mut _);
+    let ptr = ptr as usize;
+    let mut vec = Vec::with_capacity(core_count);
+    for i in 0..core_count {
+        vec.push(Mutex::new(ICache::new(ptr + HEAP_SIZE * i)));
+    }
 
-    /// To prevent needing to flush the entire translation cache when SFENCE.VMA/FENCE.I is
-    /// executed, we instead guarantee that the entries active in translation caches truthfully
-    /// represent the contents in RAM. i.e. we guarantee that whenever there is a write, the
-    /// relevant entries in code cache are invalidated.
-    ///
-    /// This field is to provide this guarantee. There are a few requirements for the correct
-    /// usage:
-    /// (1) A writable entry should be inserted into D-Cache with CODE_PROT locked.
-    /// (2) When inserting a I-Cache entry, CODE_PROT must be locked and updated while
-    ///     (a) invalidating D-Cache entries
-    ///     (b) before the I-Cache insertion happens.
-    /// (3) I-Cache invalidation must be queued with CODE_PROT locked.
-    ///
-    /// (1) and (2)(a) guarantee that when there is a new piece of code being translated, next memory
-    /// access to that location will always hit the slow path, because CODE_PROT serialises them.
-    /// (2)(b) and (3) guarantee that after a write can be serialised with a concurrent code
-    /// translation. In such situation, as CODE_PROT is updated before actual translation, the
-    /// queued invalidation callback will be executed after the translated code is inserted into
-    /// the I-Cache.
-    static ref CODE_PROT: Mutex<BTreeSet<u64>> = {
-        Mutex::new(BTreeSet::default())
-    };
-}
+    if crate::get_flags().perf {
+        use std::io::Write;
+        let mut perf_map =
+            std::fs::File::create(format!("/tmp/perf-{}.map", std::process::id())).unwrap();
+        writeln!(perf_map, "{:x} {:x} (dbt code)", ptr, size).unwrap();
+    }
+
+    vec
+});
+
+/// To prevent needing to flush the entire translation cache when SFENCE.VMA/FENCE.I is
+/// executed, we instead guarantee that the entries active in translation caches truthfully
+/// represent the contents in RAM. i.e. we guarantee that whenever there is a write, the
+/// relevant entries in code cache are invalidated.
+///
+/// This field is to provide this guarantee. There are a few requirements for the correct
+/// usage:
+/// (1) A writable entry should be inserted into D-Cache with CODE_PROT locked.
+/// (2) When inserting a I-Cache entry, CODE_PROT must be locked and updated while
+///     (a) invalidating D-Cache entries
+///     (b) before the I-Cache insertion happens.
+/// (3) I-Cache invalidation must be queued with CODE_PROT locked.
+///
+/// (1) and (2)(a) guarantee that when there is a new piece of code being translated, next memory
+/// access to that location will always hit the slow path, because CODE_PROT serialises them.
+/// (2)(b) and (3) guarantee that after a write can be serialised with a concurrent code
+/// translation. In such situation, as CODE_PROT is updated before actual translation, the
+/// queued invalidation callback will be executed after the translated code is inserted into
+/// the I-Cache.
+static CODE_PROT: Lazy<Mutex<BTreeSet<u64>>> = Lazy::new(|| Mutex::new(BTreeSet::default()));
 
 fn icache(hartid: u64) -> MutexGuard<'static, ICache> {
     ICACHE[hartid as usize].lock()

@@ -56,7 +56,11 @@ fn rwlock_rw_p(b: &mut Bencher) {
     b.iter(|| run::<PRawRwLock>(2, 2, 1000));
 }
 
-fn run<R: lock_api::RawRwLock + Send + Sync + 'static>(wthread: usize, rthread: usize, iter: usize) {
+fn run<R: lock_api::RawRwLock + Send + Sync + 'static>(
+    wthread: usize,
+    rthread: usize,
+    iter: usize,
+) {
     let m = Arc::new(LRwLock::<R, _>::new(()));
     let mut threads = Vec::new();
 

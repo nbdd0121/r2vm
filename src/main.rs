@@ -95,10 +95,8 @@ pub fn threaded() -> bool {
     get_flags().thread
 }
 
-use lazy_static::lazy_static;
-lazy_static! {
-    static ref EXIT_REASON: parking_lot::Mutex<Option<ExitReason>> = Default::default();
-}
+static EXIT_REASON: parking_lot::Mutex<Option<ExitReason>> =
+    parking_lot::Mutex::const_new(<parking_lot::RawMutex as lock_api::RawMutex>::INIT, None);
 
 /// Reason for exiting executors
 enum ExitReason {

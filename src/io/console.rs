@@ -1,4 +1,4 @@
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::future::Future;
@@ -6,15 +6,9 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use std::task::Waker;
 
-lazy_static! {
-    /// Stores the tty config before the program is launched, so we can store it properly.
-    static ref OLD_TTY: Mutex<Option<libc::termios>> = {
-        unsafe {
-            libc::atexit(console_exit);
-        }
-        Mutex::new(None)
-    };
-}
+/// Stores the tty config before the program is launched, so we can store it properly.
+static OLD_TTY: Mutex<Option<libc::termios>> =
+    Mutex::const_new(<parking_lot::RawMutex as lock_api::RawMutex>::INIT, None);
 
 // Regardless the destructor of Console is executed or not, we always want the tty to be restored
 // when exiting. Therefore, use atexit to guard this.
@@ -47,6 +41,10 @@ impl Console {
         // It's an error to create a new console while previous one isn't cleaned up.
         if guard.is_some() {
             panic!("Console can only be initialized once")
+        }
+
+        unsafe {
+            libc::atexit(console_exit);
         }
 
         // Make tty as raw terminal
@@ -210,12 +208,10 @@ unsafe extern "C" fn handle_winch(
 
 static WINCH: std::sync::Once = std::sync::Once::new();
 
-lazy_static! {
-    pub static ref CONSOLE: Console = Console::new();
-}
+pub static CONSOLE: Lazy<Console> = Lazy::new(|| Console::new());
 
 pub fn console_init() {
-    lazy_static::initialize(&CONSOLE);
+    Lazy::force(&CONSOLE);
 }
 
 pub fn console_putchar(char: u8) {

@@ -6,7 +6,7 @@
 
 use super::raw::fiber_sleep;
 use super::{fiber_current, FiberGroup, FiberStack};
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::ptr::NonNull;
 use std::sync::atomic::Ordering;
 
@@ -24,10 +24,8 @@ struct WaitList {
 
 unsafe impl Send for WaitList {}
 
-lazy_static! {
-    static ref WAIT_LIST_MAP: super::map::ConcurrentMap<usize, WaitList> =
-        super::map::ConcurrentMap::new();
-}
+static WAIT_LIST_MAP: Lazy<super::map::ConcurrentMap<usize, WaitList>> =
+    Lazy::new(|| super::map::ConcurrentMap::new());
 
 #[derive(Clone, Copy, Debug)]
 pub struct UnparkToken(pub usize);

@@ -6,7 +6,7 @@ use crate::io::rtc::Rtc;
 use crate::io::virtio::{Block, Console, Mmio, Rng, P9};
 use crate::io::IoMemorySync;
 use futures::future::BoxFuture;
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::Duration;
@@ -193,32 +193,34 @@ impl IoSystem {
     }
 }
 
-lazy_static! {
-    static ref IO_SYSTEM: IoSystem = {
-        let mut sys = IoSystem::new();
-        init_virtio(&mut sys);
-        if crate::CONFIG.rtc {
-            init_rtc(&mut sys);
-        }
-        sys
-    };
+static IO_SYSTEM: Lazy<IoSystem> = Lazy::new(|| {
+    let mut sys = IoSystem::new();
+    init_virtio(&mut sys);
+    if crate::CONFIG.rtc {
+        init_rtc(&mut sys);
+    }
+    sys
+});
 
-    /// The global PLIC
-    pub static ref PLIC: &'static Arc<Plic> = {
-        &IO_SYSTEM.plic
-    };
+/// The global PLIC
+pub static PLIC: Lazy<&'static Arc<Plic>> = Lazy::new(|| &IO_SYSTEM.plic);
 
-    pub static ref CLINT: Arc<Clint> = {
-        let core_count = crate::core_count();
-        Clint::new(Arc::new(DirectIoContext),
-            (0..core_count)
-                .map(|i| -> Arc<dyn crate::io::IrqPin> { Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 2 } else { 8 })) })
-                .collect(),
-            (0..core_count)
-                .map(|i| -> Arc<dyn crate::io::IrqPin> { Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 32 } else { 128 })) })
-                .collect())
-    };
-}
+pub static CLINT: Lazy<Arc<Clint>> = Lazy::new(|| {
+    let core_count = crate::core_count();
+    Clint::new(
+        Arc::new(DirectIoContext),
+        (0..core_count)
+            .map(|i| -> Arc<dyn crate::io::IrqPin> {
+                Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 2 } else { 8 }))
+            })
+            .collect(),
+        (0..core_count)
+            .map(|i| -> Arc<dyn crate::io::IrqPin> {
+                Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 32 } else { 128 }))
+            })
+            .collect(),
+    )
+});
 
 #[cfg(feature = "usernet")]
 fn init_network(sys: &mut IoSystem) {
@@ -372,7 +374,7 @@ pub fn init() {
             panic!("mmap failed while initing");
         }
     }
-    lazy_static::initialize(&PLIC);
+    Lazy::force(&PLIC);
 }
 
 pub fn device_tree() -> fdt::Node {
