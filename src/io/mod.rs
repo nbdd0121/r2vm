@@ -84,6 +84,9 @@ pub trait IoContext: Send + Sync {
     /// Most devices need to run a event loop, which we models into a Rust task. The I/O context
     /// therefore must provide a runtime for this to be carried out.
     fn spawn(&self, task: BoxFuture<'static, ()>);
+
+    /// Spawn a task which may possibly block to perform IO.
+    fn spawn_blocking(&self, name: &str, task: BoxFuture<'static, ()>);
 }
 
 /// An interrupt pin.

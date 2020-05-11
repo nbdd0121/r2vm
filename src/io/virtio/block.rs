@@ -1,5 +1,5 @@
 use super::super::block::Block as BlockDevice;
-use super::super::IrqPin;
+use super::super::{IoContext, IrqPin};
 use super::{Device, DeviceId, Queue};
 use parking_lot::Mutex;
 use std::io::{Read, Write};
@@ -25,10 +25,15 @@ pub struct Block {
     config: [u8; 8],
     file: Arc<Mutex<Box<dyn BlockDevice + Send>>>,
     irq: Arc<dyn IrqPin>,
+    io_ctx: Arc<dyn IoContext>,
 }
 
 impl Block {
-    pub fn new(irq: Arc<dyn IrqPin>, mut file: Box<dyn BlockDevice + Send>) -> Block {
+    pub fn new(
+        io_ctx: Arc<dyn IoContext>,
+        irq: Arc<dyn IrqPin>,
+        mut file: Box<dyn BlockDevice + Send>,
+    ) -> Block {
         let len = file.len().unwrap();
         if len % 512 != 0 {
             panic!("Size of block device must be multiple of 512 bytes");
@@ -38,12 +43,14 @@ impl Block {
             config: (len / 512).to_le_bytes(),
             file: Arc::new(Mutex::new(file)),
             irq,
+            io_ctx,
         }
     }
 }
 
 fn start_task(
     mut queue: Queue,
+    io_ctx: &dyn IoContext,
     file: Arc<Mutex<Box<dyn BlockDevice + Send>>>,
     irq: Arc<dyn IrqPin>,
 ) {
@@ -95,14 +102,7 @@ fn start_task(
             irq.pulse();
         }
     };
-    if crate::threaded() {
-        std::thread::Builder::new()
-            .name("virtio-blk".to_owned())
-            .spawn(move || futures::executor::block_on(task))
-            .unwrap();
-    } else {
-        crate::event_loop().spawn(task);
-    }
+    io_ctx.spawn_blocking("virtio_blk", Box::pin(task));
 }
 
 impl Device for Block {
@@ -129,6 +129,6 @@ impl Device for Block {
         self.status = 0;
     }
     fn queue_ready(&mut self, _idx: usize, queue: Queue) {
-        start_task(queue, self.file.clone(), self.irq.clone())
+        start_task(queue, &*self.io_ctx, self.file.clone(), self.irq.clone())
     }
 }

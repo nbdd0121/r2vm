@@ -47,6 +47,9 @@ pub struct Flags {
     // Whether threaded mode should be used
     thread: bool,
 
+    // Whether blocking IO should be offloaded to a separate thread or block on the event loop.
+    blocking_io: bool,
+
     /// The active model ID used
     model_id: usize,
 
@@ -138,6 +141,7 @@ pub fn main() {
         prv: 1,
         perf: false,
         thread: true,
+        blocking_io: false,
         model_id: 0,
         wfi_nop: false,
         dump_fdt: None,
@@ -157,7 +161,10 @@ pub fn main() {
             },
             "--disassemble" => flags.disassemble = true,
             "--perf" => flags.perf = true,
-            "--lockstep" => flags.model_id = 1,
+            "--lockstep" => {
+                flags.model_id = 1;
+                flags.blocking_io = true;
+            }
             "--wfi-nop" => flags.wfi_nop = true,
             "--help" => {
                 eprintln!(usage_string!(), interp_name);

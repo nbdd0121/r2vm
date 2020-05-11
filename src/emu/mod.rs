@@ -70,6 +70,21 @@ impl crate::io::IoContext for DirectIoContext {
     ) {
         crate::event_loop().spawn(task);
     }
+
+    fn spawn_blocking(
+        &self,
+        name: &str,
+        task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'static + Send>>,
+    ) {
+        if crate::get_flags().blocking_io {
+            crate::event_loop().spawn(task);
+        } else {
+            std::thread::Builder::new()
+                .name(name.to_owned())
+                .spawn(move || futures::executor::block_on(task))
+                .unwrap();
+        }
+    }
 }
 
 struct CoreIrq(usize, u64);
@@ -293,7 +308,7 @@ fn init_virtio(sys: &mut IoSystem) {
         } else {
             Box::new(file)
         };
-        sys.add_virtio(|irq| Block::new(Arc::new(irq), file));
+        sys.add_virtio(|irq| Block::new(Arc::new(DirectIoContext), Arc::new(irq), file));
     }
 
     for config in crate::CONFIG.random.iter() {
