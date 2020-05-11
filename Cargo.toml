@@ -11,7 +11,6 @@ members = [
     "lib/x86",
     "lib/riscv",
     "lib/fdt",
-    "lib/libslirp-sys",
     "lib/usernet",
     "lib/atomic_ext",
     "lib/fiber",
@@ -44,9 +43,6 @@ fdt = { path = "lib/fdt" }
 atomic_ext = { path = "lib/atomic_ext" }
 fiber = { path = "lib/fiber" }
 offset_of = { path = "lib/offset_of" }
-
-[patch.crates-io]
-libslirp-sys = { path = "lib/libslirp-sys" }
 
 [profile.dev]
 opt-level = "z"

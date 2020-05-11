@@ -6,10 +6,7 @@ authors = ["Gary Guo <gary@garyguo.net>"]
 edition = "2018"
 
 [dependencies]
-libslirp-sys = "4.0.0"
+libslirp-sys = { git = "https://gitlab.freedesktop.org/nbdd0121/libslirp-sys.git" }
 parking_lot = "0.9"
 libc = "0.2"
 log = "0.4"
-
-[patch.crates-io]
-libslirp-sys = { git = "https://gitlab.freedesktop.org/slirp/libslirp-sys.git" }
