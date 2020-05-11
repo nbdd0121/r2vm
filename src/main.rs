@@ -57,19 +57,10 @@ pub struct Flags {
     dump_fdt: Option<String>,
 }
 
-static mut FLAGS: Flags = Flags {
-    no_direct_memory_access: true,
-    disassemble: false,
-    prv: 1,
-    perf: false,
-    thread: true,
-    model_id: 0,
-    wfi_nop: false,
-    dump_fdt: None,
-};
+static FLAGS: RoCell<Flags> = unsafe { RoCell::new_uninit() };
 
 pub fn get_flags() -> &'static Flags {
-    unsafe { &FLAGS }
+    &FLAGS
 }
 
 static SHARED_CONTEXTS: RoCell<Vec<&'static emu::interp::SharedContext>> =
@@ -141,6 +132,17 @@ pub fn main() {
 
     let mut sysroot = String::from("/opt/riscv/sysroot");
 
+    let mut flags = Flags {
+        no_direct_memory_access: true,
+        disassemble: false,
+        prv: 1,
+        perf: false,
+        thread: true,
+        model_id: 0,
+        wfi_nop: false,
+        dump_fdt: None,
+    };
+
     item = args.next();
     while let Some(ref arg) = item {
         // We've parsed all arguments. This indicates the name of the executable.
@@ -149,18 +151,14 @@ pub fn main() {
         }
 
         match arg.as_str() {
-            "--no-direct-memory" => unsafe {
-                FLAGS.no_direct_memory_access = true;
-            },
+            "--no-direct-memory" => flags.no_direct_memory_access = true,
             "--strace" => unsafe {
                 RoCell::replace(&emu::syscall::STRACE, true);
             },
-            "--disassemble" => unsafe {
-                FLAGS.disassemble = true;
-            },
-            "--perf" => unsafe { FLAGS.perf = true },
-            "--lockstep" => unsafe { FLAGS.model_id = 1 },
-            "--wfi-nop" => unsafe { FLAGS.wfi_nop = true },
+            "--disassemble" => flags.disassemble = true,
+            "--perf" => flags.perf = true,
+            "--lockstep" => flags.model_id = 1,
+            "--wfi-nop" => flags.wfi_nop = true,
             "--help" => {
                 eprintln!(usage_string!(), interp_name);
                 std::process::exit(0);
@@ -171,9 +169,7 @@ pub fn main() {
                     sysroot = path_slice.to_owned();
                 } else if arg.starts_with("--dump-fdt=") {
                     let path_slice = &arg["--dump-fdt=".len()..];
-                    unsafe {
-                        FLAGS.dump_fdt = Some(path_slice.to_owned());
-                    }
+                    flags.dump_fdt = Some(path_slice.to_owned());
                 } else {
                     eprintln!("{}: unrecognized option '{}'", interp_name, arg);
                     std::process::exit(1);
@@ -183,6 +179,8 @@ pub fn main() {
 
         item = args.next();
     }
+
+    unsafe { RoCell::init(&FLAGS, flags) };
 
     let program_name = item.unwrap_or_else(|| {
         eprintln!(usage_string!(), interp_name);
@@ -206,7 +204,7 @@ pub fn main() {
             eprintln!("{}: {}", interp_name, msg);
             std::process::exit(1);
         }
-        unsafe { FLAGS.prv = 0 }
+        unsafe { RoCell::as_mut(&FLAGS).prv = 0 }
     } else {
         // Full-system emulation is needed. Originally we uses kernel path as "program name"
         // directly, but as full-system emulation requires many peripheral devices as well,
@@ -224,7 +222,7 @@ pub fn main() {
         }
 
         if CONFIG.firmware.is_some() {
-            unsafe { FLAGS.prv = 3 }
+            unsafe { RoCell::as_mut(&FLAGS).prv = 3 }
         }
 
         loader = emu::loader::Loader::new(&CONFIG.kernel).unwrap_or_else(|err| {
@@ -331,7 +329,7 @@ pub fn main() {
     unsafe {
         crate::sim::switch_model(FLAGS.model_id);
         let threaded = !crate::sim::get_memory_model().require_lockstep();
-        FLAGS.thread = threaded;
+        RoCell::as_mut(&FLAGS).thread = threaded;
     }
 
     loop {
@@ -386,9 +384,9 @@ pub fn main() {
             &ExitReason::SwitchModel(id) => {
                 unsafe {
                     crate::sim::switch_model(id);
-                    FLAGS.model_id = id;
+                    RoCell::as_mut(&FLAGS).model_id = id;
                     let threaded = !crate::sim::get_memory_model().require_lockstep();
-                    FLAGS.thread = threaded;
+                    RoCell::as_mut(&FLAGS).thread = threaded;
                     info!("switching to model={} threaded={}", id, threaded);
                 }
 
