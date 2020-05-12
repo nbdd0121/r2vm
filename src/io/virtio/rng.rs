@@ -1,7 +1,6 @@
 use super::super::IrqPin;
 use super::{Device, DeviceId, Queue};
 use parking_lot::Mutex;
-use rand::SeedableRng;
 use std::io::Read;
 use std::sync::Arc;
 
@@ -13,26 +12,15 @@ pub struct Rng {
 
 /// struct used by task
 struct Inner {
-    rng: Box<dyn rand::RngCore + Send>,
+    rng: Box<dyn io::entropy::Entropy + Send>,
     irq: Box<dyn IrqPin>,
 }
 
 impl Rng {
     /// Create a virtio entropy source device using a given random number generator.
-    pub fn new(irq: Box<dyn IrqPin>, rng: Box<dyn rand::RngCore + Send>) -> Rng {
+    pub fn new(irq: Box<dyn IrqPin>, rng: Box<dyn io::entropy::Entropy + Send>) -> Rng {
         let inner = Arc::new(Mutex::new(Inner { rng, irq }));
         Rng { status: 0, inner }
-    }
-
-    /// Create a virtio entropy source device, fulfilled by OS's entropy source.
-    pub fn new_os(irq: Box<dyn IrqPin>) -> Rng {
-        Self::new(irq, Box::new(rand::rngs::OsRng))
-    }
-
-    /// Create a virtio entropy source device with a fixed seed.
-    /// **This is not cryptographically secure!!!**
-    pub fn new_seeded(irq: Box<dyn IrqPin>, seed: u64) -> Rng {
-        Self::new(irq, Box::new(rand::rngs::StdRng::seed_from_u64(seed)))
     }
 }
 

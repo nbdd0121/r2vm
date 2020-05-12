@@ -5,10 +5,12 @@ authors = ["Gary Guo <gary@garyguo.net>"]
 edition = "2018"
 
 [dependencies]
-fnv = {version = "1.0", optional = true }
+fnv = { version = "1.0", optional = true }
+rand = { version = "0.7", optional = true }
 
 [features]
-default = ["block-file", "block-shadow"]
+default = ["block-file", "block-shadow", "entropy"]
 block = []
 block-file = ["block"]
 block-shadow = ["block", "fnv"]
+entropy = ["rand"]

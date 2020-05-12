@@ -310,9 +310,15 @@ fn init_virtio(sys: &mut IoSystem) {
     }
 
     for config in crate::CONFIG.random.iter() {
-        sys.add_virtio(|irq| match config.r#type {
-            crate::config::RandomType::Pseudo => Rng::new_seeded(Box::new(irq), config.seed),
-            crate::config::RandomType::OS => Rng::new_os(Box::new(irq)),
+        sys.add_virtio(|irq| {
+            use io::entropy::rand::SeedableRng;
+            use io::entropy::{Os, Seeded};
+            match config.r#type {
+                crate::config::RandomType::Pseudo => {
+                    Rng::new(Box::new(irq), Box::new(Seeded::seed_from_u64(config.seed)))
+                }
+                crate::config::RandomType::OS => Rng::new(Box::new(irq), Box::new(Os)),
+            }
         });
     }
 
