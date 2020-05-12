@@ -1,6 +1,6 @@
-use super::super::block::Block as BlockDevice;
 use super::super::{IoContext, IrqPin};
 use super::{Device, DeviceId, Queue};
+use io::block::Block as BlockDevice;
 use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -32,9 +32,9 @@ impl Block {
     pub fn new(
         io_ctx: Arc<dyn IoContext>,
         irq: Arc<dyn IrqPin>,
-        mut file: Box<dyn BlockDevice + Send>,
+        file: Box<dyn BlockDevice + Send>,
     ) -> Block {
-        let len = file.len().unwrap();
+        let len = file.len();
         if len % 512 != 0 {
             panic!("Size of block device must be multiple of 512 bytes");
         }

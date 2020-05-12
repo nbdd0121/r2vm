@@ -15,6 +15,7 @@ members = [
     "lib/atomic_ext",
     "lib/fiber",
     "lib/offset_of",
+    "lib/io",
 ]
 
 [build-dependencies]
@@ -25,7 +26,6 @@ log = "0.4"
 pretty_env_logger = "0.3"
 libc = "0.2"
 rand = "0.7"
-fnv = "1.0"
 byteorder = "1.3"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
@@ -43,6 +43,7 @@ fdt = { path = "lib/fdt" }
 atomic_ext = { path = "lib/atomic_ext" }
 fiber = { path = "lib/fiber" }
 offset_of = { path = "lib/offset_of" }
+io = { path = "lib/io" }
 
 [profile.dev]
 opt-level = "z"

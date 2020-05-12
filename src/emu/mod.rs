@@ -303,11 +303,9 @@ fn init_virtio(sys: &mut IoSystem) {
             .write(!config.shadow)
             .open(&config.path)
             .unwrap();
-        let file: Box<dyn crate::io::block::Block + Send> = if config.shadow {
-            Box::new(crate::io::block::Shadow::new(file))
-        } else {
-            Box::new(file)
-        };
+        let file = io::block::File::new(file).unwrap();
+        let file: Box<dyn io::block::Block + Send> =
+            if config.shadow { Box::new(io::block::Shadow::new(file)) } else { Box::new(file) };
         sys.add_virtio(|irq| Block::new(Arc::new(DirectIoContext), Arc::new(irq), file));
     }
 
