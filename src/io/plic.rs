@@ -1,8 +1,7 @@
+use io::{IoMemory, IoMemoryMut, IrqPin};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-use super::{IoMemory, IoMemorySync, IrqPin};
 
 // The ranges here are all inclusive, and they are calculated under maximum permitted number
 // of interrupts (1024).
@@ -102,8 +101,8 @@ impl PlicInner {
     }
 }
 
-impl IoMemory for PlicInner {
-    fn read(&mut self, addr: usize, size: u32) -> u64 {
+impl IoMemoryMut for PlicInner {
+    fn read_mut(&mut self, addr: usize, size: u32) -> u64 {
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
             error!(target: "PLIC", "illegal register read 0x{:x}", addr);
@@ -181,7 +180,7 @@ impl IoMemory for PlicInner {
         }) as u64
     }
 
-    fn write(&mut self, addr: usize, value: u64, size: u32) {
+    fn write_mut(&mut self, addr: usize, value: u64, size: u32) {
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
             error!(target: "PLIC", "illegal register write 0x{:x} = 0x{:x}", addr, value);
@@ -265,13 +264,13 @@ impl Plic {
     }
 }
 
-impl IoMemorySync for Plic {
-    fn read_sync(&self, addr: usize, size: u32) -> u64 {
-        self.inner.read_sync(addr, size)
+impl IoMemory for Plic {
+    fn read(&self, addr: usize, size: u32) -> u64 {
+        self.inner.read(addr, size)
     }
 
-    fn write_sync(&self, addr: usize, value: u64, size: u32) {
-        self.inner.write_sync(addr, value, size)
+    fn write(&self, addr: usize, value: u64, size: u32) {
+        self.inner.write(addr, value, size)
     }
 }
 

@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
-use crate::io::clint::Clint;
 use crate::io::plic::{Plic, PlicIrq};
 use crate::io::rtc::Rtc;
 use crate::io::virtio::{Block, Console, Mmio, Rng, P9};
-use crate::io::IoMemorySync;
 use futures::future::BoxFuture;
+use io::hw::intc::Clint;
+use io::{IoMemory, IrqPin};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -88,7 +88,7 @@ impl crate::io::IoContext for DirectIoContext {}
 
 struct CoreIrq(usize, u64);
 
-impl crate::io::IrqPin for CoreIrq {
+impl IrqPin for CoreIrq {
     fn set_level(&self, level: bool) {
         if level {
             crate::shared_context(self.0).assert(self.1);
@@ -101,7 +101,7 @@ impl crate::io::IrqPin for CoreIrq {
 /// This describes all I/O aspects of the system.
 struct IoSystem {
     /// The IO memory map.
-    map: BTreeMap<usize, (usize, Arc<dyn IoMemorySync>)>,
+    map: BTreeMap<usize, (usize, Arc<dyn IoMemory>)>,
 
     /// The PLIC instance. It always exist.
     plic: Arc<Plic>,
@@ -121,9 +121,7 @@ impl IoSystem {
         // Instantiate PLIC and corresponding device tre
         let core_count = crate::core_count();
         let plic = Plic::new(
-            (0..core_count)
-                .map(|i| -> Arc<dyn crate::io::IrqPin> { Arc::new(CoreIrq(i, 512)) })
-                .collect(),
+            (0..core_count).map(|i| -> Arc<dyn IrqPin> { Arc::new(CoreIrq(i, 512)) }).collect(),
         );
 
         let mut soc = fdt::Node::new("soc");
@@ -162,12 +160,12 @@ impl IoSystem {
                 sys.boundary += 0x10000;
                 mem
             });
-            sys.register_io_mem(base, 0x10000, CLINT.clone());
+            sys.register_io_mem(base, 0x10000, Arc::new(&*CLINT));
         }
         sys
     }
 
-    pub fn register_io_mem(&mut self, base: usize, size: usize, mem: Arc<dyn IoMemorySync>) {
+    pub fn register_io_mem(&mut self, base: usize, size: usize, mem: Arc<dyn IoMemory>) {
         if let Some((k, v)) = self.map.range(..(base + size)).next_back() {
             let last_end = *k + v.0;
             assert!(base >= last_end);
@@ -197,7 +195,7 @@ impl IoSystem {
         node.add_prop("interrupts-extended", &[core_count as u32 + 1, irq][..]);
     }
 
-    pub fn find_io_mem<'a>(&'a self, ptr: usize) -> Option<(usize, &'a dyn IoMemorySync)> {
+    pub fn find_io_mem<'a>(&'a self, ptr: usize) -> Option<(usize, &'a dyn IoMemory)> {
         if let Some((k, v)) = self.map.range(..=ptr).next_back() {
             let last_end = *k + v.0;
             if ptr >= last_end { None } else { Some((*k, &*v.1)) }
@@ -219,17 +217,17 @@ static IO_SYSTEM: Lazy<IoSystem> = Lazy::new(|| {
 /// The global PLIC
 pub static PLIC: Lazy<&'static Arc<Plic>> = Lazy::new(|| &IO_SYSTEM.plic);
 
-pub static CLINT: Lazy<Arc<Clint>> = Lazy::new(|| {
+pub static CLINT: Lazy<Clint> = Lazy::new(|| {
     let core_count = crate::core_count();
     Clint::new(
         Arc::new(DirectIoContext),
         (0..core_count)
-            .map(|i| -> Arc<dyn crate::io::IrqPin> {
+            .map(|i| -> Arc<dyn IrqPin> {
                 Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 2 } else { 8 }))
             })
             .collect(),
         (0..core_count)
-            .map(|i| -> Arc<dyn crate::io::IrqPin> {
+            .map(|i| -> Arc<dyn IrqPin> {
                 Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 32 } else { 128 }))
             })
             .collect(),
@@ -458,7 +456,7 @@ pub fn write_memory<T: Copy>(addr: usize, value: T) {
 pub fn io_read(addr: usize, size: u32) -> u64 {
     assert!(addr < *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     match IO_SYSTEM.find_io_mem(addr) {
-        Some((base, v)) => v.read_sync(addr - base, size),
+        Some((base, v)) => v.read(addr - base, size),
         None => {
             error!("out-of-bound I/O memory read 0x{:x}", addr);
             0
@@ -469,7 +467,7 @@ pub fn io_read(addr: usize, size: u32) -> u64 {
 pub fn io_write(addr: usize, value: u64, size: u32) {
     assert!(addr < *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     match IO_SYSTEM.find_io_mem(addr) {
-        Some((base, v)) => return v.write_sync(addr - base, value, size),
+        Some((base, v)) => return v.write(addr - base, value, size),
         None => {
             error!("out-of-bound I/O memory write 0x{:x} = 0x{:x}", addr, value);
         }

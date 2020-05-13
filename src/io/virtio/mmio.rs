@@ -1,5 +1,6 @@
-use super::super::{IoContext, IoMemory};
+use super::super::IoContext;
 use super::Device;
+use io::IoMemoryMut;
 
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -58,8 +59,8 @@ impl Mmio {
     }
 }
 
-impl IoMemory for Mmio {
-    fn read(&mut self, addr: usize, size: u32) -> u64 {
+impl IoMemoryMut for Mmio {
+    fn read_mut(&mut self, addr: usize, size: u32) -> u64 {
         if addr >= ADDR_CONFIG {
             let value = self.device.config_read(addr - ADDR_CONFIG, size);
             trace!(target: "Mmio", "config register read 0x{:x} = 0x{:x}", addr, value);
@@ -121,7 +122,7 @@ impl IoMemory for Mmio {
         ret as u64
     }
 
-    fn write(&mut self, addr: usize, value: u64, size: u32) {
+    fn write_mut(&mut self, addr: usize, value: u64, size: u32) {
         if addr >= ADDR_CONFIG {
             self.device.config_write(addr - ADDR_CONFIG, value, size);
             trace!(target: "Mmio", "config register write 0x{:x} = 0x{:x}", addr, value);

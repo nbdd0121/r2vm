@@ -1,9 +1,10 @@
-use super::super::{IoContext, IoMemorySync, IrqPin};
+use super::super::IoContext;
 use byteorder::{ByteOrder, LE};
 use futures::channel::mpsc::Sender;
 use futures::future::{poll_fn, AbortHandle};
 use futures::prelude::*;
 use io::network::Network as NetworkDevice;
+use io::{IoMemory, IrqPin};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::task::Poll;
@@ -180,8 +181,8 @@ impl Xemaclite {
     }
 }
 
-impl IoMemorySync for Xemaclite {
-    fn read_sync(&self, addr: usize, size: u32) -> u64 {
+impl IoMemory for Xemaclite {
+    fn read(&self, addr: usize, size: u32) -> u64 {
         let state = self.inner.state.lock();
 
         // For wider access, break it into 32-bit memory accesses if necessary
@@ -218,7 +219,7 @@ impl IoMemorySync for Xemaclite {
         }) as u64
     }
 
-    fn write_sync(&self, addr: usize, value: u64, size: u32) {
+    fn write(&self, addr: usize, value: u64, size: u32) {
         let mut state = self.inner.state.lock();
         let mut state = &mut *state;
 

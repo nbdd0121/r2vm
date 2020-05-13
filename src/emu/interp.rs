@@ -1,6 +1,6 @@
-use crate::io::IoMemorySync;
 use crate::sim::get_memory_model;
 use atomic_ext::AtomicExt;
+use io::IoMemory;
 use once_cell::sync::Lazy;
 use parking_lot::{Mutex, MutexGuard};
 use riscv::{mmu::*, Csr, Op};
@@ -894,7 +894,7 @@ fn global_sfence(ctx: &mut Context, mask: u64, asid: Option<u16>, vpn: Option<u6
 fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u64) -> u64 {
     match nr {
         0 => {
-            (*super::CLINT).write_sync(0x4000 + ctx.hartid as usize * 8, arg0, 8);
+            (*super::CLINT).write(0x4000 + ctx.hartid as usize * 8, arg0, 8);
             0
         }
         1 => {

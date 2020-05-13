@@ -1,4 +1,4 @@
-use super::IoMemorySync;
+use io::IoMemory;
 
 const ADDR_SET_TM_WR: usize = 0x00;
 const ADDR_SET_TM_RD: usize = 0x04;
@@ -25,8 +25,8 @@ impl Rtc {
     }
 }
 
-impl IoMemorySync for Rtc {
-    fn read_sync(&self, addr: usize, size: u32) -> u64 {
+impl IoMemory for Rtc {
+    fn read(&self, addr: usize, size: u32) -> u64 {
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
             error!(target: "RTC", "illegal register read 0x{:x}", addr);
@@ -52,7 +52,7 @@ impl IoMemorySync for Rtc {
         val
     }
 
-    fn write_sync(&self, addr: usize, value: u64, size: u32) {
+    fn write(&self, addr: usize, value: u64, size: u32) {
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
             error!(target: "RTC", "illegal register write 0x{:x} = 0x{:x}", addr, value);
