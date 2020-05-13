@@ -1,9 +1,9 @@
 use super::super::{IoContext, IoMemorySync, IrqPin};
-use super::Network as NetworkDevice;
 use byteorder::{ByteOrder, LE};
 use futures::channel::mpsc::Sender;
 use futures::future::{poll_fn, AbortHandle};
 use futures::prelude::*;
+use io::network::Network as NetworkDevice;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::task::Poll;

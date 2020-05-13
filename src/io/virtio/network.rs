@@ -1,7 +1,7 @@
-use super::super::network::Network as NetworkDevice;
 use super::super::{IoContext, IrqPin};
 use super::{Device, DeviceId, Queue};
 use futures::future::AbortHandle;
+use io::network::Network as NetworkDevice;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 

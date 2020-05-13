@@ -11,11 +11,6 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "usernet")]
-use crate::io::network::Usernet;
-#[cfg(feature = "usernet")]
-use crate::io::virtio::Network;
-
 pub mod interp;
 #[rustfmt::skip]
 mod abi;
@@ -29,7 +24,7 @@ pub use syscall::syscall;
 
 struct DirectIoContext;
 
-impl crate::io::IoContext for DirectIoContext {
+impl io::DmaContext for DirectIoContext {
     fn dma_read(&self, addr: u64, buf: &mut [u8]) {
         unsafe {
             std::ptr::copy_nonoverlapping(addr as usize as *const u8, buf.as_mut_ptr(), buf.len())
@@ -55,7 +50,9 @@ impl crate::io::IoContext for DirectIoContext {
                 .store(value, std::sync::atomic::Ordering::SeqCst)
         }
     }
+}
 
+impl io::RuntimeContext for DirectIoContext {
     fn now(&self) -> Duration {
         Duration::from_micros(crate::event_loop().time())
     }
@@ -86,6 +83,8 @@ impl crate::io::IoContext for DirectIoContext {
         }
     }
 }
+
+impl crate::io::IoContext for DirectIoContext {}
 
 struct CoreIrq(usize, u64);
 
@@ -239,6 +238,9 @@ pub static CLINT: Lazy<Arc<Clint>> = Lazy::new(|| {
 
 #[cfg(feature = "usernet")]
 fn init_network(sys: &mut IoSystem) {
+    use crate::io::virtio::Network;
+    use io::network::Usernet;
+
     for config in crate::CONFIG.network.iter() {
         let mac = eui48::MacAddress::parse_str(&config.config.mac)
             .expect("unexpected mac address")

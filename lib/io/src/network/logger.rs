@@ -1,17 +1,17 @@
+use super::Network;
 use byteorder::{WriteBytesExt, LE};
-use parking_lot::Mutex;
 use std::fs::File;
 use std::io::{Result, Write};
 use std::task::{Context, Poll};
 
-use super::Network;
-
+/// A logger network device that captures all traffics and write to a pcap dump.
 pub struct Logger<T: Network> {
-    file: Mutex<File>,
+    file: File,
     network: T,
 }
 
 impl<T: Network> Logger<T> {
+    /// Create a new logger that captures traffic to the given file in pcap dump format.
     pub fn new(mut file: File, network: T) -> Self {
         // Write the header of pcap dump format.
         file.write_u32::<LE>(0xa1b2c3d4).unwrap();
@@ -22,13 +22,13 @@ impl<T: Network> Logger<T> {
         file.write_u32::<LE>(0xffffffff).unwrap();
         file.write_u32::<LE>(1).unwrap();
 
-        Self { file: Mutex::new(file), network }
+        Self { file, network }
     }
 
     fn log(&self, buf: &[u8]) -> Result<()> {
         let now =
             std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap();
-        let mut file = self.file.lock();
+        let mut file = &self.file;
         file.write_u32::<LE>(now.as_secs() as u32)?;
         file.write_u32::<LE>(now.subsec_micros())?;
         file.write_u32::<LE>(buf.len() as u32)?;

@@ -5,9 +5,6 @@ pub mod plic;
 pub mod rtc;
 pub mod virtio;
 
-use futures::future::BoxFuture;
-use std::time::Duration;
-
 /// IoMemory represents a region of physically continuous I/O memory.
 ///
 /// We currently expect only one guest core can access a region of I/O memory at a time. Usually as
@@ -36,7 +33,7 @@ pub trait IoMemorySync: Send + Sync {
     fn write_sync(&self, addr: usize, value: u64, size: u32);
 }
 
-impl IoMemory for dyn IoMemorySync {
+impl<T: IoMemorySync + ?Sized> IoMemory for T {
     fn read(&mut self, addr: usize, size: u32) -> u64 {
         self.read_sync(addr, size)
     }
@@ -57,36 +54,7 @@ impl<R: lock_api::RawMutex + Send + Sync, T: IoMemory + Send> IoMemorySync
 }
 
 /// A context for I/O operation.
-pub trait IoContext: Send + Sync {
-    /// Perform a DMA read at given address.
-    fn dma_read(&self, addr: u64, buf: &mut [u8]);
-
-    /// Perform a DMA write at given address.
-    fn dma_write(&self, addr: u64, buf: &[u8]);
-
-    /// Read a half word atomically
-    fn read_u16(&self, addr: u64) -> u16;
-
-    /// Write a half word atomically
-    fn write_u16(&self, addr: u64, value: u16);
-
-    /// Get the current time since an arbitary epoch.
-    fn now(&self) -> Duration;
-
-    /// Get a [`Future`] that is triggered at the supplied time since the epoch.
-    ///
-    /// [`Future`]: std::future::Future
-    fn create_timer(&self, time: Duration) -> BoxFuture<'static, ()>;
-
-    /// Spawn a task.
-    ///
-    /// Most devices need to run a event loop, which we models into a Rust task. The I/O context
-    /// therefore must provide a runtime for this to be carried out.
-    fn spawn(&self, task: BoxFuture<'static, ()>);
-
-    /// Spawn a task which may possibly block to perform IO.
-    fn spawn_blocking(&self, name: &str, task: BoxFuture<'static, ()>);
-}
+pub trait IoContext: io::DmaContext + io::RuntimeContext {}
 
 /// An interrupt pin.
 pub trait IrqPin: Send + Sync {

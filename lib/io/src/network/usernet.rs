@@ -1,4 +1,4 @@
-use super::super::IoContext;
+use crate::RuntimeContext;
 use std::future::Future;
 use std::net::Ipv4Addr;
 use std::pin::Pin;
@@ -6,11 +6,12 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+/// Network device simulated in userspace.
 pub struct Usernet {
     inner: usernet::Network,
 }
 
-struct EventLoopContext(Arc<dyn IoContext>);
+struct EventLoopContext(Arc<dyn RuntimeContext>);
 
 impl usernet::Context for EventLoopContext {
     fn now(&mut self) -> Duration {
@@ -27,7 +28,8 @@ impl usernet::Context for EventLoopContext {
 }
 
 impl Usernet {
-    pub fn new(io_ctx: Arc<dyn IoContext>) -> Self {
+    /// Create a new `Usernet` instance with the given runtime context.
+    pub fn new(ctx: Arc<dyn RuntimeContext>) -> Self {
         let usernet_opt = usernet::Config {
             restricted: false,
             ipv4: Some(Default::default()),
@@ -37,7 +39,7 @@ impl Usernet {
             dns_suffixes: Vec::new(),
             domainname: None,
         };
-        let usernet = usernet::Network::new(&usernet_opt, EventLoopContext(io_ctx));
+        let usernet = usernet::Network::new(&usernet_opt, EventLoopContext(ctx));
         Self { inner: usernet }
     }
 
