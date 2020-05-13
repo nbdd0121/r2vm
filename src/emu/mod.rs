@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::io::plic::{Plic, PlicIrq};
 use crate::io::rtc::Rtc;
 use crate::io::virtio::{Block, Console, Mmio, Rng, P9};
 use futures::future::BoxFuture;
-use io::hw::intc::Clint;
+use io::hw::intc::{Clint, Plic};
 use io::{IoMemory, IrqPin};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -120,9 +119,9 @@ impl IoSystem {
 
         // Instantiate PLIC and corresponding device tre
         let core_count = crate::core_count();
-        let plic = Plic::new(
+        let plic = Arc::new(Plic::new(
             (0..core_count).map(|i| -> Arc<dyn IrqPin> { Arc::new(CoreIrq(i, 512)) }).collect(),
-        );
+        ));
 
         let mut soc = fdt::Node::new("soc");
         soc.add_prop("ranges", ());
@@ -174,7 +173,7 @@ impl IoSystem {
     }
 
     /// Add a virtio device
-    pub fn add_virtio<T>(&mut self, f: impl FnOnce(PlicIrq) -> T)
+    pub fn add_virtio<T>(&mut self, f: impl FnOnce(Arc<dyn IrqPin>) -> T)
     where
         T: crate::io::virtio::Device + Send + 'static,
     {
@@ -257,9 +256,7 @@ fn init_network(sys: &mut IoSystem) {
 
         match config.config.r#type.as_str() {
             "virtio" => {
-                sys.add_virtio(|irq| {
-                    Network::new(Arc::new(DirectIoContext), Arc::new(irq), usernet, mac)
-                });
+                sys.add_virtio(|irq| Network::new(Arc::new(DirectIoContext), irq, usernet, mac));
             }
             "xemaclite" => {
                 let irq = sys.next_irq;
@@ -277,7 +274,7 @@ fn init_network(sys: &mut IoSystem) {
                 use crate::io::network::xemaclite::Xemaclite;
                 let xemaclite = Xemaclite::new(
                     Arc::new(DirectIoContext),
-                    Arc::new(sys.plic.clone().irq_pin(irq)),
+                    sys.plic.clone().irq_pin(irq),
                     Arc::new(usernet),
                 );
                 sys.register_io_mem(base, 0x2000, Arc::new(xemaclite));
@@ -306,7 +303,7 @@ fn init_virtio(sys: &mut IoSystem) {
         let file = io::block::File::new(file).unwrap();
         let file: Box<dyn io::block::Block + Send> =
             if config.shadow { Box::new(io::block::Shadow::new(file)) } else { Box::new(file) };
-        sys.add_virtio(|irq| Block::new(Arc::new(DirectIoContext), Arc::new(irq), file));
+        sys.add_virtio(|irq| Block::new(Arc::new(DirectIoContext), irq, file));
     }
 
     for config in crate::CONFIG.random.iter() {
@@ -315,24 +312,22 @@ fn init_virtio(sys: &mut IoSystem) {
             use io::entropy::{Os, Seeded};
             match config.r#type {
                 crate::config::RandomType::Pseudo => {
-                    Rng::new(Box::new(irq), Box::new(Seeded::seed_from_u64(config.seed)))
+                    Rng::new(irq, Box::new(Seeded::seed_from_u64(config.seed)))
                 }
-                crate::config::RandomType::OS => Rng::new(Box::new(irq), Box::new(Os)),
+                crate::config::RandomType::OS => Rng::new(irq, Box::new(Os)),
             }
         });
     }
 
     for config in crate::CONFIG.share.iter() {
         use io::fs::Passthrough;
-        sys.add_virtio(|irq| {
-            P9::new(Arc::new(irq), &config.tag, Passthrough::new(&config.path).unwrap())
-        });
+        sys.add_virtio(|irq| P9::new(irq, &config.tag, Passthrough::new(&config.path).unwrap()));
     }
 
     init_network(sys);
 
     if crate::CONFIG.console.virtio {
-        sys.add_virtio(|irq| Console::new(Arc::new(irq), crate::CONFIG.console.resize));
+        sys.add_virtio(|irq| Console::new(irq, crate::CONFIG.console.resize));
     }
 }
 

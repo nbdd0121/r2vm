@@ -1,7 +1,7 @@
-use io::{IoMemory, IoMemoryMut, IrqPin};
+use crate::{IoMemory, IrqPin};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 // The ranges here are all inclusive, and they are calculated under maximum permitted number
 // of interrupts (1024).
@@ -20,9 +20,7 @@ const OFFSET_PRIORITY_THRESHOLD: usize = 0x000;
 const OFFSET_INTERRUPT_CLAIM: usize = 0x004;
 
 /// An implementation of SiFive's PLIC controller. We support 31 interrupts at the moment.
-pub struct Plic {
-    inner: Mutex<PlicInner>,
-}
+pub struct Plic(Arc<Mutex<PlicInner>>);
 
 struct PlicInner {
     priority: [u8; 32],
@@ -30,11 +28,11 @@ struct PlicInner {
     claimed: u32,
     enable: Box<[u32]>,
     threshold: Box<[u8]>,
-    irq: Vec<Arc<dyn IrqPin>>,
+    irq: Box<[Arc<dyn IrqPin>]>,
 }
 
 pub struct PlicIrq {
-    plic: Arc<Plic>,
+    plic: Weak<Mutex<PlicInner>>,
     irq: u32,
     prev: AtomicBool,
 }
@@ -48,7 +46,7 @@ impl PlicInner {
             enable: vec![0; ctx_irqs.len()].into_boxed_slice(),
             threshold: vec![0; ctx_irqs.len()].into_boxed_slice(),
             claimed: 0,
-            irq: ctx_irqs,
+            irq: ctx_irqs.into_boxed_slice(),
         }
     }
 
@@ -99,10 +97,8 @@ impl PlicInner {
         }
         cur_irq as u32
     }
-}
 
-impl IoMemoryMut for PlicInner {
-    fn read_mut(&mut self, addr: usize, size: u32) -> u64 {
+    fn read(&mut self, addr: usize, size: u32) -> u64 {
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
             error!(target: "PLIC", "illegal register read 0x{:x}", addr);
@@ -180,7 +176,7 @@ impl IoMemoryMut for PlicInner {
         }) as u64
     }
 
-    fn write_mut(&mut self, addr: usize, value: u64, size: u32) {
+    fn write(&mut self, addr: usize, value: u64, size: u32) {
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
             error!(target: "PLIC", "illegal register write 0x{:x} = 0x{:x}", addr, value);
@@ -255,22 +251,27 @@ impl IoMemoryMut for PlicInner {
 
 impl Plic {
     /// Create a SiFive-compatible PLIC, with `ctx` number of contexts.
-    pub fn new(ctx_irqs: Vec<Arc<dyn IrqPin>>) -> Arc<Self> {
-        Arc::new(Self { inner: Mutex::new(PlicInner::new(ctx_irqs)) })
+    pub fn new(ctx_irqs: Vec<Arc<dyn IrqPin>>) -> Self {
+        Self(Arc::new(Mutex::new(PlicInner::new(ctx_irqs))))
     }
 
-    pub fn irq_pin(self: Arc<Self>, irq: u32) -> PlicIrq {
-        PlicIrq { plic: self, irq, prev: AtomicBool::new(false) }
+    /// Get a IRQ pin from the interrupt controller.
+    ///
+    /// # Panics
+    /// Panics if `irq` supplied is outside the supported range.
+    pub fn irq_pin(&self, irq: u32) -> Arc<dyn IrqPin> {
+        assert!(irq > 0 && irq < 32);
+        Arc::new(PlicIrq { plic: Arc::downgrade(&self.0), irq, prev: AtomicBool::new(false) })
     }
 }
 
 impl IoMemory for Plic {
     fn read(&self, addr: usize, size: u32) -> u64 {
-        self.inner.read(addr, size)
+        self.0.lock().read(addr, size)
     }
 
     fn write(&self, addr: usize, value: u64, size: u32) {
-        self.inner.write(addr, value, size)
+        self.0.lock().write(addr, value, size)
     }
 }
 
@@ -279,7 +280,9 @@ impl IrqPin for PlicIrq {
         let prev = self.prev.swap(level, Ordering::Relaxed);
         // Edge trigger
         if level && !prev {
-            self.plic.inner.lock().trigger(self.irq);
+            if let Some(inner) = self.plic.upgrade() {
+                inner.lock().trigger(self.irq);
+            }
         }
     }
 }

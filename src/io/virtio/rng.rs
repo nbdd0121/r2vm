@@ -13,12 +13,12 @@ pub struct Rng {
 /// struct used by task
 struct Inner {
     rng: Box<dyn io::entropy::Entropy + Send>,
-    irq: Box<dyn IrqPin>,
+    irq: Arc<dyn IrqPin>,
 }
 
 impl Rng {
     /// Create a virtio entropy source device using a given random number generator.
-    pub fn new(irq: Box<dyn IrqPin>, rng: Box<dyn io::entropy::Entropy + Send>) -> Rng {
+    pub fn new(irq: Arc<dyn IrqPin>, rng: Box<dyn io::entropy::Entropy + Send>) -> Rng {
         let inner = Arc::new(Mutex::new(Inner { rng, irq }));
         Rng { status: 0, inner }
     }

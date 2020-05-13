@@ -16,7 +16,7 @@ usernet = { path = "../usernet", optional = true }
 p9 = { path = "../p9", optional = true }
 
 [features]
-default = ["block-file", "block-shadow", "network", "entropy", "fs", "hw-clint"]
+default = ["block-file", "block-shadow", "network", "entropy", "fs", "hw-clint", "hw-plic"]
 block = []
 block-file = ["block"]
 block-shadow = ["block", "fnv"]
@@ -27,3 +27,4 @@ entropy = ["rand"]
 fs = ["p9"]
 hw-intc = []
 hw-clint = ["hw-intc"]
+hw-plic = ["hw-intc"]
