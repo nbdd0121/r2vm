@@ -325,7 +325,10 @@ fn init_virtio(sys: &mut IoSystem) {
     }
 
     for config in crate::CONFIG.share.iter() {
-        sys.add_virtio(|irq| P9::new(Arc::new(irq), &config.tag, &config.path));
+        use io::fs::Passthrough;
+        sys.add_virtio(|irq| {
+            P9::new(Arc::new(irq), &config.tag, Passthrough::new(&config.path).unwrap())
+        });
     }
 
     init_network(sys);

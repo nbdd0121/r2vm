@@ -26,5 +26,8 @@ register: codegen
 unregister:
 	sudo bash -c "echo -1 > /proc/sys/fs/binfmt_misc/riscv"
 
+doc:
+	cargo doc --no-deps --workspace --all-features
+
 clippy:
 	cargo clippy -- --allow clippy::cast_lossless --allow clippy::unreadable_literal --allow clippy::trivially_copy_pass_by_ref -A clippy::identity_op -A clippy::cognitive_complexity -A clippy::new_without_default -A clippy::len_without_is_empty -A clippy::verbose_bit_mask

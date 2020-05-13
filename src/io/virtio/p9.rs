@@ -1,8 +1,9 @@
 use super::super::IrqPin;
 use super::{Device, DeviceId, Queue};
 use byteorder::{WriteBytesExt, LE};
+use io::fs::FileSystem;
 use p9::serialize::{Fcall, Serializable};
-use p9::{P9Handler, Passthrough};
+use p9::P9Handler;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -11,15 +12,19 @@ use std::io::{Seek, SeekFrom};
 /// Feature bit indicating presence of mount tag
 const VIRTIO_9P_MOUNT_TAG: u32 = 1;
 
-pub struct P9 {
+pub struct P9<FS: FileSystem> {
     status: u32,
     config: Box<[u8]>,
-    handler: Arc<Mutex<P9Handler<Passthrough>>>,
+    handler: Arc<Mutex<P9Handler<FS>>>,
     irq: Arc<dyn IrqPin>,
 }
 
-impl P9 {
-    pub fn new(irq: Arc<dyn IrqPin>, mount_tag: &str, path: &std::path::Path) -> P9 {
+impl<FS> P9<FS>
+where
+    FS: FileSystem + Send + 'static,
+    <FS as FileSystem>::File: Send,
+{
+    pub fn new(irq: Arc<dyn IrqPin>, mount_tag: &str, fs: FS) -> Self {
         // Config space is composed of u16 length followed by the tag bytes
         let config = {
             let tag_len = mount_tag.len();
@@ -34,45 +39,49 @@ impl P9 {
         P9 {
             status: 0,
             config: config.into_boxed_slice(),
-            handler: Arc::new(Mutex::new(P9Handler::new(Passthrough::new(path).unwrap()))),
+            handler: Arc::new(Mutex::new(P9Handler::new(fs))),
             irq,
         }
     }
-}
 
-fn start_task(mut queue: Queue, handler: Arc<Mutex<P9Handler<Passthrough>>>, irq: Arc<dyn IrqPin>) {
-    let task = async move {
-        while let Ok(mut buffer) = queue.take().await {
-            let (mut reader, mut writer) = buffer.reader_writer();
+    fn start_task(mut queue: Queue, handler: Arc<Mutex<P9Handler<FS>>>, irq: Arc<dyn IrqPin>) {
+        let task = async move {
+            while let Ok(mut buffer) = queue.take().await {
+                let (mut reader, mut writer) = buffer.reader_writer();
 
-            reader.seek(SeekFrom::Start(4)).unwrap();
-            let (tag, fcall) = <(u16, Fcall)>::decode(&mut reader).unwrap();
+                reader.seek(SeekFrom::Start(4)).unwrap();
+                let (tag, fcall) = <(u16, Fcall)>::decode(&mut reader).unwrap();
 
-            trace!(target: "9p", "received {}, {:?}", tag, fcall);
-            let resp = handler.lock().handle_fcall(fcall);
-            trace!(target: "9p", "send {}, {:?}", tag, resp);
+                trace!(target: "9p", "received {}, {:?}", tag, fcall);
+                let resp = handler.lock().handle_fcall(fcall);
+                trace!(target: "9p", "send {}, {:?}", tag, resp);
 
-            writer.seek(SeekFrom::Start(4)).unwrap();
-            (tag, resp).encode(&mut writer).unwrap();
-            let size = writer.seek(SeekFrom::Current(0)).unwrap();
-            writer.seek(SeekFrom::Start(0)).unwrap();
-            writer.write_u32::<LE>(size as u32).unwrap();
+                writer.seek(SeekFrom::Start(4)).unwrap();
+                (tag, resp).encode(&mut writer).unwrap();
+                let size = writer.seek(SeekFrom::Current(0)).unwrap();
+                writer.seek(SeekFrom::Start(0)).unwrap();
+                writer.write_u32::<LE>(size as u32).unwrap();
 
-            drop(buffer);
-            irq.pulse();
+                drop(buffer);
+                irq.pulse();
+            }
+        };
+        if crate::threaded() {
+            std::thread::Builder::new()
+                .name("virtio-p9".to_owned())
+                .spawn(move || futures::executor::block_on(task))
+                .unwrap();
+        } else {
+            crate::event_loop().spawn(task);
         }
-    };
-    if crate::threaded() {
-        std::thread::Builder::new()
-            .name("virtio-p9".to_owned())
-            .spawn(move || futures::executor::block_on(task))
-            .unwrap();
-    } else {
-        crate::event_loop().spawn(task);
     }
 }
 
-impl Device for P9 {
+impl<FS> Device for P9<FS>
+where
+    FS: FileSystem + Send + 'static,
+    <FS as FileSystem>::File: Send,
+{
     fn device_id(&self) -> DeviceId {
         DeviceId::P9
     }
@@ -96,6 +105,6 @@ impl Device for P9 {
         self.status = 0;
     }
     fn queue_ready(&mut self, _idx: usize, queue: Queue) {
-        start_task(queue, self.handler.clone(), self.irq.clone());
+        Self::start_task(queue, self.handler.clone(), self.irq.clone());
     }
 }

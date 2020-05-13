@@ -2,6 +2,8 @@
 pub mod block;
 #[cfg(feature = "entropy")]
 pub mod entropy;
+#[cfg(feature = "fs")]
+pub mod fs;
 #[cfg(feature = "network")]
 pub mod network;
 
