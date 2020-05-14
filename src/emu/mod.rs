@@ -120,7 +120,7 @@ impl IoSystem {
         // Instantiate PLIC and corresponding device tre
         let core_count = crate::core_count();
         let plic = Arc::new(Plic::new(
-            (0..core_count).map(|i| -> Arc<dyn IrqPin> { Arc::new(CoreIrq(i, 512)) }).collect(),
+            (0..core_count).map(|i| -> Box<dyn IrqPin> { Box::new(CoreIrq(i, 512)) }).collect(),
         ));
 
         let mut soc = fdt::Node::new("soc");
@@ -173,7 +173,7 @@ impl IoSystem {
     }
 
     /// Add a virtio device
-    pub fn add_virtio<T>(&mut self, f: impl FnOnce(Arc<dyn IrqPin>) -> T)
+    pub fn add_virtio<T>(&mut self, f: impl FnOnce(Box<dyn IrqPin>) -> T)
     where
         T: crate::io::virtio::Device + Send + 'static,
     {
@@ -221,13 +221,13 @@ pub static CLINT: Lazy<Clint> = Lazy::new(|| {
     Clint::new(
         Arc::new(DirectIoContext),
         (0..core_count)
-            .map(|i| -> Arc<dyn IrqPin> {
-                Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 2 } else { 8 }))
+            .map(|i| -> Box<dyn IrqPin> {
+                Box::new(CoreIrq(i, if crate::get_flags().prv == 1 { 2 } else { 8 }))
             })
             .collect(),
         (0..core_count)
-            .map(|i| -> Arc<dyn IrqPin> {
-                Arc::new(CoreIrq(i, if crate::get_flags().prv == 1 { 32 } else { 128 }))
+            .map(|i| -> Box<dyn IrqPin> {
+                Box::new(CoreIrq(i, if crate::get_flags().prv == 1 { 32 } else { 128 }))
             })
             .collect(),
     )

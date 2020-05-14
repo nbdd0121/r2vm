@@ -23,7 +23,7 @@ pub struct Network {
     net: Arc<dyn NetworkDevice>,
     status: u32,
     mac: [u8; 6],
-    irq: Arc<dyn IrqPin>,
+    irq: Arc<Box<dyn IrqPin>>,
     rx_handle: Option<AbortHandle>,
     io_ctx: Arc<dyn IoContext>,
 }
@@ -31,12 +31,12 @@ pub struct Network {
 impl Network {
     pub fn new(
         io_ctx: Arc<dyn IoContext>,
-        irq: Arc<dyn IrqPin>,
+        irq: Box<dyn IrqPin>,
         net: impl NetworkDevice + 'static,
         mac: [u8; 6],
     ) -> Network {
         let net = Arc::new(net);
-        Network { net, status: 0, mac, irq, rx_handle: None, io_ctx }
+        Network { net, status: 0, mac, irq: Arc::new(irq), rx_handle: None, io_ctx }
     }
 
     fn start_tx(&self, mut tx: Queue) {

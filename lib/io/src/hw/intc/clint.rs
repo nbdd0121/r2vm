@@ -9,8 +9,8 @@ pub struct Clint(Arc<Inner>);
 struct Inner {
     msip: Box<[AtomicBool]>,
     mtimecmp: Box<[AtomicU64]>,
-    msip_irqs: Box<[Arc<dyn IrqPin>]>,
-    mtip_irqs: Box<[Arc<dyn IrqPin>]>,
+    msip_irqs: Box<[Box<dyn IrqPin>]>,
+    mtip_irqs: Box<[Box<dyn IrqPin>]>,
     ctx: Arc<dyn RuntimeContext>,
 }
 
@@ -21,8 +21,8 @@ impl Clint {
     /// The function will panic if `msip_irqs` and `mtip_irqs` are not of the same length.
     pub fn new(
         ctx: Arc<dyn RuntimeContext>,
-        msip_irqs: Vec<Arc<dyn IrqPin>>,
-        mtip_irqs: Vec<Arc<dyn IrqPin>>,
+        msip_irqs: Vec<Box<dyn IrqPin>>,
+        mtip_irqs: Vec<Box<dyn IrqPin>>,
     ) -> Self {
         assert_eq!(msip_irqs.len(), mtip_irqs.len());
         let inner = Arc::new(Inner {

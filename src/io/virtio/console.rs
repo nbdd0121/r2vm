@@ -16,7 +16,7 @@ fn size_to_config(col: u16, row: u16) -> [u8; 4] {
 /// A virtio entropy source device.
 pub struct Console {
     status: u32,
-    irq: Arc<dyn IrqPin>,
+    irq: Arc<Box<dyn IrqPin>>,
     /// Whether sizing feature should be available. We allow it to be turned off because sometimes
     /// STDIN is not tty.
     resize: bool,
@@ -25,7 +25,7 @@ pub struct Console {
     rx_handle: Option<AbortHandle>,
 }
 
-fn start_rx(mut rx: Queue, irq: Arc<dyn IrqPin>) -> AbortHandle {
+fn start_rx(mut rx: Queue, irq: Arc<Box<dyn IrqPin>>) -> AbortHandle {
     let (handle, reg) = futures::future::AbortHandle::new_pair();
     crate::event_loop().spawn(async move {
         let _ = futures::future::Abortable::new(async move {
@@ -51,7 +51,7 @@ fn start_rx(mut rx: Queue, irq: Arc<dyn IrqPin>) -> AbortHandle {
     handle
 }
 
-fn start_tx(mut tx: Queue, irq: Arc<dyn IrqPin>) {
+fn start_tx(mut tx: Queue, irq: Arc<Box<dyn IrqPin>>) {
     crate::event_loop().spawn(async move {
         while let Ok(buffer) = tx.take().await {
             let mut reader = buffer.reader();
@@ -74,7 +74,8 @@ impl Drop for Console {
 }
 
 impl Console {
-    pub fn new(irq: Arc<dyn IrqPin>, mut resize: bool) -> Console {
+    pub fn new(irq: Box<dyn IrqPin>, mut resize: bool) -> Console {
+        let irq = Arc::new(irq);
         let (col, row) = if resize {
             match crate::io::console::CONSOLE.get_size() {
                 Ok(v) => v,

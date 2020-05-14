@@ -72,7 +72,7 @@ pub struct Xemaclite {
 
 struct Inner {
     state: Mutex<State>,
-    irq: Arc<dyn IrqPin>,
+    irq: Box<dyn IrqPin>,
     net: Arc<dyn NetworkDevice>,
     io_ctx: Arc<dyn IoContext>,
 }
@@ -114,7 +114,7 @@ impl Drop for Xemaclite {
 impl Xemaclite {
     pub fn new(
         io_ctx: Arc<dyn IoContext>,
-        irq: Arc<dyn IrqPin>,
+        irq: Box<dyn IrqPin>,
         net: Arc<dyn NetworkDevice>,
     ) -> Self {
         let state = State {

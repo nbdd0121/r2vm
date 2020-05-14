@@ -28,7 +28,7 @@ struct PlicInner {
     claimed: u32,
     enable: Box<[u32]>,
     threshold: Box<[u8]>,
-    irq: Box<[Arc<dyn IrqPin>]>,
+    irq: Box<[Box<dyn IrqPin>]>,
 }
 
 pub struct PlicIrq {
@@ -39,7 +39,7 @@ pub struct PlicIrq {
 
 impl PlicInner {
     /// Create a SiFive-compatible PLIC, with `ctx` number of contexts.
-    fn new(ctx_irqs: Vec<Arc<dyn IrqPin>>) -> Self {
+    fn new(ctx_irqs: Vec<Box<dyn IrqPin>>) -> Self {
         Self {
             priority: [0; 32],
             pending: 0,
@@ -251,7 +251,7 @@ impl PlicInner {
 
 impl Plic {
     /// Create a SiFive-compatible PLIC, with `ctx` number of contexts.
-    pub fn new(ctx_irqs: Vec<Arc<dyn IrqPin>>) -> Self {
+    pub fn new(ctx_irqs: Vec<Box<dyn IrqPin>>) -> Self {
         Self(Arc::new(Mutex::new(PlicInner::new(ctx_irqs))))
     }
 
@@ -259,9 +259,9 @@ impl Plic {
     ///
     /// # Panics
     /// Panics if `irq` supplied is outside the supported range.
-    pub fn irq_pin(&self, irq: u32) -> Arc<dyn IrqPin> {
+    pub fn irq_pin(&self, irq: u32) -> Box<dyn IrqPin> {
         assert!(irq > 0 && irq < 32);
-        Arc::new(PlicIrq { plic: Arc::downgrade(&self.0), irq, prev: AtomicBool::new(false) })
+        Box::new(PlicIrq { plic: Arc::downgrade(&self.0), irq, prev: AtomicBool::new(false) })
     }
 }
 

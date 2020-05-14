@@ -16,7 +16,7 @@ pub struct P9<FS: FileSystem> {
     status: u32,
     config: Box<[u8]>,
     handler: Arc<Mutex<P9Handler<FS>>>,
-    irq: Arc<dyn IrqPin>,
+    irq: Arc<Box<dyn IrqPin>>,
 }
 
 impl<FS> P9<FS>
@@ -24,7 +24,7 @@ where
     FS: FileSystem + Send + 'static,
     <FS as FileSystem>::File: Send,
 {
-    pub fn new(irq: Arc<dyn IrqPin>, mount_tag: &str, fs: FS) -> Self {
+    pub fn new(irq: Box<dyn IrqPin>, mount_tag: &str, fs: FS) -> Self {
         // Config space is composed of u16 length followed by the tag bytes
         let config = {
             let tag_len = mount_tag.len();
@@ -40,11 +40,11 @@ where
             status: 0,
             config: config.into_boxed_slice(),
             handler: Arc::new(Mutex::new(P9Handler::new(fs))),
-            irq,
+            irq: Arc::new(irq),
         }
     }
 
-    fn start_task(mut queue: Queue, handler: Arc<Mutex<P9Handler<FS>>>, irq: Arc<dyn IrqPin>) {
+    fn start_task(mut queue: Queue, handler: Arc<Mutex<P9Handler<FS>>>, irq: Arc<Box<dyn IrqPin>>) {
         let task = async move {
             while let Ok(mut buffer) = queue.take().await {
                 let (mut reader, mut writer) = buffer.reader_writer();

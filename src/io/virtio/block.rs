@@ -24,14 +24,14 @@ pub struct Block {
     status: u32,
     config: [u8; 8],
     file: Arc<Mutex<Box<dyn BlockDevice + Send>>>,
-    irq: Arc<dyn IrqPin>,
+    irq: Arc<Box<dyn IrqPin>>,
     io_ctx: Arc<dyn IoContext>,
 }
 
 impl Block {
     pub fn new(
         io_ctx: Arc<dyn IoContext>,
-        irq: Arc<dyn IrqPin>,
+        irq: Box<dyn IrqPin>,
         file: Box<dyn BlockDevice + Send>,
     ) -> Block {
         let len = file.len();
@@ -42,7 +42,7 @@ impl Block {
             status: 0,
             config: (len / 512).to_le_bytes(),
             file: Arc::new(Mutex::new(file)),
-            irq,
+            irq: Arc::new(irq),
             io_ctx,
         }
     }
@@ -52,7 +52,7 @@ fn start_task(
     mut queue: Queue,
     io_ctx: &dyn IoContext,
     file: Arc<Mutex<Box<dyn BlockDevice + Send>>>,
-    irq: Arc<dyn IrqPin>,
+    irq: Arc<Box<dyn IrqPin>>,
 ) {
     let task = async move {
         while let Ok(mut buffer) = queue.take().await {
