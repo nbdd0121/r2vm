@@ -6,7 +6,7 @@
 //! | [RSP-8]  | return address                                       |   |   |   |
 //! | [RSP-16] | next translated PC, when executing a helper function |   |   |   |
 
-use super::interp::Context;
+use super::interp::{Context, SharedContext};
 use crate::sim::{get_memory_model, new_pipeline_model, PipelineModel};
 use fiber::raw::{fiber_sleep_raw, fiber_yield_raw};
 use riscv::{Csr, Op};
@@ -17,8 +17,8 @@ use x86::{ConditionCode, Op as X86Op, Op::*, Register, Size};
 const PAGE_CROSS_RESERVATION: usize = 256;
 
 macro_rules! memory_of {
-    ( $($e:ident).* ) => {
-        Register::RBP + offset_of!(Context, $($e).*) as i32
+    ($e:ident) => {
+        Register::RBP + offset_of!(Context, $e) as i32
     };
 }
 
@@ -473,7 +473,7 @@ impl<'a> DbtCompiler<'a> {
             return;
         }
 
-        let offset = offset_of!(Context, shared.i_line);
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, i_line);
 
         // RCX = idx = addr >> CACHE_LINE_SIZE_LOG2
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));
@@ -527,7 +527,7 @@ impl<'a> DbtCompiler<'a> {
         // Control flow may leave in this function
         self.before_side_effect();
 
-        let offset = offset_of!(Context, shared.alarm);
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, alarm);
         self.emit(Cmp(Mem(Register::RBP + offset as i32), Imm(0)));
         self.emit_helper_jcc(ConditionCode::NotEqual, helper_check_interrupt);
     }
@@ -561,7 +561,7 @@ impl<'a> DbtCompiler<'a> {
             None
         };
 
-        let offset = offset_of!(Context, shared.line);
+        let offset = offset_of!(Context, shared) + offset_of!(SharedContext, line);
 
         // RCX = idx = addr >> CACHE_LINE_SIZE_LOG2
         self.emit(Mov(Reg(Register::RCX), OpReg(Register::RSI)));

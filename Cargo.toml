@@ -14,7 +14,6 @@ members = [
     "lib/usernet",
     "lib/atomic_ext",
     "lib/fiber",
-    "lib/offset_of",
     "lib/io",
 ]
 
@@ -34,6 +33,7 @@ lock_api = "0.3"
 parking_lot = "0.9"
 futures = "0.3"
 once_cell = "1.3"
+memoffset = "0.5"
 softfp = { path = "lib/softfp" }
 p9 = { path = "lib/p9" }
 x86 = { path = "lib/x86" }
@@ -41,7 +41,6 @@ riscv = { path = "lib/riscv" }
 fdt = { path = "lib/fdt" }
 atomic_ext = { path = "lib/atomic_ext" }
 fiber = { path = "lib/fiber" }
-offset_of = { path = "lib/offset_of" }
 io = { path = "lib/io" }
 
 [profile.dev]

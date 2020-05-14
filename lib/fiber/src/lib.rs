@@ -1,5 +1,5 @@
 #[macro_use]
-extern crate offset_of;
+extern crate memoffset;
 
 use parking_lot::{Condvar as PCondvar, Mutex as PMutex};
 use std::any::Any;

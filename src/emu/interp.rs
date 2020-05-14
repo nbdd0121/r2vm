@@ -94,7 +94,7 @@ impl SharedContext {
         assert_eq!(offset_of!(Context, pc), 0x100);
         assert_eq!(offset_of!(Context, instret), 0x108);
         assert_eq!(offset_of!(Context, cycle_offset), 0x128);
-        assert_eq!(offset_of!(Context, shared.alarm), 0x130);
+        assert_eq!(offset_of!(Context, shared) + offset_of!(SharedContext, alarm), 0x130);
 
         SharedContext {
             mip: AtomicU64::new(0),
