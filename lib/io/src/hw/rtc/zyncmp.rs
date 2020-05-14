@@ -1,4 +1,4 @@
-use io::IoMemory;
+use crate::{IoMemory, IrqPin};
 
 const ADDR_SET_TM_WR: usize = 0x00;
 const ADDR_SET_TM_RD: usize = 0x04;
@@ -16,16 +16,17 @@ const ADDR_CTRL: usize = 0x40;
 const CTRL_BATT_EN: u32 = 1 << 31;
 
 /// An implementation of Xilinx Zynq Ultrascale+ MPSoC RTC.
-/// This implementation does not support setting. It supports read only.
-pub struct Rtc {}
+///
+/// Currently this implementation is read only.
+pub struct ZyncMp {}
 
-impl Rtc {
-    pub fn new(_alarm_irq: u32, _sec_irq: u32) -> Rtc {
-        Rtc {}
+impl ZyncMp {
+    pub fn new(_alarm_irq: Box<dyn IrqPin>, _sec_irq: Box<dyn IrqPin>) -> ZyncMp {
+        ZyncMp {}
     }
 }
 
-impl IoMemory for Rtc {
+impl IoMemory for ZyncMp {
     fn read(&self, addr: usize, size: u32) -> u64 {
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {

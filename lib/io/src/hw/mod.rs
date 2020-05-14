@@ -24,5 +24,5 @@
 //! [`Weak`]: std::sync::Weak
 //! [`Mutex`]: std::sync::Mutex
 
-#[cfg(feature = "hw-intc")]
 pub mod intc;
+pub mod rtc;

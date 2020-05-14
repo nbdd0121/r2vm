@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::io::rtc::Rtc;
 use crate::io::virtio::{Block, Console, Mmio, Rng, P9};
 use futures::future::BoxFuture;
 use io::hw::intc::{Clint, Plic};
+use io::hw::rtc::ZyncMp;
 use io::{IoMemory, IrqPin};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -183,7 +183,7 @@ impl IoSystem {
         let mem = self.boundary;
         self.boundary += 4096;
 
-        let device = Box::new(f(self.plic.clone().irq_pin(irq)));
+        let device = Box::new(f(self.plic.irq_pin(irq)));
         let virtio = Arc::new(Mutex::new(Mmio::new(Arc::new(DirectIoContext), device)));
         self.register_io_mem(mem, 4096, virtio.clone());
 
@@ -274,7 +274,7 @@ fn init_network(sys: &mut IoSystem) {
                 use crate::io::network::xemaclite::Xemaclite;
                 let xemaclite = Xemaclite::new(
                     Arc::new(DirectIoContext),
-                    sys.plic.clone().irq_pin(irq),
+                    sys.plic.irq_pin(irq),
                     Arc::new(usernet),
                 );
                 sys.register_io_mem(base, 0x2000, Arc::new(xemaclite));
@@ -338,7 +338,7 @@ fn init_rtc(sys: &mut IoSystem) {
     let mem = sys.boundary;
     sys.boundary += 4096;
 
-    let rtc = Arc::new(Rtc::new(irq, irq + 1));
+    let rtc = Arc::new(ZyncMp::new(sys.plic.irq_pin(irq), sys.plic.irq_pin(irq + 1)));
     sys.register_io_mem(mem, 4096, rtc);
 
     let node = sys.fdt.add_node(format!("rtc@{:x}", mem));
