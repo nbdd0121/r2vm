@@ -5,23 +5,23 @@ use std::io::Result;
 /// A shadow block device that captures all write requests to the underlying block device.
 ///
 /// All modified data will be kept in memory and not forwarded to the underlying block device.
-pub struct Shadow {
-    underlying: Box<dyn Block + Send>,
+pub struct Shadow<T> {
     overlay: FnvHashMap<u64, Box<[u8]>>,
+    block: T,
 }
 
-impl Shadow {
+impl<T> Shadow<T> {
     /// Construct a new `Shadow`.
-    pub fn new(underlying: impl Block + Send + 'static) -> Self {
-        Shadow { underlying: Box::new(underlying), overlay: FnvHashMap::default() }
+    pub fn new(block: T) -> Self {
+        Shadow { block, overlay: FnvHashMap::default() }
     }
 }
 
-impl Block for Shadow {
+impl<T: Block> Block for Shadow<T> {
     fn read_exact_at(&mut self, buf: &mut [u8], mut offset: u64) -> Result<()> {
         for chunk in buf.chunks_mut(512) {
             match self.overlay.get(&offset) {
-                None => self.underlying.read_exact_at(chunk, offset)?,
+                None => self.block.read_exact_at(chunk, offset)?,
                 Some(v) => chunk.copy_from_slice(v),
             }
             offset += 512
@@ -42,13 +42,13 @@ impl Block for Shadow {
     }
 
     fn len(&self) -> u64 {
-        self.underlying.len()
+        self.block.len()
     }
 
     fn capability(&self) -> Capability {
-        let underlying_cap = self.underlying.capability();
+        let orig_cap = self.block.capability();
         let mut cap = Capability::default();
-        cap.blksize = underlying_cap.blksize;
+        cap.blksize = orig_cap.blksize;
         cap
     }
 }

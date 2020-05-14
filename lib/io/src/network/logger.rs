@@ -5,12 +5,12 @@ use std::io::{Result, Write};
 use std::task::{Context, Poll};
 
 /// A logger network device that captures all traffics and write to a pcap dump.
-pub struct Logger<T: Network> {
+pub struct Logger<T> {
     file: File,
     network: T,
 }
 
-impl<T: Network> Logger<T> {
+impl<T> Logger<T> {
     /// Create a new logger that captures traffic to the given file in pcap dump format.
     pub fn new(mut file: File, network: T) -> Self {
         // Write the header of pcap dump format.
