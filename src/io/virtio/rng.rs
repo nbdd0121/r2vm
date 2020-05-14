@@ -1,5 +1,5 @@
-use super::super::IrqPin;
 use super::{Device, DeviceId, Queue};
+use io::IrqPin;
 use parking_lot::Mutex;
 use std::io::Read;
 use std::sync::Arc;

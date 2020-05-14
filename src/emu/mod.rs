@@ -83,8 +83,6 @@ impl io::RuntimeContext for DirectIoContext {
     }
 }
 
-impl crate::io::IoContext for DirectIoContext {}
-
 struct CoreIrq(usize, u64);
 
 impl IrqPin for CoreIrq {

@@ -1,7 +1,7 @@
-use super::super::{IoContext, IrqPin};
 use super::{Device, DeviceId, Queue};
 use futures::future::AbortHandle;
 use io::network::Network as NetworkDevice;
+use io::{IrqPin, RuntimeContext};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -25,25 +25,25 @@ pub struct Network {
     mac: [u8; 6],
     irq: Arc<Box<dyn IrqPin>>,
     rx_handle: Option<AbortHandle>,
-    io_ctx: Arc<dyn IoContext>,
+    ctx: Arc<dyn RuntimeContext>,
 }
 
 impl Network {
     pub fn new(
-        io_ctx: Arc<dyn IoContext>,
+        ctx: Arc<dyn RuntimeContext>,
         irq: Box<dyn IrqPin>,
         net: impl NetworkDevice + 'static,
         mac: [u8; 6],
     ) -> Network {
         let net = Arc::new(net);
-        Network { net, status: 0, mac, irq: Arc::new(irq), rx_handle: None, io_ctx }
+        Network { net, status: 0, mac, irq: Arc::new(irq), rx_handle: None, ctx }
     }
 
     fn start_tx(&self, mut tx: Queue) {
         let iface = self.net.clone();
         let irq = self.irq.clone();
         // There's no stop mechanism, but we don't destroy devices anyway, so that's okay.
-        self.io_ctx.spawn(Box::pin(async move {
+        self.ctx.spawn(Box::pin(async move {
             while let Ok(buffer) = tx.take().await {
                 let mut reader = buffer.reader();
 
@@ -72,7 +72,7 @@ impl Network {
         let iface = self.net.clone();
         let irq = self.irq.clone();
         let (handle, reg) = futures::future::AbortHandle::new_pair();
-        self.io_ctx.spawn(Box::pin(async move {
+        self.ctx.spawn(Box::pin(async move {
             let _ = futures::future::Abortable::new(async move {
                 let mut buffer = [0; 2048];
                 loop {

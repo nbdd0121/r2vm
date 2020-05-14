@@ -6,7 +6,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
-use super::super::IoContext;
+use io::DmaContext;
 
 const VIRTQ_DESC_F_NEXT: u16 = 1;
 const VIRTQ_DESC_F_WRITE: u16 = 2;
@@ -36,11 +36,11 @@ pub(super) struct QueueInner {
     pub last_avail_idx: u16,
     pub last_used_idx: u16,
     pub waker: Option<Waker>,
-    pub io_ctx: Arc<dyn IoContext>,
+    pub dma_ctx: Arc<dyn DmaContext>,
 }
 
 impl QueueInner {
-    pub fn new(io_ctx: Arc<dyn IoContext>, num_max: u16) -> Arc<Mutex<QueueInner>> {
+    pub fn new(dma_ctx: Arc<dyn DmaContext>, num_max: u16) -> Arc<Mutex<QueueInner>> {
         let inner = Arc::new(Mutex::new(QueueInner {
             ready: false,
             num: num_max,
@@ -51,7 +51,7 @@ impl QueueInner {
             waker: None,
             last_avail_idx: 0,
             last_used_idx: 0,
-            io_ctx,
+            dma_ctx,
         }));
         inner
     }
@@ -76,7 +76,7 @@ impl QueueInner {
         }
 
         // Read the current index
-        let avail_idx = self.io_ctx.read_u16(self.avail_addr + 2);
+        let avail_idx = self.dma_ctx.read_u16(self.avail_addr + 2);
 
         // No extra elements in this queue
         if self.last_avail_idx == avail_idx {
@@ -87,7 +87,7 @@ impl QueueInner {
         // Each index is 2 bytes, and there are flags and idx (2 bytes each) before the ring, so
         // we have + 4 here.
         let idx_ptr = self.avail_addr + 4 + (self.last_avail_idx & (self.num - 1)) as u64 * 2;
-        let mut idx = self.io_ctx.read_u16(idx_ptr);
+        let mut idx = self.dma_ctx.read_u16(idx_ptr);
 
         // Now we have obtained this descriptor, increment the index to skip over this.
         self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
@@ -100,12 +100,12 @@ impl QueueInner {
             write: Vec::new(),
             read_len: 0,
             write_len: 0,
-            io_ctx: self.io_ctx.clone(),
+            dma_ctx: self.dma_ctx.clone(),
         };
 
         loop {
             let mut desc = [0; std::mem::size_of::<VirtqDesc>()];
-            self.io_ctx.dma_read(self.desc_addr + (idx & (self.num - 1)) as u64 * 16, &mut desc);
+            self.dma_ctx.dma_read(self.desc_addr + (idx & (self.num - 1)) as u64 * 16, &mut desc);
             let desc: VirtqDesc = unsafe { std::mem::transmute(desc) };
 
             // Add to the corresponding buffer (read/write)
@@ -138,10 +138,10 @@ impl QueueInner {
         let mut buffer = [0; 8];
         buffer[0..4].copy_from_slice(&(avail.idx as u32).to_le_bytes());
         buffer[4..8].copy_from_slice(&(avail.bytes_written as u32).to_le_bytes());
-        self.io_ctx.dma_write(elem_ptr, &buffer);
+        self.dma_ctx.dma_write(elem_ptr, &buffer);
 
         self.last_used_idx = self.last_used_idx.wrapping_add(1);
-        self.io_ctx.write_u16(self.used_addr + 2, self.last_used_idx);
+        self.dma_ctx.write_u16(self.used_addr + 2, self.last_used_idx);
     }
 }
 
@@ -191,7 +191,7 @@ pub struct Buffer {
     write: Vec<(u64, usize)>,
     read_len: usize,
     write_len: usize,
-    io_ctx: Arc<dyn IoContext>,
+    dma_ctx: Arc<dyn DmaContext>,
 }
 
 impl Drop for Buffer {
@@ -208,7 +208,7 @@ impl Buffer {
             pos: 0,
             slice_idx: 0,
             slice_offset: 0,
-            io_ctx: &*self.io_ctx,
+            dma_ctx: &*self.dma_ctx,
         }
     }
 
@@ -220,7 +220,7 @@ impl Buffer {
             pos: 0,
             slice_idx: 0,
             slice_offset: 0,
-            io_ctx: &*self.io_ctx,
+            dma_ctx: &*self.dma_ctx,
         }
     }
 
@@ -232,7 +232,7 @@ impl Buffer {
                 pos: 0,
                 slice_idx: 0,
                 slice_offset: 0,
-                io_ctx: &*self.io_ctx,
+                dma_ctx: &*self.dma_ctx,
             },
             BufferWriter {
                 buffer: &self.write,
@@ -241,7 +241,7 @@ impl Buffer {
                 pos: 0,
                 slice_idx: 0,
                 slice_offset: 0,
-                io_ctx: &*self.io_ctx,
+                dma_ctx: &*self.dma_ctx,
             },
         )
     }
@@ -253,7 +253,7 @@ pub struct BufferReader<'a> {
     pos: usize,
     slice_idx: usize,
     slice_offset: usize,
-    io_ctx: &'a dyn IoContext,
+    dma_ctx: &'a dyn DmaContext,
 }
 
 impl<'a> BufferReader<'a> {
@@ -309,12 +309,12 @@ impl<'a> Read for BufferReader<'a> {
         let slice_len = len - self.slice_offset;
 
         let len = if buf.len() >= slice_len {
-            self.io_ctx.dma_read(slice_addr, &mut buf[..slice_len]);
+            self.dma_ctx.dma_read(slice_addr, &mut buf[..slice_len]);
             self.slice_idx += 1;
             self.slice_offset = 0;
             slice_len
         } else {
-            self.io_ctx.dma_read(slice_addr, buf);
+            self.dma_ctx.dma_read(slice_addr, buf);
             self.slice_offset += buf.len();
             buf.len()
         };
@@ -331,7 +331,7 @@ pub struct BufferWriter<'a> {
     pos: usize,
     slice_idx: usize,
     slice_offset: usize,
-    io_ctx: &'a dyn IoContext,
+    dma_ctx: &'a dyn DmaContext,
 }
 
 impl<'a> BufferWriter<'a> {
@@ -391,12 +391,12 @@ impl<'a> Write for BufferWriter<'a> {
         let slice_len = len - self.slice_offset;
 
         let len = if buf.len() >= slice_len {
-            self.io_ctx.dma_write(slice_addr, &buf[..slice_len]);
+            self.dma_ctx.dma_write(slice_addr, &buf[..slice_len]);
             self.slice_idx += 1;
             self.slice_offset = 0;
             slice_len
         } else {
-            self.io_ctx.dma_write(slice_addr, buf);
+            self.dma_ctx.dma_write(slice_addr, buf);
             self.slice_offset += buf.len();
             buf.len()
         };

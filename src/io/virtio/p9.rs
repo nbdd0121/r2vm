@@ -1,7 +1,7 @@
-use super::super::IrqPin;
 use super::{Device, DeviceId, Queue};
 use byteorder::{WriteBytesExt, LE};
 use io::fs::FileSystem;
+use io::IrqPin;
 use p9::serialize::{Fcall, Serializable};
 use p9::P9Handler;
 use parking_lot::Mutex;

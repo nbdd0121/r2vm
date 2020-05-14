@@ -1,6 +1,6 @@
-use super::super::IrqPin;
 use super::{Device, DeviceId, Queue};
 use futures::future::AbortHandle;
+use io::IrqPin;
 use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::sync::Arc;

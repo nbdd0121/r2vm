@@ -1,6 +1,5 @@
-use super::super::IoContext;
 use super::Device;
-use io::IoMemoryMut;
+use io::{DmaContext, IoMemoryMut};
 
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -36,16 +35,16 @@ pub struct Mmio {
     device_features_sel: bool,
     driver_features_sel: bool,
     queue_sel: usize,
-    io_ctx: Arc<dyn IoContext>,
+    dma_ctx: Arc<dyn DmaContext>,
 }
 
 impl Mmio {
-    pub fn new(io_ctx: Arc<dyn IoContext>, dev: Box<dyn Device + Send>) -> Mmio {
+    pub fn new(dma_ctx: Arc<dyn DmaContext>, dev: Box<dyn Device + Send>) -> Mmio {
         let num_queues = dev.num_queues();
         let mut queues = Vec::with_capacity(num_queues);
         for i in 0..num_queues {
             let len_max = dev.max_queue_len(i);
-            let queue = super::queue::QueueInner::new(io_ctx.clone(), len_max);
+            let queue = super::queue::QueueInner::new(dma_ctx.clone(), len_max);
             queues.push(queue);
         }
         Mmio {
@@ -54,7 +53,7 @@ impl Mmio {
             device_features_sel: false,
             driver_features_sel: false,
             queue_sel: 0,
-            io_ctx,
+            dma_ctx,
         }
     }
 }
@@ -231,7 +230,7 @@ impl IoMemoryMut for Mmio {
                             lock.waker.take().map(|x| x.wake());
                         }
                         let inner = super::queue::QueueInner::new(
-                            self.io_ctx.clone(),
+                            self.dma_ctx.clone(),
                             self.device.max_queue_len(i),
                         );
                         *queue = inner;
