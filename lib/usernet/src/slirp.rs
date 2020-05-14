@@ -43,7 +43,7 @@ struct Inner {
     /// Packets yet to be received,
     packet: VecDeque<Vec<u8>>,
     /// Waker to call when a new packet arrives.
-    waker: Option<Waker>,
+    waker: Vec<Waker>,
     /// Indicate that the `Network` for this slirp is dropped, but by doing so it only signals to
     /// poll stop, and we perform cleanup only until all Arc references to Inner are dropped.
     stop: bool,
@@ -82,7 +82,7 @@ extern "C" fn send_packet(buf: *const c_void, len: usize, opaque: *mut c_void) -
         return -1;
     }
     inner.packet.push_back(slice.to_owned());
-    inner.waker.take().map(|x| x.wake());
+    inner.waker.drain(..).for_each(|x| x.wake());
     len as isize
 }
 
@@ -287,7 +287,7 @@ impl Network {
             slirp: std::ptr::null_mut(),
             weak: Weak::new(),
             packet: VecDeque::new(),
-            waker: None,
+            waker: Vec::new(),
             stop: false,
         }));
 
@@ -370,7 +370,9 @@ impl Network {
                 Poll::Ready(Ok(len))
             }
             None => {
-                guard.waker = Some(cx.waker().clone());
+                if !guard.waker.iter().any(|w| w.will_wake(cx.waker())) {
+                    guard.waker.push(cx.waker().clone());
+                }
                 Poll::Pending
             }
         }
