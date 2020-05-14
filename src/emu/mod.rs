@@ -271,15 +271,15 @@ fn init_network(sys: &mut IoSystem) {
                     Some(v) => v,
                 };
 
-                use crate::io::network::xemaclite::Xemaclite;
-                let xemaclite = Xemaclite::new(
+                use io::hw::network::XemacLite;
+                let xemaclite = XemacLite::new(
                     Arc::new(DirectIoContext),
                     sys.plic.irq_pin(irq),
-                    Arc::new(usernet),
+                    Box::new(usernet),
                 );
                 sys.register_io_mem(base, 0x2000, Arc::new(xemaclite));
                 let core_count = crate::core_count();
-                sys.fdt.child.push(Xemaclite::build_fdt(
+                sys.fdt.child.push(XemacLite::build_dt(
                     (base as u64, 0x2000),
                     (core_count as u32 + 1, irq),
                     mac,

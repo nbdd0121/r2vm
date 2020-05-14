@@ -1,10 +1,10 @@
-use super::super::IoContext;
+use crate::network::Network as NetworkDevice;
+use crate::RuntimeContext;
+use crate::{IoMemory, IrqPin};
 use byteorder::{ByteOrder, LE};
 use futures::channel::mpsc::Sender;
 use futures::future::{poll_fn, AbortHandle};
 use futures::prelude::*;
-use io::network::Network as NetworkDevice;
-use io::{IoMemory, IrqPin};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::task::Poll;
@@ -64,17 +64,18 @@ const ADDR_RX_CTRL_PING: usize = 0x17FC;
 const ADDR_RX_CTRL_PONG: usize = 0x1FFC;
 
 /// An implementation of Xilinx's AXI Ethernet Lite MAC
-pub struct Xemaclite {
+pub struct XemacLite {
     inner: Arc<Inner>,
     rx_handle: AbortHandle,
+    // This sender is placed here so its dropping will cause tx task to stop.
     tx_sender: Mutex<Sender<bool>>,
 }
 
 struct Inner {
     state: Mutex<State>,
     irq: Box<dyn IrqPin>,
-    net: Arc<dyn NetworkDevice>,
-    io_ctx: Arc<dyn IoContext>,
+    net: Box<dyn NetworkDevice>,
+    ctx: Arc<dyn RuntimeContext>,
 }
 
 /// Mutable states associated with the device
@@ -105,17 +106,17 @@ struct State {
     mii: Mii,
 }
 
-impl Drop for Xemaclite {
+impl Drop for XemacLite {
     fn drop(&mut self) {
         self.rx_handle.abort();
     }
 }
 
-impl Xemaclite {
+impl XemacLite {
     pub fn new(
-        io_ctx: Arc<dyn IoContext>,
+        ctx: Arc<dyn RuntimeContext>,
         irq: Box<dyn IrqPin>,
-        net: Arc<dyn NetworkDevice>,
+        net: Box<dyn NetworkDevice>,
     ) -> Self {
         let state = State {
             mdio_enable: false,
@@ -137,7 +138,7 @@ impl Xemaclite {
             mac: [0; 6],
             mii: Mii,
         };
-        let inner = Arc::new(Inner { state: Mutex::new(state), io_ctx, irq, net });
+        let inner = Arc::new(Inner { state: Mutex::new(state), ctx, irq, net });
         let rx_handle = Self::start_rx(inner.clone());
         let tx_sender = Self::start_tx(inner.clone());
         Self { inner, rx_handle, tx_sender: Mutex::new(tx_sender) }
@@ -145,8 +146,8 @@ impl Xemaclite {
 
     fn start_tx(inner: Arc<Inner>) -> futures::channel::mpsc::Sender<bool> {
         let (sender, mut recv) = futures::channel::mpsc::channel::<bool>(2);
-        let io_ctx = inner.io_ctx.clone();
-        io_ctx.spawn(Box::pin(async move {
+        let ctx = inner.ctx.clone();
+        ctx.spawn(Box::pin(async move {
             while let Some(pong) = recv.next().await {
                 poll_fn(|cx| {
                     let mut state = inner.state.lock();
@@ -181,7 +182,7 @@ impl Xemaclite {
     }
 }
 
-impl IoMemory for Xemaclite {
+impl IoMemory for XemacLite {
     fn read(&self, addr: usize, size: u32) -> u64 {
         let state = self.inner.state.lock();
 
@@ -191,7 +192,7 @@ impl IoMemory for Xemaclite {
         }
         // This I/O memory region supports 32-bit memory access only
         if size != 4 {
-            error!(target: "Xemaclite", "illegal register read 0x{:x}", addr);
+            error!(target: "xemaclite", "illegal register read 0x{:x}", addr);
             return 0;
         }
         (match addr {
@@ -314,11 +315,11 @@ impl IoMemory for Xemaclite {
     }
 }
 
-impl Xemaclite {
+impl XemacLite {
     fn start_rx(inner: Arc<Inner>) -> AbortHandle {
-        let io_ctx = inner.io_ctx.clone();
+        let ctx = inner.ctx.clone();
         let (handle, reg) = futures::future::AbortHandle::new_pair();
-        io_ctx.spawn(Box::pin(async move {
+        ctx.spawn(Box::pin(async move {
             let _ = futures::future::Abortable::new(
                 async move {
                     let mut buffer = [0; 2048];
@@ -368,7 +369,9 @@ impl Xemaclite {
         handle
     }
 
-    pub fn build_fdt(mem: (u64, u64), irq: (u32, u32), mac: [u8; 6]) -> fdt::Node {
+    /// <div class="stability" style="margin-left: 16px; margin-top: -9px;"><div class="stab unstable"><span class="emoji">🔬</span> This is a unstable API.</div></div>
+    /// Build the device tree for this device.
+    pub fn build_dt(mem: (u64, u64), irq: (u32, u32), mac: [u8; 6]) -> fdt::Node {
         let mut node = fdt::Node::new(format!("ethernet@{:x}", mem.0));
         node.add_prop("reg", &[mem.0, mem.1][..]);
         node.add_prop("interrupts-extended", &[irq.0, irq.1][..]);

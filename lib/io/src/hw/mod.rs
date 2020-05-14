@@ -25,4 +25,5 @@
 //! [`Mutex`]: std::sync::Mutex
 
 pub mod intc;
+pub mod network;
 pub mod rtc;

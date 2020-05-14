@@ -1,11 +1,11 @@
 //! Interrupt controllers.
 
-#[cfg(feature = "hw-clint")]
+#[cfg(feature = "intc-clint")]
 mod clint;
-#[cfg(feature = "hw-clint")]
+#[cfg(feature = "intc-clint")]
 pub use clint::Clint;
 
-#[cfg(feature = "hw-plic")]
+#[cfg(feature = "intc-plic")]
 mod plic;
-#[cfg(feature = "hw-plic")]
+#[cfg(feature = "intc-plic")]
 pub use plic::Plic;
