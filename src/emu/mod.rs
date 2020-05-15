@@ -231,6 +231,45 @@ pub static CLINT: Lazy<Clint> = Lazy::new(|| {
     )
 });
 
+pub static CONSOLE: Lazy<io::serial::Console> = Lazy::new(|| {
+    let mut console = io::serial::Console::new().unwrap();
+    let mut escape_hit = false;
+    console.set_processor(move |x| {
+        if !escape_hit {
+            if x == 1 {
+                // Ctrl + A hit, wait for another byte to arrive
+                escape_hit = true;
+                return None;
+            }
+            return Some(x);
+        }
+
+        // Byte after Ctrl + A hit, do corresponding action
+        match x {
+            b't' => {
+                let model_id = if crate::get_flags().model_id == 0 { 1 } else { 0 };
+                crate::shutdown(crate::ExitReason::SwitchModel(model_id));
+            }
+            b'x' => {
+                println!("Terminated");
+                crate::shutdown(crate::ExitReason::Exit(0));
+            }
+            b'p' => {
+                crate::shutdown(crate::ExitReason::PrintStats);
+            }
+            b'c' => unsafe {
+                libc::raise(libc::SIGTRAP);
+            },
+            // Hit Ctrl + A twice, send Ctrl + A to guest
+            1 => return Some(x),
+            // Ignore all other characters
+            _ => (),
+        }
+        None
+    });
+    console
+});
+
 #[cfg(feature = "usernet")]
 fn init_network(sys: &mut IoSystem) {
     use crate::io::virtio::Network;
@@ -329,7 +368,7 @@ fn init_virtio(sys: &mut IoSystem) {
             Console::new(
                 Arc::new(DirectIoContext),
                 irq,
-                Box::new(&*crate::io::console::CONSOLE),
+                Box::new(&*CONSOLE),
                 crate::CONFIG.console.resize,
             )
         });

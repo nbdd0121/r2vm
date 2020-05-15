@@ -306,7 +306,6 @@ pub fn main() {
 
     // These should only be initialised for full-system emulation
     if get_flags().prv != 0 {
-        io::console::console_init();
         emu::init();
     }
 

@@ -898,10 +898,20 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
             0
         }
         1 => {
-            crate::io::console::console_putchar(arg0 as u8);
+            (&*super::CONSOLE as &dyn io::serial::Serial)
+                .try_write(std::slice::from_ref(&(arg0 as u8)))
+                .unwrap();
             0
         }
-        2 => crate::io::console::console_getchar() as u64,
+        2 => {
+            let mut ret = 0;
+            match (&*super::CONSOLE as &dyn io::serial::Serial)
+                .try_read(std::slice::from_mut(&mut ret))
+            {
+                Err(_) => u64::MAX,
+                _ => ret as u64,
+            }
+        }
         3 => {
             ctx.shared.deassert(2);
             0
