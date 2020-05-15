@@ -325,7 +325,14 @@ fn init_virtio(sys: &mut IoSystem) {
     init_network(sys);
 
     if crate::CONFIG.console.virtio {
-        sys.add_virtio(|irq| Console::new(irq, crate::CONFIG.console.resize));
+        sys.add_virtio(|irq| {
+            Console::new(
+                Arc::new(DirectIoContext),
+                irq,
+                Box::new(&*crate::io::console::CONSOLE),
+                crate::CONFIG.console.resize,
+            )
+        });
     }
 }
 

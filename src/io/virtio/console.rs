@@ -1,6 +1,7 @@
 use super::{Device, DeviceId, Queue};
-use futures::future::AbortHandle;
+use futures::future::{AbortHandle, Abortable};
 use io::IrqPin;
+use io::{serial::Serial, RuntimeContext};
 use parking_lot::Mutex;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -17,21 +18,27 @@ fn size_to_config(col: u16, row: u16) -> [u8; 4] {
 pub struct Console {
     status: u32,
     irq: Arc<Box<dyn IrqPin>>,
+    console: Arc<Box<dyn Serial>>,
     /// Whether sizing feature should be available. We allow it to be turned off because sometimes
     /// STDIN is not tty.
     resize: bool,
     // Keep config with whether it has changed
     config: Arc<Mutex<([u8; 4], bool)>>,
     rx_handle: Option<AbortHandle>,
+    resize_handle: Option<AbortHandle>,
 }
 
-fn start_rx(mut rx: Queue, irq: Arc<Box<dyn IrqPin>>) -> AbortHandle {
-    let (handle, reg) = futures::future::AbortHandle::new_pair();
+fn start_rx(
+    mut rx: Queue,
+    irq: Arc<Box<dyn IrqPin>>,
+    console: Arc<Box<dyn Serial>>,
+) -> AbortHandle {
+    let (handle, reg) = AbortHandle::new_pair();
     crate::event_loop().spawn(async move {
-        let _ = futures::future::Abortable::new(async move {
+        let _ = Abortable::new(async move {
             let mut buffer = [0; 2048];
             loop {
-                let len = crate::io::console::CONSOLE.recv(&mut buffer).await.unwrap();
+                let len = console.read(&mut buffer).await.unwrap();
                 if let Ok(Some(mut dma_buffer)) = rx.try_take() {
                     let mut writer = dma_buffer.writer();
                     writer.write_all(&buffer[..len]).unwrap();
@@ -51,7 +58,7 @@ fn start_rx(mut rx: Queue, irq: Arc<Box<dyn IrqPin>>) -> AbortHandle {
     handle
 }
 
-fn start_tx(mut tx: Queue, irq: Arc<Box<dyn IrqPin>>) {
+fn start_tx(mut tx: Queue, irq: Arc<Box<dyn IrqPin>>, console: Arc<Box<dyn Serial>>) {
     crate::event_loop().spawn(async move {
         while let Ok(buffer) = tx.take().await {
             let mut reader = buffer.reader();
@@ -61,7 +68,7 @@ fn start_tx(mut tx: Queue, irq: Arc<Box<dyn IrqPin>>) {
             reader.read_exact(&mut io_buffer).unwrap();
             drop(buffer);
 
-            crate::io::console::CONSOLE.send(&io_buffer).unwrap();
+            console.write(&io_buffer).await.unwrap();
             irq.pulse();
         }
     });
@@ -69,15 +76,22 @@ fn start_tx(mut tx: Queue, irq: Arc<Box<dyn IrqPin>>) {
 
 impl Drop for Console {
     fn drop(&mut self) {
-        crate::io::console::CONSOLE.on_size_change(None);
+        self.rx_handle.take().map(|x| x.abort());
+        self.resize_handle.take().map(|x| x.abort());
     }
 }
 
 impl Console {
-    pub fn new(irq: Box<dyn IrqPin>, mut resize: bool) -> Console {
+    pub fn new(
+        ctx: Arc<dyn RuntimeContext>,
+        irq: Box<dyn IrqPin>,
+        console: Box<dyn Serial>,
+        mut resize: bool,
+    ) -> Console {
         let irq = Arc::new(irq);
+        let console = Arc::new(console);
         let (col, row) = if resize {
-            match crate::io::console::CONSOLE.get_size() {
+            match console.get_window_size() {
                 Ok(v) => v,
                 Err(_) => {
                     warn!(
@@ -96,25 +110,33 @@ impl Console {
         // the size from the very beginning.
         let config = Arc::new(Mutex::new((size_to_config(col, row), resize)));
 
-        if resize {
-            let callback = {
-                let config = config.clone();
-                let irq_clone = irq.clone();
-                Box::new(move || {
-                    let (col, row) = match crate::io::console::CONSOLE.get_size() {
-                        Err(_) => return,
-                        Ok(v) => v,
-                    };
-                    let mut guard = config.lock();
-                    guard.0 = size_to_config(col, row);
-                    guard.1 = true;
-                    irq_clone.pulse();
-                })
-            };
-            crate::io::console::CONSOLE.on_size_change(Some(callback));
-        }
+        let resize_handle = if resize {
+            let (handle, reg) = AbortHandle::new_pair();
+            let config = config.clone();
+            let irq = irq.clone();
+            let console = console.clone();
+            ctx.spawn(Box::pin(async move {
+                let _ = Abortable::new(
+                    async move {
+                        loop {
+                            console.wait_window_size_changed().await.unwrap();
+                            let (col, row) = console.get_window_size().unwrap();
+                            let mut guard = config.lock();
+                            guard.0 = size_to_config(col, row);
+                            guard.1 = true;
+                            irq.pulse();
+                        }
+                    },
+                    reg,
+                )
+                .await;
+            }));
+            Some(handle)
+        } else {
+            None
+        };
 
-        Console { status: 0, irq, resize, config, rx_handle: None }
+        Console { status: 0, irq, console, resize, config, rx_handle: None, resize_handle }
     }
 }
 
@@ -149,9 +171,9 @@ impl Device for Console {
     fn queue_ready(&mut self, idx: usize, queue: Queue) {
         if idx == 0 {
             self.rx_handle.take().map(|x| x.abort());
-            self.rx_handle = Some(start_rx(queue, self.irq.clone()));
+            self.rx_handle = Some(start_rx(queue, self.irq.clone(), self.console.clone()));
         } else {
-            start_tx(queue, self.irq.clone());
+            start_tx(queue, self.irq.clone(), self.console.clone());
         }
     }
 

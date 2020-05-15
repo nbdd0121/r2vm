@@ -14,15 +14,20 @@
 //! their implementation and not expose in the signature. The device constructor therefore should
 //! look like `fn new(...) -> Self` rather than `fn new(...) -> Arc<Self>`. This allows users to
 //! own the device. When the owned device instance is dropped, necessary steps should be taken to
-//! shutdown the event loops and free up resources. To avoid memory leak, any references handed out
-//! by the device implementation (e.g. through [`IrqPin`]) should contain a [`Weak`] instead of an
-//! `[`Arc`].
+//! free up resources. To avoid memory leak, any references handed out by the device implementation
+//! (e.g. through [`IrqPin`]) should contain a [`Weak`] instead of an [`Arc`].
+//!
+//! For devices with event loops, [`Weak`] is likely not feasible because `await!`ing a future
+//! requires a reference. For these async tasks,  [`AbortHandle`] and [`Abortable`] could be used
+//! to allow event loops to be aborted when the owner drops the device, allowing resources to be dropped.
 //!
 //! [`IoMemory`]: crate::IoMemory
 //! [`IrqPin`]: crate::IrqPin
 //! [`Arc`]: std::sync::Arc
 //! [`Weak`]: std::sync::Weak
 //! [`Mutex`]: std::sync::Mutex
+//! [`AbortHandle`]: futures::future::AbortHandle
+//! [`Abortable`]: futures::future::Abortable
 
 pub mod intc;
 pub mod network;

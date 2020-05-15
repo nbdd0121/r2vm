@@ -3,14 +3,14 @@ extern crate log;
 
 pub mod hw;
 
-#[cfg(feature = "block")]
 pub mod block;
+pub mod network;
+pub mod serial;
+
 #[cfg(feature = "entropy")]
 pub mod entropy;
 #[cfg(feature = "fs")]
 pub mod fs;
-#[cfg(feature = "network")]
-pub mod network;
 
 use futures::future::BoxFuture;
 use std::time::Duration;
