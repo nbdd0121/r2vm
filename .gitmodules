@@ -1,3 +1,0 @@
-[submodule "lib/libslirp-sys"]
-	path = lib/libslirp-sys
-	url = https://gitlab.freedesktop.org/nbdd0121/libslirp-sys.git
