@@ -1,7 +1,8 @@
 use super::{Device, DeviceId, Queue};
+use crate::network::Network as NetworkDevice;
+use crate::{IrqPin, RuntimeContext};
+use eui48::MacAddress;
 use futures::future::AbortHandle;
-use io::network::Network as NetworkDevice;
-use io::{IrqPin, RuntimeContext};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
@@ -18,30 +19,34 @@ struct VirtioNetHeader {
     num_buffers: u16,
 }
 
-/// A virtio entropy source device.
+/// Virtio network device.
 pub struct Network {
-    net: Arc<dyn NetworkDevice>,
     status: u32,
     mac: [u8; 6],
-    irq: Arc<Box<dyn IrqPin>>,
     rx_handle: Option<AbortHandle>,
     ctx: Arc<dyn RuntimeContext>,
+    inner: Arc<Inner>,
+}
+
+struct Inner {
+    net: Box<dyn NetworkDevice>,
+    irq: Box<dyn IrqPin>,
 }
 
 impl Network {
+    /// Create a new virtio network device with supplied device and MAC address.
     pub fn new(
         ctx: Arc<dyn RuntimeContext>,
         irq: Box<dyn IrqPin>,
         net: impl NetworkDevice + 'static,
-        mac: [u8; 6],
+        mac: MacAddress,
     ) -> Network {
-        let net = Arc::new(net);
-        Network { net, status: 0, mac, irq: Arc::new(irq), rx_handle: None, ctx }
+        let inner = Arc::new(Inner { net: Box::new(net), irq });
+        Network { status: 0, mac: mac.to_array(), rx_handle: None, ctx, inner }
     }
 
     fn start_tx(&self, mut tx: Queue) {
-        let iface = self.net.clone();
-        let irq = self.irq.clone();
+        let inner = self.inner.clone();
         // There's no stop mechanism, but we don't destroy devices anyway, so that's okay.
         self.ctx.spawn(Box::pin(async move {
             while let Ok(buffer) = tx.take().await {
@@ -62,21 +67,20 @@ impl Network {
                 reader.read_exact(&mut io_buffer).unwrap();
                 drop(buffer);
 
-                iface.send(&io_buffer).await.unwrap();
-                irq.pulse();
+                inner.net.send(&io_buffer).await.unwrap();
+                inner.irq.pulse();
             }
         }));
     }
 
     fn start_rx(&self, mut rx: Queue) -> AbortHandle {
-        let iface = self.net.clone();
-        let irq = self.irq.clone();
+        let inner = self.inner.clone();
         let (handle, reg) = futures::future::AbortHandle::new_pair();
         self.ctx.spawn(Box::pin(async move {
             let _ = futures::future::Abortable::new(async move {
                 let mut buffer = [0; 2048];
                 loop {
-                    let len = iface.recv(&mut buffer).await.unwrap();
+                    let len = inner.net.recv(&mut buffer).await.unwrap();
                     match rx.try_take() {
                         // Queue shutdown, terminate gracefully
                         Err(_) => return,
@@ -106,7 +110,7 @@ impl Network {
                             writer.write_all(&buffer[..len]).unwrap();
                             drop(dma_buffer);
 
-                            irq.pulse();
+                            inner.irq.pulse();
                         }
                         Ok(None) => info!(
                             target: "VirtioNet",

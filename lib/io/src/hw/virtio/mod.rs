@@ -5,6 +5,16 @@ mod queue;
 pub use mmio::Mmio;
 pub use queue::{Buffer, BufferReader, BufferWriter, Queue, QueueNotReady};
 
+#[cfg(feature = "virtio-block")]
+mod block;
+#[cfg(feature = "virtio-block")]
+pub use block::Block;
+
+#[cfg(feature = "virtio-network")]
+mod network;
+#[cfg(feature = "virtio-network")]
+pub use network::Network;
+
 /// Types of virtio devices.
 #[derive(Clone, Copy)]
 pub enum DeviceId {

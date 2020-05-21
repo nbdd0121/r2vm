@@ -29,6 +29,8 @@ const ADDR_CONFIG_GENERATION: usize = 0x0fc;
 const ADDR_CONFIG: usize = 0x100;
 
 /// Virtio device with MMIO transport.
+///
+/// Note: Currently drop is not properly implemented and may cause memory and resource leak.
 pub struct Mmio {
     device: Box<dyn Device>,
     queues: Vec<Arc<Mutex<super::queue::QueueInner>>>,

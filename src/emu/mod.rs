@@ -276,9 +276,7 @@ fn init_network(sys: &mut IoSystem) {
     use io::network::Usernet;
 
     for config in crate::CONFIG.network.iter() {
-        let mac = eui48::MacAddress::parse_str(&config.config.mac)
-            .expect("unexpected mac address")
-            .to_array();
+        let mac = eui48::MacAddress::parse_str(&config.config.mac).expect("unexpected mac address");
         let usernet = Usernet::new(Arc::new(DirectIoContext));
         for fwd in config.config.forward.iter() {
             usernet
@@ -319,7 +317,7 @@ fn init_network(sys: &mut IoSystem) {
                 sys.fdt.child.push(XemacLite::build_dt(
                     (base as u64, 0x2000),
                     (core_count as u32 + 1, irq),
-                    mac,
+                    mac.to_array(),
                 ));
             }
             _ => panic!("unknown device type"),
