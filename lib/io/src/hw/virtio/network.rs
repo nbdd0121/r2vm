@@ -19,7 +19,7 @@ struct VirtioNetHeader {
     num_buffers: u16,
 }
 
-/// Virtio network device.
+/// A virtio network device.
 pub struct Network {
     status: u32,
     mac: [u8; 6],

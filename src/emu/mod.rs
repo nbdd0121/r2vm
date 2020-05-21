@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::io::virtio::{Block, Console, Mmio, Rng, P9};
 use futures::future::BoxFuture;
 use io::hw::intc::{Clint, Plic};
 use io::hw::rtc::ZyncMp;
+use io::hw::virtio::{Block, Console, Mmio, Rng, P9};
 use io::{IoMemory, IrqPin};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -173,7 +173,7 @@ impl IoSystem {
     /// Add a virtio device
     pub fn add_virtio<T>(&mut self, f: impl FnOnce(Box<dyn IrqPin>) -> T)
     where
-        T: crate::io::virtio::Device + Send + 'static,
+        T: io::hw::virtio::Device + 'static,
     {
         let irq = self.next_irq;
         self.next_irq += 1;
@@ -272,7 +272,7 @@ pub static CONSOLE: Lazy<io::serial::Console> = Lazy::new(|| {
 
 #[cfg(feature = "usernet")]
 fn init_network(sys: &mut IoSystem) {
-    use crate::io::virtio::Network;
+    use io::hw::virtio::Network;
     use io::network::Usernet;
 
     for config in crate::CONFIG.network.iter() {
@@ -344,19 +344,25 @@ fn init_virtio(sys: &mut IoSystem) {
     for config in crate::CONFIG.random.iter() {
         sys.add_virtio(|irq| {
             use io::entropy::rand::SeedableRng;
-            use io::entropy::{Os, Seeded};
-            match config.r#type {
-                crate::config::RandomType::Pseudo => {
-                    Rng::new(irq, Box::new(Seeded::seed_from_u64(config.seed)))
-                }
-                crate::config::RandomType::OS => Rng::new(irq, Box::new(Os)),
-            }
+            use io::entropy::{Entropy, Os, Seeded};
+            let source: Box<dyn Entropy + Send + 'static> = match config.r#type {
+                crate::config::RandomType::Pseudo => Box::new(Seeded::seed_from_u64(config.seed)),
+                crate::config::RandomType::OS => Box::new(Os),
+            };
+            Rng::new(Arc::new(DirectIoContext), irq, source)
         });
     }
 
     for config in crate::CONFIG.share.iter() {
         use io::fs::Passthrough;
-        sys.add_virtio(|irq| P9::new(irq, &config.tag, Passthrough::new(&config.path).unwrap()));
+        sys.add_virtio(|irq| {
+            P9::new(
+                Arc::new(DirectIoContext),
+                irq,
+                &config.tag,
+                Passthrough::new(&config.path).unwrap(),
+            )
+        });
     }
 
     init_network(sys);

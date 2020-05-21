@@ -5,15 +5,30 @@ mod queue;
 pub use mmio::Mmio;
 pub use queue::{Buffer, BufferReader, BufferWriter, Queue, QueueNotReady};
 
+#[cfg(feature = "virtio-network")]
+mod network;
+#[cfg(feature = "virtio-network")]
+pub use network::Network;
+
 #[cfg(feature = "virtio-block")]
 mod block;
 #[cfg(feature = "virtio-block")]
 pub use block::Block;
 
-#[cfg(feature = "virtio-network")]
-mod network;
-#[cfg(feature = "virtio-network")]
-pub use network::Network;
+#[cfg(feature = "virtio-rng")]
+mod rng;
+#[cfg(feature = "virtio-rng")]
+pub use rng::Rng;
+
+#[cfg(feature = "virtio-p9")]
+mod p9;
+#[cfg(feature = "virtio-p9")]
+pub use self::p9::P9;
+
+#[cfg(feature = "virtio-console")]
+mod console;
+#[cfg(feature = "virtio-console")]
+pub use console::Console;
 
 /// Types of virtio devices.
 #[derive(Clone, Copy)]

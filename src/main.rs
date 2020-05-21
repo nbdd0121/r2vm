@@ -5,7 +5,6 @@ extern crate memoffset;
 
 pub mod config;
 pub mod emu;
-pub mod io;
 pub mod sim;
 pub mod util;
 

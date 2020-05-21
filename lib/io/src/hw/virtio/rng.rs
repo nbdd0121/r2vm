@@ -1,5 +1,5 @@
 use super::{Device, DeviceId, Queue};
-use io::IrqPin;
+use crate::{IrqPin, RuntimeContext};
 use parking_lot::Mutex;
 use std::io::Read;
 use std::sync::Arc;
@@ -7,34 +7,40 @@ use std::sync::Arc;
 /// A virtio entropy source device.
 pub struct Rng {
     status: u32,
+    ctx: Arc<dyn RuntimeContext>,
     inner: Arc<Mutex<Inner>>,
 }
 
 /// struct used by task
 struct Inner {
-    rng: Box<dyn io::entropy::Entropy + Send>,
+    rng: Box<dyn crate::entropy::Entropy + Send>,
     irq: Box<dyn IrqPin>,
 }
 
 impl Rng {
     /// Create a virtio entropy source device using a given random number generator.
-    pub fn new(irq: Box<dyn IrqPin>, rng: Box<dyn io::entropy::Entropy + Send>) -> Rng {
+    pub fn new(
+        ctx: Arc<dyn RuntimeContext>,
+        irq: Box<dyn IrqPin>,
+        rng: Box<dyn crate::entropy::Entropy + Send>,
+    ) -> Rng {
         let inner = Arc::new(Mutex::new(Inner { rng, irq }));
-        Rng { status: 0, inner }
+        Rng { status: 0, inner, ctx }
     }
-}
 
-fn start_task(inner: Arc<Mutex<Inner>>, mut queue: Queue) {
-    crate::event_loop().spawn(async move {
-        while let Ok(mut buffer) = queue.take().await {
-            let mut inner = inner.lock();
-            let rng: &mut dyn rand::RngCore = &mut inner.rng;
-            let mut writer = buffer.writer();
-            std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();
-            drop(buffer);
-            inner.irq.pulse();
-        }
-    })
+    fn start_task(&self, mut queue: Queue) {
+        let inner = self.inner.clone();
+        self.ctx.spawn(Box::pin(async move {
+            while let Ok(mut buffer) = queue.take().await {
+                let mut inner = inner.lock();
+                let rng: &mut dyn rand::RngCore = &mut inner.rng;
+                let mut writer = buffer.writer();
+                std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();
+                drop(buffer);
+                inner.irq.pulse();
+            }
+        }))
+    }
 }
 
 impl Device for Rng {
@@ -61,6 +67,6 @@ impl Device for Rng {
         self.status = 0;
     }
     fn queue_ready(&mut self, _idx: usize, queue: Queue) {
-        start_task(self.inner.clone(), queue);
+        self.start_task(queue);
     }
 }

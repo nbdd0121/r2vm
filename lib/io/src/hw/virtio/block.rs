@@ -20,7 +20,7 @@ struct VirtioBlkReqHeader {
     sector: u64,
 }
 
-/// Virtio block device.
+/// A virtio block device.
 pub struct Block {
     status: u32,
     config: [u8; 8],
