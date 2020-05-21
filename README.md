@@ -14,7 +14,7 @@ cd rv2m
 cargo build --release
 ```
 
-You can run R2VM with `cargo run` or locate the compiled binary at `target/release/r2vm`.
+You can run R2VM with `cargo run --release` or locate the compiled binary at `target/release/r2vm`.
 
 If you don't want to modify code, you can also use `cargo install --git https://github.com/nbdd0121/r2vm.git` to install it directly.
 
