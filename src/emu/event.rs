@@ -1,5 +1,6 @@
 //! This module handles event-driven simulation
 
+use futures::future::BoxFuture;
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::collections::BinaryHeap;
 use std::future::Future;
@@ -229,14 +230,14 @@ impl EventLoop {
     }
 
     /// Spawn a [`Future`] on this event loop.
-    pub fn spawn(&self, future: impl Future<Output = ()> + Send + 'static) {
+    pub fn spawn(&self, future: BoxFuture<'static, ()>) {
         use futures::task::ArcWake;
 
-        struct Task<F> {
-            future: Mutex<Option<F>>,
+        struct Task {
+            future: Mutex<Option<BoxFuture<'static, ()>>>,
         }
 
-        impl<F: Future<Output = ()> + Send + 'static> ArcWake for Task<F> {
+        impl ArcWake for Task {
             fn wake_by_ref(arc_self: &Arc<Self>) {
                 arc_self.clone().wake();
             }
