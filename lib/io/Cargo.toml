@@ -20,7 +20,18 @@ fdt = { path = "../fdt", optional = true }
 
 
 [features]
-default = ["block-file", "block-shadow", "entropy", "fs", "intc-clint", "intc-plic", "rtc-zyncmp", "network-xemaclite", "serial-console"]
+default = [
+    "block-file",
+    "block-shadow",
+    "entropy",
+    "fs",
+    "intc-clint",
+    "intc-plic",
+    "rtc-zyncmp",
+    "network-xemaclite",
+    "serial-console",
+    "virtio"
+]
 block-file = []
 block-shadow = ["fnv"]
 network-logger = ["byteorder"]
@@ -32,3 +43,4 @@ intc-plic = []
 rtc-zyncmp = []
 network-xemaclite = ["byteorder", "fdt"]
 serial-console = ["libc"]
+virtio = []

@@ -1,6 +1,5 @@
 use super::Device;
-use io::{DmaContext, IoMemoryMut};
-
+use crate::{DmaContext, IoMemoryMut};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
@@ -29,8 +28,9 @@ const ADDR_QUEUE_USED_HIGH: usize = 0x0a4;
 const ADDR_CONFIG_GENERATION: usize = 0x0fc;
 const ADDR_CONFIG: usize = 0x100;
 
+/// Virtio device with MMIO transport.
 pub struct Mmio {
-    device: Box<dyn Device + Send>,
+    device: Box<dyn Device>,
     queues: Vec<Arc<Mutex<super::queue::QueueInner>>>,
     device_features_sel: bool,
     driver_features_sel: bool,
@@ -39,7 +39,8 @@ pub struct Mmio {
 }
 
 impl Mmio {
-    pub fn new(dma_ctx: Arc<dyn DmaContext>, dev: Box<dyn Device + Send>) -> Mmio {
+    /// Create a virtio device with MMIO transport.
+    pub fn new(dma_ctx: Arc<dyn DmaContext>, dev: Box<dyn Device>) -> Mmio {
         let num_queues = dev.num_queues();
         let mut queues = Vec::with_capacity(num_queues);
         for i in 0..num_queues {

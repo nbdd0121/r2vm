@@ -1,12 +1,10 @@
+use crate::DmaContext;
 use parking_lot::Mutex;
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::sync::Arc;
-
 use std::future::Future;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
-
-use io::DmaContext;
 
 const VIRTQ_DESC_F_NEXT: u16 = 1;
 const VIRTQ_DESC_F_WRITE: u16 = 2;
@@ -14,6 +12,7 @@ const VIRTQ_DESC_F_WRITE: u16 = 2;
 #[allow(dead_code)]
 const VIRTQ_DESC_F_INDIRECT: u16 = 4;
 
+/// Error when trying to take buffers from a virtio queue that is not ready.
 pub struct QueueNotReady;
 
 #[repr(C)]
@@ -145,19 +144,26 @@ impl QueueInner {
     }
 }
 
+/// Safe abstraction of a virtio queue.
 pub struct Queue {
     pub(super) inner: Arc<Mutex<QueueInner>>,
 }
 
 impl Queue {
-    /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
-    /// returned.
+    /// Try to get a buffer from the available ring.
+    ///
+    /// If there are no new buffers, `None` will be returned. If the queue is not ready,
+    /// trying to take an item from it will cause `Err(QueueNotReady)` to be returned.
     pub fn try_take(&mut self) -> Result<Option<Buffer>, QueueNotReady> {
         self.inner.lock().try_take(&self.inner)
     }
 
-    // This is to be changed to async fn once 1.39 arrives.
-    pub fn take(&mut self) -> impl Future<Output = Result<Buffer, QueueNotReady>> + '_ {
+    /// Get a buffer from the available ring.
+    ///
+    /// The future returned will only resolve when there is an buffer available.
+    /// If the queue is not ready,
+    /// trying to take an item from it will cause `Err(QueueNotReady)` to be returned.
+    pub async fn take(&mut self) -> Result<Buffer, QueueNotReady> {
         /// The future returned for calling async `wake` function of `Queue`.
         struct Take<'a> {
             queue: &'a mut Queue,
@@ -179,10 +185,11 @@ impl Queue {
             }
         }
 
-        Take { queue: self }
+        Take { queue: self }.await
     }
 }
 
+/// A buffer passed from the kernel to the virtio device.
 pub struct Buffer {
     queue: Arc<Mutex<QueueInner>>,
     idx: u16,
@@ -201,7 +208,8 @@ impl Drop for Buffer {
 }
 
 impl Buffer {
-    pub fn reader(&self) -> BufferReader {
+    /// Get the readonly part of this buffer.
+    pub fn reader(&self) -> BufferReader<'_> {
         BufferReader {
             buffer: &self.read,
             len: self.read_len,
@@ -212,7 +220,8 @@ impl Buffer {
         }
     }
 
-    pub fn writer(&mut self) -> BufferWriter {
+    /// Get the write-only part of this buffer.
+    pub fn writer(&mut self) -> BufferWriter<'_> {
         BufferWriter {
             buffer: &self.write,
             len: self.write_len,
@@ -224,7 +233,8 @@ impl Buffer {
         }
     }
 
-    pub fn reader_writer(&mut self) -> (BufferReader, BufferWriter) {
+    /// Split this buffer into two halves.
+    pub fn reader_writer(&mut self) -> (BufferReader<'_>, BufferWriter<'_>) {
         (
             BufferReader {
                 buffer: &self.read,
@@ -247,6 +257,7 @@ impl Buffer {
     }
 }
 
+/// Reader half of the buffer.
 pub struct BufferReader<'a> {
     buffer: &'a [(u64, usize)],
     len: usize,
@@ -274,6 +285,7 @@ impl<'a> BufferReader<'a> {
         self.slice_offset = 0;
     }
 
+    /// Get the length of this buffer half.
     pub fn len(&self) -> usize {
         self.len
     }
@@ -324,6 +336,7 @@ impl<'a> Read for BufferReader<'a> {
     }
 }
 
+/// Writer half of the buffer.
 pub struct BufferWriter<'a> {
     buffer: &'a [(u64, usize)],
     bytes_written: &'a mut usize,
@@ -352,6 +365,7 @@ impl<'a> BufferWriter<'a> {
         self.slice_offset = 0;
     }
 
+    /// Get the length of this buffer half.
     pub fn len(&self) -> usize {
         self.len
     }
