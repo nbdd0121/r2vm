@@ -27,8 +27,8 @@ pub struct Config {
     pub kernel: PathBuf,
 
     /// Location of firmware.
-    /// It should be of ELF format. If firmware is present, RVM will start with machine mode.
-    /// If firmware is not present, RVM will start in supervisor mode and provide SBI interface.
+    /// It should be of ELF format. If firmware is present, R2VM will start with machine mode.
+    /// If firmware is not present, R2VM will start in supervisor mode and provide SBI interface.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub firmware: Option<PathBuf>,
 
