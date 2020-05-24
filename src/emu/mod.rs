@@ -211,9 +211,6 @@ static IO_SYSTEM: Lazy<IoSystem> = Lazy::new(|| {
     sys
 });
 
-/// The global PLIC
-pub static PLIC: Lazy<&'static Arc<Plic>> = Lazy::new(|| &IO_SYSTEM.plic);
-
 pub static CLINT: Lazy<Clint> = Lazy::new(|| {
     let core_count = crate::core_count();
     Clint::new(
@@ -439,7 +436,7 @@ pub fn init() {
             panic!("mmap failed while initing");
         }
     }
-    Lazy::force(&PLIC);
+    Lazy::force(&IO_SYSTEM);
 }
 
 pub fn device_tree() -> fdt::Node {
@@ -489,11 +486,6 @@ pub fn device_tree() -> fdt::Node {
 pub fn read_memory<T: Copy>(addr: usize) -> T {
     assert!(addr >= *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     unsafe { std::ptr::read(addr as *const T) }
-}
-
-pub fn write_memory<T: Copy>(addr: usize, value: T) {
-    assert!(addr >= *IO_BOUNDARY, "{:x} access out-of-bound", addr);
-    unsafe { std::ptr::write_volatile(addr as *mut T, value) }
 }
 
 pub fn io_read(addr: usize, size: u32) -> u64 {
