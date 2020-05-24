@@ -1,9 +1,8 @@
-use crate::util::RoCell;
 use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use super::abi;
@@ -13,22 +12,17 @@ static mut BRK: u64 = 0;
 static mut HEAP_START: u64 = 0;
 static mut HEAP_END: u64 = 0;
 
-/// A flag to determine whether to trace all system calls. If true then all guest system calls will be logged.
-pub static STRACE: RoCell<bool> = RoCell::new(false);
-
-/// The actual path of the executable. Needed to redirect /proc/self/*
-pub static EXEC_PATH: RoCell<CString> = unsafe { RoCell::new_uninit() };
-
-/// Path of sysroot. When the guest application tries to open a file, and the corresponding file exists in sysroot,
-/// it will be redirected.
-pub static SYSROOT: RoCell<PathBuf> = unsafe { RoCell::new_uninit() };
-
 /// The reference point when the user space asks for the current time. This is to allow
 /// user-space applications to do timing properly in lockstep mode.
 static EPOCH: Lazy<Duration> = Lazy::new(|| {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap()
         - Duration::from_micros(crate::event_loop().time())
 });
+
+#[inline]
+fn strace() -> bool {
+    crate::get_flags().strace
+}
 
 /// Initialise brk when program is being loaded. Should not be called after execution has started.
 pub unsafe fn init_brk(brk: u64) {
@@ -335,11 +329,11 @@ pub fn translate_path(path: &Path) -> Cow<Path> {
     if path.is_relative() {
         return Cow::Borrowed(path);
     }
-    let newpath = SYSROOT.join(path.strip_prefix("/").unwrap());
+    let newpath = crate::get_flags().sysroot.join(path.strip_prefix("/").unwrap());
     if !newpath.exists() {
         return Cow::Borrowed(path);
     }
-    if *STRACE {
+    if strace() {
         eprintln!("Translate {} to {}", path.display(), newpath.display());
     }
     Cow::Owned(newpath)
@@ -375,7 +369,7 @@ pub unsafe fn syscall(
             let buffer = arg0 as *mut i8;
             let size = arg1 as usize;
             let ret = if libc::getcwd(buffer, size).is_null() { -abi::EINVAL } else { 0 };
-            if *STRACE {
+            if strace() {
                 if ret == 0 {
                     eprintln!(
                         "getcwd({}, {}) = 0",
@@ -397,7 +391,7 @@ pub unsafe fn syscall(
                 translate_path_cstr(pathname).as_ptr(),
                 arg2 as _,
             ) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!(
                     "unlinkat({}, {}, {}) = {}",
                     arg0,
@@ -418,7 +412,7 @@ pub unsafe fn syscall(
                 arg2 as _,
                 arg3 as _,
             ) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!(
                     "faccessat({}, {}, {}, {}) = {}",
                     arg0,
@@ -439,7 +433,7 @@ pub unsafe fn syscall(
             let proc_self = is_proc_self(pathname);
             let ret = match proc_self {
                 Some(v) if v == std::ffi::OsStr::new("exe") => {
-                    libc::openat(dirfd, EXEC_PATH.as_ptr(), flags, arg3) as _
+                    libc::openat(dirfd, crate::get_flags().exec_path.as_ptr(), flags, arg3) as _
                 }
                 _ => return_errno(libc::openat(
                     dirfd,
@@ -448,7 +442,7 @@ pub unsafe fn syscall(
                     arg3,
                 ) as _),
             };
-            if *STRACE {
+            if strace() {
                 eprintln!(
                     "openat({}, {}, {}, {}) = {}",
                     arg0,
@@ -463,14 +457,14 @@ pub unsafe fn syscall(
         abi::SYS_close => {
             // Handle standard IO specially, pretending close is sucessful.
             let ret = if arg0 <= 2 { 0 } else { return_errno(libc::close(arg0 as _) as _) };
-            if *STRACE {
+            if strace() {
                 eprintln!("close({}) = {}", arg0, ret);
             }
             ret
         }
         abi::SYS_lseek => {
             let ret = return_errno(libc::lseek(arg0 as _, arg1 as _, arg2 as _));
-            if *STRACE {
+            if strace() {
                 eprintln!("lseek({}, {}, {}) = {}", arg0, arg1, arg2, ret);
             }
             ret
@@ -478,7 +472,7 @@ pub unsafe fn syscall(
         abi::SYS_read => {
             let buffer = arg1 as usize as _;
             let ret = return_errno(libc::read(arg0 as _, buffer, arg2 as _) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!(
                     "read({}, {}, {}) = {}",
                     arg0,
@@ -495,7 +489,7 @@ pub unsafe fn syscall(
         abi::SYS_write => {
             let buffer = arg1 as usize as _;
             let ret = return_errno(libc::write(arg0 as _, buffer, arg2 as _) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!(
                     "write({}, {}, {}) = {}",
                     arg0,
@@ -511,7 +505,7 @@ pub unsafe fn syscall(
                 std::slice::from_raw_parts(arg1 as usize as *const abi::iovec, arg2 as _);
             let host_iov: Vec<_> = guest_iov.iter().map(convert_iovec_to_host).collect();
             let ret = return_errno(libc::writev(arg0 as _, host_iov.as_ptr(), arg2 as _) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!("writev({}, {}, {}) = {}", arg0, arg1, arg2, ret);
             }
             ret
@@ -524,7 +518,8 @@ pub unsafe fn syscall(
             let proc_self = is_proc_self(pathname);
             let ret = match proc_self {
                 Some(v) if v == std::ffi::OsStr::new("exe") => {
-                    let path = libc::realpath(EXEC_PATH.as_ptr(), std::ptr::null_mut());
+                    let path =
+                        libc::realpath(crate::get_flags().exec_path.as_ptr(), std::ptr::null_mut());
                     if path.is_null() {
                         return_errno(-1)
                     } else {
@@ -541,7 +536,7 @@ pub unsafe fn syscall(
                     arg3 as _,
                 ) as _),
             };
-            if *STRACE {
+            if strace() {
                 if ret > 0 {
                     eprintln!(
                         "readlinkat({}, {}, {}, {}) = {}",
@@ -583,7 +578,7 @@ pub unsafe fn syscall(
                 convert_stat_from_host(guest_stat, &*host_stat.as_ptr());
             }
 
-            if *STRACE {
+            if strace() {
                 if ret == 0 {
                     let host_stat = host_stat.assume_init();
                     eprintln!(
@@ -617,7 +612,7 @@ pub unsafe fn syscall(
                 convert_stat_from_host(guest_stat, &*host_stat.as_ptr());
             }
 
-            if *STRACE {
+            if strace() {
                 if ret == 0 {
                     let host_stat = host_stat.assume_init();
                     eprintln!(
@@ -631,14 +626,14 @@ pub unsafe fn syscall(
             ret
         }
         abi::SYS_exit => {
-            if *STRACE {
+            if strace() {
                 eprintln!("exit({}) = ?", arg0);
             }
             crate::shutdown(crate::ExitReason::Exit(arg0 as i32));
             0
         }
         abi::SYS_exit_group => {
-            if *STRACE {
+            if strace() {
                 eprintln!("exit_group({}) = ?", arg0);
             }
             crate::shutdown(crate::ExitReason::Exit(arg0 as i32));
@@ -646,7 +641,7 @@ pub unsafe fn syscall(
         }
         abi::SYS_uname => {
             let ret = return_errno(libc::uname(arg0 as _) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!("uname({:#x}) = {}", arg0, ret);
             }
             ret
@@ -656,7 +651,7 @@ pub unsafe fn syscall(
             let guest_tv = &mut *(arg0 as usize as *mut abi::timeval);
             guest_tv.tv_sec = time.as_secs() as _;
             guest_tv.tv_usec = time.subsec_micros() as _;
-            if *STRACE {
+            if strace() {
                 eprintln!(
                     "gettimeofday({{{}, {}}}, NULL) = 0",
                     time.as_secs(),
@@ -667,42 +662,42 @@ pub unsafe fn syscall(
         }
         abi::SYS_getpid => {
             let ret = libc::getpid();
-            if *STRACE {
+            if strace() {
                 eprintln!("getpid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_getppid => {
             let ret = libc::getppid();
-            if *STRACE {
+            if strace() {
                 eprintln!("getppid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_getuid => {
             let ret = libc::getuid();
-            if *STRACE {
+            if strace() {
                 eprintln!("getuid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_geteuid => {
             let ret = libc::geteuid();
-            if *STRACE {
+            if strace() {
                 eprintln!("geteuid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_getgid => {
             let ret = libc::getgid();
-            if *STRACE {
+            if strace() {
                 eprintln!("getgid() = {}", ret);
             }
             ret as i64
         }
         abi::SYS_getegid => {
             let ret = libc::getegid();
-            if *STRACE {
+            if strace() {
                 eprintln!("getegid() = {}", ret);
             }
             ret as i64
@@ -737,21 +732,21 @@ pub unsafe fn syscall(
                     BRK = arg0;
                 }
             }
-            if *STRACE {
+            if strace() {
                 eprintln!("brk({}) = {}", Pointer(arg0), Pointer(BRK));
             }
             BRK as i64
         }
         abi::SYS_munmap => {
             let ret = return_errno(libc::munmap(arg0 as _, arg1 as _) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!("munmap({:#x}, {}) = {}", arg0, arg1, ret);
             }
             ret
         }
         // This is linux specific call, we will just return ENOSYS.
         abi::SYS_mremap => {
-            if *STRACE {
+            if strace() {
                 eprintln!("mremap({}, {}, {}, {}, {:#x}) = -ENOSYS", arg0, arg1, arg2, arg3, arg4);
             }
             -abi::ENOSYS as i64
@@ -762,7 +757,7 @@ pub unsafe fn syscall(
             let arg4 = arg4 as _;
             let ret =
                 return_errno(libc::mmap(arg0 as _, arg1 as _, prot, flags, arg4, arg5 as _) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!(
                     "mmap({}, {}, {}, {}, {}, {}) = {:#x}",
                     Pointer(arg0),
@@ -779,7 +774,7 @@ pub unsafe fn syscall(
         abi::SYS_mprotect => {
             let prot = convert_mmap_prot_to_host(arg2 as _);
             let ret = return_errno(libc::mprotect(arg0 as _, arg1 as _, prot) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!("mprotect({:#x}, {}, {}) = {:#x}", arg0, arg1, arg2, ret);
             }
             ret
@@ -792,7 +787,7 @@ pub unsafe fn syscall(
                 flags,
                 arg2 as libc::mode_t,
             ) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!("open({}, {}, {}) = {}", Escape(pathname.to_bytes()), arg1, arg2, ret);
             }
             ret
@@ -800,7 +795,7 @@ pub unsafe fn syscall(
         abi::SYS_unlink => {
             let pathname = CStr::from_ptr(arg0 as usize as _);
             let ret = return_errno(libc::unlink(translate_path_cstr(pathname).as_ptr()) as _);
-            if *STRACE {
+            if strace() {
                 eprintln!("unlink({}) = {}", Escape(pathname.to_bytes()), ret);
             }
             ret
@@ -819,7 +814,7 @@ pub unsafe fn syscall(
                 convert_stat_from_host(guest_stat, &*host_stat.as_ptr());
             }
 
-            if *STRACE {
+            if strace() {
                 if ret == 0 {
                     let host_stat = host_stat.assume_init();
                     eprintln!(

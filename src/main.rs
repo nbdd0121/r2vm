@@ -10,14 +10,13 @@ pub mod util;
 
 use std::cell::UnsafeCell;
 use std::ffi::CString;
+use std::path::PathBuf;
 use util::RoCell;
 
 macro_rules! usage_string {
     () => {
         "Usage: {} [options] program [arguments...]
 Options:
-  --no-direct-memory    Disable generation of memory access instruction, use
-                        call to helper function instead.
   --strace              Log system calls.
   --disassemble         Log decoded instructions.
   --perf                Generate /tmp/perf-<PID>.map for perf tool.
@@ -31,9 +30,6 @@ Options:
 }
 
 pub struct Flags {
-    // Whether direct memory access or call to helper should be generated for guest memory access.
-    no_direct_memory_access: bool,
-
     // A flag to determine whether to print instruction out when it is decoded.
     disassemble: bool,
 
@@ -57,6 +53,16 @@ pub struct Flags {
 
     /// Dump FDT option
     dump_fdt: Option<String>,
+
+    /// A flag to determine whether to trace all system calls. If true then all guest system calls will be logged.
+    strace: bool,
+
+    /// The actual path of the executable. Needed by src/emu/syscall.rs to redirect /proc/self/*
+    exec_path: CString,
+
+    /// Path of sysroot. When the guest application tries to open a file, and the corresponding file exists in sysroot,
+    /// it will be redirected.
+    sysroot: PathBuf,
 }
 
 static FLAGS: RoCell<Flags> = unsafe { RoCell::new_uninit() };
@@ -132,10 +138,7 @@ pub fn main() {
     let mut item = args.next();
     let interp_name = item.expect("program name should not be absent");
 
-    let mut sysroot = String::from("/opt/riscv/sysroot");
-
     let mut flags = Flags {
-        no_direct_memory_access: true,
         disassemble: false,
         prv: 1,
         perf: false,
@@ -144,6 +147,9 @@ pub fn main() {
         model_id: 0,
         wfi_nop: false,
         dump_fdt: None,
+        strace: false,
+        exec_path: CString::default(),
+        sysroot: "/opt/riscv/sysroot".into(),
     };
 
     item = args.next();
@@ -154,10 +160,7 @@ pub fn main() {
         }
 
         match arg.as_str() {
-            "--no-direct-memory" => flags.no_direct_memory_access = true,
-            "--strace" => unsafe {
-                RoCell::replace(&emu::syscall::STRACE, true);
-            },
+            "--strace" => flags.strace = true,
             "--disassemble" => flags.disassemble = true,
             "--perf" => flags.perf = true,
             "--lockstep" => {
@@ -171,8 +174,7 @@ pub fn main() {
             }
             _ => {
                 if arg.starts_with("--sysroot=") {
-                    let path_slice = &arg["--sysroot=".len()..];
-                    sysroot = path_slice.to_owned();
+                    flags.sysroot = arg["--sysroot=".len()..].into();
                 } else if arg.starts_with("--dump-fdt=") {
                     let path_slice = &arg["--dump-fdt=".len()..];
                     flags.dump_fdt = Some(path_slice.to_owned());
@@ -186,17 +188,14 @@ pub fn main() {
         item = args.next();
     }
 
-    unsafe { RoCell::init(&FLAGS, flags) };
-
     let program_name = item.unwrap_or_else(|| {
         eprintln!(usage_string!(), interp_name);
         std::process::exit(1);
     });
 
-    unsafe {
-        RoCell::init(&emu::syscall::EXEC_PATH, CString::new(program_name.as_str()).unwrap());
-        RoCell::init(&emu::syscall::SYSROOT, sysroot.into());
-    }
+    flags.exec_path = CString::new(program_name.as_str()).unwrap();
+
+    unsafe { RoCell::init(&FLAGS, flags) };
 
     let mut loader = emu::loader::Loader::new(program_name.as_ref()).unwrap_or_else(|err| {
         eprintln!("{}: cannot load {}: {}", interp_name, program_name, err);
