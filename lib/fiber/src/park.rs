@@ -100,7 +100,7 @@ pub struct UnparkResult {
 
 pub fn unpark_one(key: usize, callback: impl FnOnce(UnparkResult) -> UnparkToken) {
     let fiber = WAIT_LIST_MAP.with(key, |list| {
-        let ret = if let Some(ref mut inner) = list {
+        if let Some(ref mut inner) = list {
             let entry = unsafe { &mut *inner.head.as_ptr() };
             match entry.next {
                 None => *list = None,
@@ -111,8 +111,7 @@ pub fn unpark_one(key: usize, callback: impl FnOnce(UnparkResult) -> UnparkToken
         } else {
             callback(UnparkResult { unparked: false, have_more: list.is_some() });
             None
-        };
-        ret
+        }
     });
     if let Some(fiber) = fiber {
         unsafe { FiberGroup::unpause(fiber) };

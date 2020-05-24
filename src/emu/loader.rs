@@ -86,7 +86,7 @@ impl Loader {
         let header = self.ehdr();
 
         // Check the ELF magic numbers
-        if &header.e_ident[0..4] != "\x7FELF".as_bytes() {
+        if &header.e_ident[0..4] != b"\x7FELF" {
             return false;
         }
 

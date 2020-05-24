@@ -183,7 +183,7 @@ impl IoSystem {
 
         let device = Box::new(f(self.plic.irq_pin(irq)));
         let virtio = Arc::new(Mutex::new(Mmio::new(Arc::new(DirectIoContext), device)));
-        self.register_io_mem(mem, 4096, virtio.clone());
+        self.register_io_mem(mem, 4096, virtio);
 
         let core_count = crate::core_count();
         let node = self.fdt.add_node(format!("virtio@{:x}", mem));
@@ -192,7 +192,7 @@ impl IoSystem {
         node.add_prop("interrupts-extended", &[core_count as u32 + 1, irq][..]);
     }
 
-    pub fn find_io_mem<'a>(&'a self, ptr: usize) -> Option<(usize, &'a dyn IoMemory)> {
+    pub fn find_io_mem(&self, ptr: usize) -> Option<(usize, &'_ dyn IoMemory)> {
         if let Some((k, v)) = self.map.range(..=ptr).next_back() {
             let last_end = *k + v.0;
             if ptr >= last_end { None } else { Some((*k, &*v.1)) }
@@ -510,7 +510,7 @@ pub fn io_read(addr: usize, size: u32) -> u64 {
 pub fn io_write(addr: usize, value: u64, size: u32) {
     assert!(addr < *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     match IO_SYSTEM.find_io_mem(addr) {
-        Some((base, v)) => return v.write(addr - base, value, size),
+        Some((base, v)) => v.write(addr - base, value, size),
         None => {
             error!("out-of-bound I/O memory write 0x{:x} = 0x{:x}", addr, value);
         }

@@ -159,7 +159,6 @@ impl<'a> Encoder<'a> {
                         self.emit_u8((reg_num << 3) | 0b100);
                         self.emit_u8((shift << 6) | ((index as u8 & 7) << 3) | 0b101);
                         self.emit_u32(it.displacement as u32);
-                        return;
                     }
 
                     // [RIP + disp32]

@@ -78,7 +78,7 @@ impl IoMemory for Clint {
             }
             _ => {
                 error!(target: "CLINT", "illegal register read 0x{:x}", addr);
-                return 0;
+                0
             }
         }
     }

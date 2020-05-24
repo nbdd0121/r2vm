@@ -15,20 +15,18 @@ pub use shadow::Shadow;
 use std::io::Result;
 
 /// Capability description of a block device.
+#[non_exhaustive]
 pub struct Capability {
     /// Size of a block for this block device.
     pub blksize: usize,
 
     /// Whether discard operation is supported by the block device.
     pub discard: bool,
-
-    /// Ensure that Capability cannot be constructed directly so we can add items in the future.
-    _future: (),
 }
 
 impl Default for Capability {
     fn default() -> Self {
-        Capability { blksize: 512, discard: false, _future: () }
+        Capability { blksize: 512, discard: false }
     }
 }
 

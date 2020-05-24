@@ -40,7 +40,7 @@ pub(super) struct QueueInner {
 
 impl QueueInner {
     pub fn new(dma_ctx: Arc<dyn DmaContext>, num_max: u16) -> Arc<Mutex<QueueInner>> {
-        let inner = Arc::new(Mutex::new(QueueInner {
+        Arc::new(Mutex::new(QueueInner {
             ready: false,
             num: num_max,
             num_max,
@@ -51,8 +51,7 @@ impl QueueInner {
             last_avail_idx: 0,
             last_used_idx: 0,
             dma_ctx,
-        }));
-        inner
+        }))
     }
 
     pub fn reset(&mut self) {

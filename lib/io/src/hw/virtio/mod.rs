@@ -32,6 +32,7 @@ pub use console::Console;
 
 /// Types of virtio devices.
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum DeviceId {
     Reserved = 0,
     Network = 1,
@@ -39,8 +40,6 @@ pub enum DeviceId {
     Console = 3,
     Entropy = 4,
     P9 = 9,
-    #[doc(hidden)]
-    __Nonexhaustive,
 }
 
 /// A transport-agnostic abstraction of virtio devices.

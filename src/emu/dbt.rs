@@ -2113,13 +2113,13 @@ impl<'a> DbtCompiler<'a> {
         }
 
         // Get the operands of the branch
-        let (rs1, rs2, mut cc) = match bop {
-            &Op::Beq { rs1, rs2, .. } => (rs1, rs2, ConditionCode::Equal),
-            &Op::Bne { rs1, rs2, .. } => (rs1, rs2, ConditionCode::NotEqual),
-            &Op::Blt { rs1, rs2, .. } => (rs1, rs2, ConditionCode::Less),
-            &Op::Bge { rs1, rs2, .. } => (rs1, rs2, ConditionCode::GreaterEqual),
-            &Op::Bltu { rs1, rs2, .. } => (rs1, rs2, ConditionCode::Below),
-            &Op::Bgeu { rs1, rs2, .. } => (rs1, rs2, ConditionCode::AboveEqual),
+        let (rs1, rs2, mut cc) = match *bop {
+            Op::Beq { rs1, rs2, .. } => (rs1, rs2, ConditionCode::Equal),
+            Op::Bne { rs1, rs2, .. } => (rs1, rs2, ConditionCode::NotEqual),
+            Op::Blt { rs1, rs2, .. } => (rs1, rs2, ConditionCode::Less),
+            Op::Bge { rs1, rs2, .. } => (rs1, rs2, ConditionCode::GreaterEqual),
+            Op::Bltu { rs1, rs2, .. } => (rs1, rs2, ConditionCode::Below),
+            Op::Bgeu { rs1, rs2, .. } => (rs1, rs2, ConditionCode::AboveEqual),
             _ => unreachable!(),
         };
 

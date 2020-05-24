@@ -98,10 +98,9 @@ impl FiberStack {
         if map.is_null() {
             panic!("cannot create fiber stack");
         }
-        let stack = FiberStack(
+        FiberStack(
             std::num::NonZeroUsize::new(map as usize + std::mem::size_of::<FiberData>()).unwrap(),
-        );
-        stack
+        )
     }
 
     unsafe fn deallocate(self) {
