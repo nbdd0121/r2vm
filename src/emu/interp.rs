@@ -405,6 +405,7 @@ impl Context {
 
     /// Insert a cache line into the L0 instruction cache.
     pub fn insert_instruction_cache_line(&mut self, vaddr: u64, paddr: u64) {
+        assert!(paddr <= *super::MEM_BOUNDARY as u64);
         let idx = vaddr >> get_memory_model().cache_line_size_log2();
         let line: &CacheLine = &self.shared.i_line[(idx & 1023) as usize];
         line.tag.store(idx, MemOrder::Relaxed);
@@ -413,6 +414,7 @@ impl Context {
 
     /// Insert a cache line into the L0 data cache.
     pub fn insert_data_cache_line(&mut self, vaddr: u64, paddr: u64, writable: bool) {
+        assert!(paddr <= *super::MEM_BOUNDARY as u64);
         let idx = vaddr >> get_memory_model().cache_line_size_log2();
         let line: &CacheLine = &self.shared.line[(idx & 1023) as usize];
         let tag = (idx << 1) | if writable { 0 } else { 1 };
@@ -685,7 +687,9 @@ pub fn icache_invalidate(start: usize, end: usize) {
 #[inline(never)]
 #[no_mangle]
 fn insn_translate_cache_miss(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
-    get_memory_model().instruction_access(ctx, addr)
+    let addr = get_memory_model().instruction_access(ctx, addr)?;
+    assert!(addr <= *super::MEM_BOUNDARY as u64);
+    Ok(addr)
 }
 
 fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
@@ -703,6 +707,7 @@ fn insn_translate(ctx: &mut Context, addr: u64) -> Result<u64, ()> {
 #[export_name = "translate_cache_miss"]
 fn translate_cache_miss(ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
     let out = get_memory_model().data_access(ctx, addr, write)?;
+    assert!(out <= *super::MEM_BOUNDARY as u64);
     if write {
         icache_invalidate(out as usize, out as usize + 1);
     }

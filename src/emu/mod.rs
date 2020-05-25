@@ -400,6 +400,10 @@ fn init_rtc(sys: &mut IoSystem) {
 /// locations as RAM, so the default value here is 0.
 static IO_BOUNDARY: crate::util::RoCell<usize> = crate::util::RoCell::new(0);
 
+/// Only memory addresses strictly below this location is accessible by the guest. For user-space
+/// application, we consider all memory locations as RAM, so the default value here is usize::MAX.
+static MEM_BOUNDARY: crate::util::RoCell<usize> = crate::util::RoCell::new(usize::MAX);
+
 pub fn init() {
     unsafe {
         // The memory map looks like this:
@@ -415,6 +419,8 @@ pub fn init() {
             * 1024
             * 1024;
         let phys_limit = 0x40000000 + phys_size;
+
+        crate::util::RoCell::replace(&MEM_BOUNDARY, phys_limit);
 
         // First allocate physical memory region, without making them accessible
         let result = libc::mmap(
