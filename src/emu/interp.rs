@@ -388,7 +388,9 @@ impl Context {
             return Ok(addr);
         }
 
-        let pte = walk_page(self.satp, addr >> 12, |addr| crate::emu::read_memory(addr as usize));
+        let pte = walk_page(self.satp, addr >> 12, |addr| crate::emu::read_memory(addr as usize))
+            .synthesise_4k(addr)
+            .pte;
         match check_permission(pte, access, prv as u8, self.mstatus) {
             Ok(_) => Ok(pte >> 10 << 12 | addr & 4095),
             Err(_) => {
@@ -894,8 +896,8 @@ pub fn icache_reset() {
 }
 
 /// Broadcast sfence
-fn global_sfence(ctx: &mut Context, mask: u64, asid: Option<u16>, vpn: Option<u64>) {
-    get_memory_model().before_sfence_vma(ctx, mask, asid, vpn);
+fn global_sfence(ctx: &mut Context, mask: u64, asid: Option<u16>, vaddr: Option<u64>) {
+    get_memory_model().before_sfence_vma(ctx, mask, asid, vaddr);
     for i in 0..crate::core_count() {
         if mask & (1 << i) == 0 {
             continue;
