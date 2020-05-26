@@ -45,6 +45,11 @@ pub trait MemoryModel: Sync {
     ) {
     }
 
+    // Hook to execute before SATP is changed on a hart.
+    fn before_satp_change(&self, ctx: &mut Context, new_satp: u64) {
+        let _ = (ctx, new_satp);
+    }
+
     /// Reset all statistics
     fn reset_stats(&self) {}
 

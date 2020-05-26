@@ -568,16 +568,26 @@ fn write_csr(ctx: &mut Context, csr: Csr, value: u64) -> Result<(), ()> {
             }
         }
         Csr::Satp => {
-            match value >> 60 {
+            let new_satp = match value >> 60 {
                 // No paging
-                0 => ctx.satp = 0,
-                // ASID not yet supported
-                8 => ctx.satp = value,
+                0 => 0,
+                // SV39
+                8 => value,
                 // We only support SV39 at the moment.
-                _ => (),
+                _ => ctx.satp,
+            };
+
+            get_memory_model().before_satp_change(ctx, new_satp);
+
+            // We only need to flush caches if SATP's mode or ASID changes.
+            // If only the PPN is changed, then according to the spec no change is required.
+            if ctx.satp & !0xFFF_FFFFFFFF != value & !0xFFF_FFFFFFFF {
+                ctx.shared.clear_local_cache();
+                ctx.shared.clear_local_icache();
             }
-            ctx.shared.clear_local_cache();
-            ctx.shared.clear_local_icache();
+
+            // Perform the actual SATP update.
+            ctx.satp = new_satp;
         }
         Csr::Mstatus => {
             // Mask-out non-writable bits
