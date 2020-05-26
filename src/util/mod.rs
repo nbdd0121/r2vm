@@ -10,3 +10,45 @@ pub fn cpu_time() -> std::time::Duration {
         std::time::Duration::new(timespec.tv_sec as u64, timespec.tv_nsec as u32)
     }
 }
+
+pub trait ILog2 {
+    fn log2(self) -> usize;
+    fn clog2(self) -> usize;
+
+    /// Assert that the value is a power of 2, and get log2 of the current value.
+    ///
+    /// If the value is not a power of 2, calling this method will cause an abort.
+    fn log2_assert(self) -> usize;
+}
+
+impl ILog2 for usize {
+    fn log2(self) -> usize {
+        std::mem::size_of::<usize>() * 8 - 1 - self.leading_zeros() as usize
+    }
+
+    fn clog2(self) -> usize {
+        (self - 1).log2() + 1
+    }
+
+    fn log2_assert(self) -> usize {
+        let log2 = self.log2();
+        assert_eq!(1 << log2, self);
+        log2
+    }
+}
+
+impl ILog2 for u64 {
+    fn log2(self) -> usize {
+        std::mem::size_of::<u64>() * 8 - 1 - self.leading_zeros() as usize
+    }
+
+    fn clog2(self) -> usize {
+        (self - 1).log2() + 1
+    }
+
+    fn log2_assert(self) -> usize {
+        let log2 = self.log2();
+        assert_eq!(1 << log2, self);
+        log2
+    }
+}
