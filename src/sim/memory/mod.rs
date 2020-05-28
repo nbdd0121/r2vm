@@ -8,13 +8,6 @@ pub mod tlb;
 pub use tlb::TLBModel;
 
 pub trait MemoryModel: Sync {
-    /// Whether lock-step execution is required for this model's simulation.
-    /// For cycle-level simulation you would want this to be true, but if no cache coherency is
-    /// simulated **and** only rough metrics are needed it's okay to set it to false.
-    fn require_lockstep(&self) -> bool {
-        true
-    }
-
     /// log2 of the cache line size. By default it is 6 (64B). This should at least be 3 (8B) and
     /// at most be 12 (4096B, 1 page).
     fn cache_line_size_log2(&self) -> u32 {
@@ -69,10 +62,6 @@ pub trait MemoryModel: Sync {
 pub struct AtomicModel;
 
 impl MemoryModel for AtomicModel {
-    fn require_lockstep(&self) -> bool {
-        false
-    }
-
     fn cache_line_size_log2(&self) -> u32 {
         12
     }
