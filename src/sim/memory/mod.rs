@@ -1,6 +1,12 @@
 use crate::emu::interp::Context;
 use riscv::mmu::AccessType;
 
+pub mod cache_set;
+pub mod replacement_policy;
+pub mod tlb;
+
+pub use tlb::TLBModel;
+
 pub trait MemoryModel: Sync {
     /// Whether lock-step execution is required for this model's simulation.
     /// For cycle-level simulation you would want this to be true, but if no cache coherency is
