@@ -1,10 +1,12 @@
 use crate::emu::interp::Context;
 use riscv::mmu::AccessType;
 
+pub mod cache;
 pub mod cache_set;
 pub mod replacement_policy;
 pub mod tlb;
 
+pub use cache::SimpleCacheModel;
 pub use tlb::TLBModel;
 
 pub trait MemoryModel: Sync {

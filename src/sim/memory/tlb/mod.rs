@@ -1,3 +1,4 @@
+use super::cache::Cache;
 use crate::emu::interp::Context;
 use riscv::mmu::{check_permission, AccessType, PageWalkResult, PTE_D, PTE_W};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -93,7 +94,6 @@ pub struct PerformanceModel {
     pub miss_penalty_after: usize,
 }
 
-
 /// TLB model.
 ///
 /// This model could be useful if you only care about hit rate, or only need roughly
@@ -133,6 +133,7 @@ pub struct PageWalkerPerformanceModel {
 }
 
 pub struct PageWalker {
+    parent: Arc<dyn Cache>,
     perf: PageWalkerPerformanceModel,
 }
 
@@ -147,6 +148,7 @@ impl TLB for PageWalker {
         fiber::sleep(self.perf.start_delay);
         let ret = riscv::mmu::walk_page(ctx.satp, addr >> 12, |addr| {
             fiber::sleep(self.perf.walk_delay_before);
+            self.parent.access(ctx, addr, false);
             let ret = crate::emu::read_memory(addr as usize);
             fiber::sleep(self.perf.walk_delay_after);
             ret
@@ -157,8 +159,8 @@ impl TLB for PageWalker {
 }
 
 impl PageWalker {
-    pub fn new(perf: PageWalkerPerformanceModel) -> Self {
-        PageWalker { perf }
+    pub fn new(parent: Arc<dyn Cache>, perf: PageWalkerPerformanceModel) -> Self {
+        PageWalker { parent, perf }
     }
 }
 
@@ -173,12 +175,18 @@ impl TLBModel {
     pub fn example() -> Self {
         let i_stats = Arc::new(Statistics::new());
         let d_stats = Arc::new(Statistics::new());
-        let walker = Arc::new(PageWalker::new(PageWalkerPerformanceModel {
-            start_delay: 0,
-            walk_delay_before: 0,
-            walk_delay_after: 0,
-            end_delay: 0,
-        }));
+        let memory = Arc::new(super::cache::MemoryController::new(
+            super::cache::MemoryControllerPerformanceModel { read_latency: 0, write_latency: 0 },
+        ));
+        let walker = Arc::new(PageWalker::new(
+            memory,
+            PageWalkerPerformanceModel {
+                start_delay: 0,
+                walk_delay_before: 0,
+                walk_delay_after: 0,
+                end_delay: 0,
+            },
+        ));
         let core_count = crate::core_count();
         let mut i_tlbs = Vec::<Arc<dyn TLB>>::with_capacity(core_count);
         let mut d_tlbs = Vec::<Arc<dyn TLB>>::with_capacity(core_count);
