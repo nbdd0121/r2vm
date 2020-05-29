@@ -42,8 +42,8 @@ fn assert_in_fiber() {
 /// This function will `panic!()` if the current thread is not in fiber context.
 #[inline]
 pub fn sleep(num: usize) {
-    assert_in_fiber();
     if num > 0 {
+        assert_in_fiber();
         unsafe { raw::fiber_sleep(num - 1) }
     }
 }
