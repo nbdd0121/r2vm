@@ -42,9 +42,9 @@ pub unsafe fn switch_model(id: usize) {
             set_lockstep_mode(false);
         }
         1 => {
-            register_memory_model(Box::new(memory::SimpleModel));
+            register_memory_model(Box::new(memory::MESIModel::default()));
             register_pipeline_model(|_| Box::new(pipeline::InOrderModel::default()));
-            set_lockstep_mode(false);
+            set_lockstep_mode(true);
         }
         _ => panic!("unknown model id"),
     }
