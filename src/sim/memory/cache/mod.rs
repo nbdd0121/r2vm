@@ -1,6 +1,6 @@
-use super::tlb::{prv_asid_of_ctx, Asid, PageWalker, PageWalkerPerformanceModel, SetAssocTLB, TLB};
+use super::tlb::{PageWalker, PageWalkerPerformanceModel, SetAssocTLB, TLB};
 use crate::emu::interp::Context;
-use riscv::mmu::{check_permission, AccessType};
+use riscv::mmu::AccessType;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -214,24 +214,7 @@ impl super::MemoryModel for SimpleCacheModel {
     }
 
     fn instruction_access(&self, ctx: &mut Context, addr: u64) -> Result<u64, ()> {
-        let out = (|| {
-            let (prv, asid) = prv_asid_of_ctx(ctx, true);
-            if asid == Asid::Physical {
-                return Ok(addr);
-            }
-
-            let pte =
-                self.i_tlbs[ctx.hartid as usize].access(ctx, asid, addr).synthesise_4k(addr).pte;
-            match check_permission(pte, AccessType::Execute, prv, ctx.mstatus) {
-                Ok(_) => Ok((pte >> 10 << 12) | (addr & 4095)),
-                Err(_) => {
-                    ctx.cause = 12;
-                    ctx.tval = addr;
-                    Err(())
-                }
-            }
-        })()?;
-
+        let out = self.i_tlbs[ctx.hartid as usize].translate(ctx, addr, AccessType::Execute)?.0;
         self.i_caches[ctx.hartid as usize].access(ctx, out, false);
 
         // TODO: ReplacementPolicy probably should be consulted first.
@@ -240,31 +223,9 @@ impl super::MemoryModel for SimpleCacheModel {
     }
 
     fn data_access(&self, ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
-        let out = (|| {
-            let (prv, asid) = prv_asid_of_ctx(ctx, false);
-            if asid == Asid::Physical {
-                return Ok(addr);
-            }
-
-            let pte =
-                self.d_tlbs[ctx.hartid as usize].access(ctx, asid, addr).synthesise_4k(addr).pte;
-            match check_permission(
-                pte,
-                if write { AccessType::Write } else { AccessType::Read },
-                prv,
-                ctx.mstatus,
-            ) {
-                Ok(_) => {
-                    Ok((pte >> 10 << 12) | (addr & 4095))
-                }
-                Err(_) => {
-                    ctx.cause = if write { 15 } else { 13 };
-                    ctx.tval = addr;
-                    Err(())
-                }
-            }
-        })()?;
-
+        let out = self.i_tlbs[ctx.hartid as usize]
+            .translate(ctx, addr, if write { AccessType::Write } else { AccessType::Read })?
+            .0;
         self.d_caches[ctx.hartid as usize].access(ctx, out, write);
 
         // TODO: ReplacementPolicy probably should be consulted first.

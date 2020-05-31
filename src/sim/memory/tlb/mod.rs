@@ -158,6 +158,29 @@ impl TLB for PageWalker {
     }
 }
 
+impl dyn TLB {
+    pub fn translate(&self, ctx: &mut Context, addr: u64, ty: AccessType) -> Result<(u64, bool), ()> {
+        let (prv, asid) = prv_asid_of_ctx(ctx, ty == AccessType::Execute);
+        if asid == Asid::Physical {
+            return Ok((addr, true));
+        }
+
+        let pte = self.access(ctx, asid, addr).synthesise_4k(addr).pte;
+        match check_permission(pte, ty, prv, ctx.mstatus) {
+            Ok(_) => Ok(((pte >> 10 << 12) | (addr & 4095), pte & PTE_W != 0 && pte & PTE_D != 0)),
+            Err(_) => {
+                ctx.cause = match ty {
+                    AccessType::Execute => 12,
+                    AccessType::Read => 13,
+                    AccessType::Write => 15,
+                };
+                ctx.tval = addr;
+                Err(())
+            }
+        }
+    }
+}
+
 impl PageWalker {
     pub fn new(parent: Arc<dyn Cache>, perf: PageWalkerPerformanceModel) -> Self {
         PageWalker { parent, perf }
@@ -165,8 +188,8 @@ impl PageWalker {
 }
 
 pub struct TLBModel {
-    i_tlb: Box<[Arc<dyn TLB>]>,
-    d_tlb: Box<[Arc<dyn TLB>]>,
+    i_tlbs: Box<[Arc<dyn TLB>]>,
+    d_tlbs: Box<[Arc<dyn TLB>]>,
     i_stats: Arc<Statistics>,
     d_stats: Arc<Statistics>,
 }
@@ -221,8 +244,8 @@ impl TLBModel {
         }
 
         Self {
-            i_tlb: i_tlbs.into_boxed_slice(),
-            d_tlb: d_tlbs.into_boxed_slice(),
+            i_tlbs: i_tlbs.into(),
+            d_tlbs: d_tlbs.into(),
             i_stats,
             d_stats,
         }
@@ -235,23 +258,7 @@ impl super::MemoryModel for TLBModel {
     }
 
     fn instruction_access(&self, ctx: &mut Context, addr: u64) -> Result<u64, ()> {
-        let out = (|| {
-            let (prv, asid) = prv_asid_of_ctx(ctx, true);
-            if asid == Asid::Physical {
-                return Ok(addr);
-            }
-
-            let pte =
-                self.i_tlb[ctx.hartid as usize].access(ctx, asid, addr).synthesise_4k(addr).pte;
-            match check_permission(pte, AccessType::Execute, prv, ctx.mstatus) {
-                Ok(_) => Ok((pte >> 10 << 12) | (addr & 4095)),
-                Err(_) => {
-                    ctx.cause = 12;
-                    ctx.tval = addr;
-                    Err(())
-                }
-            }
-        })()?;
+        let out = self.i_tlbs[ctx.hartid as usize].translate(ctx, addr, AccessType::Execute)?.0;
 
         // TODO: ReplacementPolicy probably should be consulted first.
         ctx.insert_instruction_cache_line(addr, out);
@@ -259,30 +266,11 @@ impl super::MemoryModel for TLBModel {
     }
 
     fn data_access(&self, ctx: &mut Context, addr: u64, write: bool) -> Result<u64, ()> {
-        let (out, w) = (|| {
-            let (prv, asid) = prv_asid_of_ctx(ctx, false);
-            if asid == Asid::Physical {
-                return Ok((addr, true));
-            }
-
-            let pte =
-                self.d_tlb[ctx.hartid as usize].access(ctx, asid, addr).synthesise_4k(addr).pte;
-            match check_permission(
-                pte,
-                if write { AccessType::Write } else { AccessType::Read },
-                prv,
-                ctx.mstatus,
-            ) {
-                Ok(_) => {
-                    Ok(((pte >> 10 << 12) | (addr & 4095), pte & PTE_W != 0 && pte & PTE_D != 0))
-                }
-                Err(_) => {
-                    ctx.cause = if write { 15 } else { 13 };
-                    ctx.tval = addr;
-                    Err(())
-                }
-            }
-        })()?;
+        let (out, w) = self.i_tlbs[ctx.hartid as usize].translate(
+            ctx,
+            addr,
+            if write { AccessType::Write } else { AccessType::Read },
+        )?;
 
         // TODO: ReplacementPolicy probably should be consulted first.
         ctx.insert_data_cache_line(addr, out, w);
@@ -301,8 +289,8 @@ impl super::MemoryModel for TLBModel {
             if mask & (1 << i) == 0 {
                 continue;
             }
-            self.i_tlb[i].flush(asid, vaddr);
-            self.d_tlb[i].flush(asid, vaddr);
+            self.i_tlbs[i].flush(asid, vaddr);
+            self.d_tlbs[i].flush(asid, vaddr);
         }
     }
 
