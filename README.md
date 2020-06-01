@@ -4,6 +4,23 @@ R2VM is the **R**ust for **R**ISC-V **V**irtual **M**achine.
 
 R2VM is a full-system, multi-core, cycle-level simulator, with binary translation to provide high performance. It can run RISC-V supervisor and userspace software on AMD64 Linux machines.
 
+## Citation
+
+Some approaches of this simulator are described in [our paper](https://carrv.github.io/2020/papers/CARRV2020_paper_6_Guo.pdf).
+
+If you would like to cite this work, you may cite as
+> Xuan Guo and Robert Mullins. 2020. Accelerate Cycle-Level Full-System Simulation of Multi-Core RISC-V Systems with Binary Translation. In *Fourth Workshop on Computer Architecture Research with RISC-V*
+
+Or use the following bibtex snippet:
+```bibtex
+@inproceedings{guo2020r2vm,
+  title={Accelerate Cycle-Level Full-System Simulation of Multi-Core RISC-V Systems with Binary Translation},
+  author={Guo, Xuan and Mullins, Robert},
+  year={2020},
+  booktitle={Fourth Workshop on Computer Architecture Research with RISC-V}
+}
+```
+
 ## Installation
 
 R2VM is written in Rust. To compile it, you will need to [install Rust](https://rustup.rs/) first, then:
