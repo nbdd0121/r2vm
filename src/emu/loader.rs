@@ -7,6 +7,7 @@ use std::io::Write;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::path::Path;
 
+const EI_CLASS: usize = 0x4;
 const PF_R: u32 = 0x4;
 const PF_W: u32 = 0x2;
 const PF_X: u32 = 0x1;
@@ -104,6 +105,11 @@ impl Loader {
         // Check that the ELF is for RISC-V
         if header.e_machine != EM_RISCV {
             return Err("the binary is not for RISC-V.");
+        }
+
+        // Check that the ELF is ELF64
+        if header.e_ident[EI_CLASS] != 2 {
+            return Err("the binary is not ELF64.");
         }
 
         // Make sure we are not loading a kernel - kernel must be specified using config files.
