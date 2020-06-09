@@ -181,7 +181,7 @@ impl IoSystem {
         let mem = self.boundary;
         self.boundary += 4096;
 
-        let device = Box::new(f(self.plic.irq_pin(irq)));
+        let device = Box::new(f(self.plic.irq_pin(irq, true)));
         let virtio = Arc::new(Mutex::new(Mmio::new(Arc::new(DirectIoContext), device)));
         self.register_io_mem(mem, 4096, virtio);
 
@@ -306,7 +306,7 @@ fn init_network(sys: &mut IoSystem) {
                 use io::hw::network::XemacLite;
                 let xemaclite = XemacLite::new(
                     Arc::new(DirectIoContext),
-                    sys.plic.irq_pin(irq),
+                    sys.plic.irq_pin(irq, true),
                     Box::new(usernet),
                 );
                 sys.register_io_mem(base, 0x2000, Arc::new(xemaclite));
@@ -383,7 +383,7 @@ fn init_rtc(sys: &mut IoSystem) {
     let mem = sys.boundary;
     sys.boundary += 4096;
 
-    let rtc = Arc::new(ZyncMp::new(sys.plic.irq_pin(irq), sys.plic.irq_pin(irq + 1)));
+    let rtc = Arc::new(ZyncMp::new(sys.plic.irq_pin(irq, true), sys.plic.irq_pin(irq + 1, true)));
     sys.register_io_mem(mem, 4096, rtc);
 
     let node = sys.fdt.add_node(format!("rtc@{:x}", mem));

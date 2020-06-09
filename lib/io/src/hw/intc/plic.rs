@@ -23,6 +23,11 @@ const OFFSET_INTERRUPT_CLAIM: usize = 0x004;
 pub struct Plic(Arc<Mutex<PlicInner>>);
 
 struct PlicInner {
+    // Interrupt pin level
+    level: u32,
+    // Whether the interrupt is edge triggered
+    edge_trigger: u32,
+
     priority: [u8; 32],
     pending: u32,
     claimed: u32,
@@ -34,13 +39,14 @@ struct PlicInner {
 pub struct PlicIrq {
     plic: Weak<Mutex<PlicInner>>,
     irq: u32,
-    prev: AtomicBool,
 }
 
 impl PlicInner {
     /// Create a SiFive-compatible PLIC, with `ctx` number of contexts.
     fn new(ctx_irqs: Vec<Box<dyn IrqPin>>) -> Self {
         Self {
+            level: 0,
+            edge_trigger: 0,
             priority: [0; 32],
             pending: 0,
             enable: vec![0; ctx_irqs.len()].into_boxed_slice(),
@@ -50,9 +56,23 @@ impl PlicInner {
         }
     }
 
-    fn trigger(&mut self, irq: u32) {
+    fn set_level(&mut self, irq: u32, level: bool) {
         assert!(irq > 0 && irq < 32);
-        self.pending |= 1 << irq;
+        let mask = 1 << irq;
+
+        // For edge triggered interrupts, if the level raises, set the pending bit.
+        // For level-triggered interrupts this is done in recompute_pending.
+        if self.edge_trigger & mask != 0 && self.level & mask == 0 && level {
+            self.pending |= mask;
+        }
+
+        // Update level
+        if level {
+            self.level |= mask;
+        } else {
+            self.level &= !mask;
+        }
+
         self.recompute_pending();
     }
 
@@ -70,6 +90,9 @@ impl PlicInner {
     }
 
     fn recompute_pending(&mut self) {
+        // For level-triggered interrupts, if they are not currently claimed, a high level will trigger a pending interrupt.
+        self.pending |= !self.claimed & !self.edge_trigger & self.level;
+
         for ctx in 0..self.enable.len() {
             self.irq[ctx].set_level(self.pending(ctx));
         }
@@ -259,9 +282,15 @@ impl Plic {
     ///
     /// # Panics
     /// Panics if `irq` supplied is outside the supported range.
-    pub fn irq_pin(&self, irq: u32) -> Box<dyn IrqPin> {
+    pub fn irq_pin(&self, irq: u32, edge_trigger: bool) -> Box<dyn IrqPin> {
         assert!(irq > 0 && irq < 32);
-        Box::new(PlicIrq { plic: Arc::downgrade(&self.0), irq, prev: AtomicBool::new(false) })
+        let mut guard = self.0.lock();
+        if edge_trigger {
+            guard.edge_trigger |= 1 << irq;
+        } else {
+            guard.edge_trigger &= !(1 << irq);
+        }
+        Box::new(PlicIrq { plic: Arc::downgrade(&self.0), irq })
     }
 }
 
@@ -277,12 +306,8 @@ impl IoMemory for Plic {
 
 impl IrqPin for PlicIrq {
     fn set_level(&self, level: bool) {
-        let prev = self.prev.swap(level, Ordering::Relaxed);
-        // Edge trigger
-        if level && !prev {
-            if let Some(inner) = self.plic.upgrade() {
-                inner.lock().trigger(self.irq);
-            }
+        if let Some(inner) = self.plic.upgrade() {
+            inner.lock().set_level(self.irq, level);
         }
     }
 }
