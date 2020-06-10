@@ -241,6 +241,8 @@ pub static CONSOLE: Lazy<io::serial::Console> = Lazy::new(|| {
             return Some(x);
         }
 
+        escape_hit = false;
+
         // Byte after Ctrl + A hit, do corresponding action
         match x {
             b't' => {
