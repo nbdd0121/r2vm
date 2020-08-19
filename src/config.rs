@@ -44,7 +44,7 @@ pub struct Config {
     pub clint: Option<DeviceConfig<ClintConfig>>,
 
     #[serde(default)]
-    pub console: ConsoleConfig,
+    pub console: Option<DeviceConfig<ConsoleConfig>>,
 
     /// Whether a RTC device should be instantiated.
     #[serde(default = "return_true")]
@@ -81,11 +81,23 @@ pub struct DeviceConfig<T> {
 pub struct ClintConfig {}
 
 #[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum ConsoleType {
+    Virtio,
+}
+
+impl Default for ConsoleType {
+    fn default() -> Self {
+        ConsoleType::Virtio
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ConsoleConfig {
     /// Whether a virtio console device should be exposed. Note that under current implementation,
     /// sbi_get_char will always produce -1 after virtio is initialised.
-    #[serde(default = "return_true")]
-    pub virtio: bool,
+    #[serde(default)]
+    pub r#type: ConsoleType,
 
     /// Whether resizing feature should be enabled. Only useful when virtio is enabled.
     #[serde(default = "return_true")]
@@ -94,7 +106,7 @@ pub struct ConsoleConfig {
 
 impl Default for ConsoleConfig {
     fn default() -> Self {
-        ConsoleConfig { virtio: true, resize: true }
+        ConsoleConfig { r#type: ConsoleType::Virtio, resize: true }
     }
 }
 
