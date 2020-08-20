@@ -1,18 +1,69 @@
 //! This module handles event-driven simulation
 
 use futures::future::BoxFuture;
+use futures::task::ArcWake;
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::collections::BinaryHeap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
+
+// A task spawned onto the event loop.
+struct Task {
+    future: Mutex<Option<BoxFuture<'static, ()>>>,
+}
+
+impl ArcWake for Task {
+    fn wake_by_ref(arc_self: &Arc<Self>) {
+        arc_self.clone().wake();
+    }
+
+    fn wake(self: Arc<Self>) {
+        // We're a bit lazy here without capturing `EventLoop`. But as we will only have 1
+        // single event loop, so this is probably okay.
+        let event_loop = crate::event_loop();
+        // Schedule an event to poll the task again
+        event_loop.queue_handler(0, Handler::Task(self));
+    }
+}
+
+// A wake-up event that should be handled.
+enum Handler {
+    Func(Box<dyn FnOnce() + Send>),
+    Waker(Waker),
+    // A task that is being waked and could make progress.
+    Task(Arc<Task>),
+}
 
 struct Entry {
     time: u64,
-    handler: Box<dyn FnOnce() + Send>,
+    handler: Handler,
+}
+
+// A timer future returned by the event loop
+struct Timer {
+    time: u64,
+    polled: bool,
+}
+
+impl Future for Timer {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let event_loop = crate::event_loop();
+        if event_loop.cycle() >= self.time {
+            return Poll::Ready(());
+        }
+        if !self.polled {
+            self.polled = true;
+            let waker = cx.waker().clone();
+            event_loop.queue_handler(self.time, Handler::Waker(waker));
+        }
+        Poll::Pending
+    }
 }
 
 // #region Ordering relation for Entry
@@ -124,9 +175,12 @@ impl EventLoop {
         }
     }
 
-    /// Add a new event to the event loop for triggering. If it happens in the past it will be
-    /// dequeued and triggered as soon as `cycle` increments for the next time.
-    pub fn queue(&self, cycle: u64, handler: Box<dyn FnOnce() + Send>) {
+    /// Query the current time (we pretend to be operating at 100MHz at the moment)
+    pub fn time(&self) -> u64 {
+        self.cycle() / 100
+    }
+
+    fn queue_handler(&self, cycle: u64, handler: Handler) {
         let mut guard = self.events.lock();
         guard.push(Entry { time: cycle, handler });
 
@@ -147,40 +201,23 @@ impl EventLoop {
         }
     }
 
-    /// Create a future that resolves after the specified cycle.
-    pub fn on_cycle(&self, cycle: u64) -> impl Future<Output = ()> + Send + 'static {
-        struct Timer(u64, bool);
-        impl Future for Timer {
-            type Output = ();
-
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-                // Needed to have a 'static lifetime, which is more useful fore user.
-                let event_loop = crate::event_loop();
-                if event_loop.cycle() >= self.0 {
-                    return Poll::Ready(());
-                }
-                if !self.1 {
-                    self.1 = true;
-                    let waker = cx.waker().clone();
-                    event_loop.queue(self.0, Box::new(move || waker.wake()));
-                }
-                Poll::Pending
-            }
-        }
-        Timer(cycle, false)
-    }
-
-    /// Query the current time (we pretend to be operating at 100MHz at the moment)
-    pub fn time(&self) -> u64 {
-        self.cycle() / 100
+    /// Add a new event to the event loop for triggering. If it happens in the past it will be
+    /// dequeued and triggered as soon as `cycle` increments for the next time.
+    pub fn queue(&self, cycle: u64, handler: Box<dyn FnOnce() + Send>) {
+        self.queue_handler(cycle, Handler::Func(handler));
     }
 
     pub fn queue_time(&self, time: u64, handler: Box<dyn FnOnce() + Send>) {
-        self.queue(time.saturating_mul(100), handler);
+        self.queue_handler(time.saturating_mul(100), Handler::Func(handler));
+    }
+
+    /// Create a future that resolves after the specified cycle.
+    pub fn on_cycle(&self, cycle: u64) -> impl Future<Output = ()> + Send + 'static {
+        Timer { time: cycle, polled: false }
     }
 
     pub fn on_time(&self, time: u64) -> impl Future<Output = ()> + Send + 'static {
-        self.on_cycle(time.saturating_mul(100))
+        Timer { time: time.saturating_mul(100), polled: false }
     }
 
     /// Handle all events at or before `cycle`, and return the cycle of next event if any.
@@ -199,7 +236,25 @@ impl EventLoop {
             }
             let entry = guard.pop().unwrap();
             MutexGuard::unlocked(&mut guard, || {
-                (entry.handler)();
+                match entry.handler {
+                    Handler::Func(func) => func(),
+                    Handler::Waker(waker) => waker.wake(),
+                    Handler::Task(task) => {
+                        // Poll the task once.
+                        let waker_ref = futures::task::waker_ref(&task);
+                        let mut context = Context::from_waker(&waker_ref);
+
+                        let mut lock = task.future.lock();
+                        if let Some(ref mut future) = *lock {
+                            // This is safe because we are pinned by Arc.
+                            let poll = unsafe { Pin::new_unchecked(future) }.poll(&mut context);
+                            if poll.is_ready() {
+                                // When we polled a context to ready, drop the Future.
+                                *lock = None;
+                            }
+                        }
+                    }
+                }
             });
         }
     }
@@ -231,42 +286,6 @@ impl EventLoop {
 
     /// Spawn a [`Future`] on this event loop.
     pub fn spawn(&self, future: BoxFuture<'static, ()>) {
-        use futures::task::ArcWake;
-
-        struct Task {
-            future: Mutex<Option<BoxFuture<'static, ()>>>,
-        }
-
-        impl ArcWake for Task {
-            fn wake_by_ref(arc_self: &Arc<Self>) {
-                arc_self.clone().wake();
-            }
-
-            fn wake(self: Arc<Self>) {
-                // We're a bit lazy here without capturing `self`. But as we will only have 1
-                // single event loop, so this is probably okay.
-                let event_loop = crate::event_loop();
-                // Schedule an event to poll the task again
-                event_loop.queue(
-                    0,
-                    Box::new(move || {
-                        let waker_ref = futures::task::waker_ref(&self);
-                        let mut context = Context::from_waker(&waker_ref);
-
-                        let mut lock = self.future.lock();
-                        if let Some(ref mut future) = *lock {
-                            // This is safe because we are pinned by Arc.
-                            let poll = unsafe { Pin::new_unchecked(future) }.poll(&mut context);
-                            if poll.is_ready() {
-                                // When we polled a context to ready, drop the Future.
-                                *lock = None;
-                            }
-                        }
-                    }),
-                );
-            }
-        }
-
         let task = Arc::new(Task { future: Mutex::new(Some(future)) });
         task.wake();
     }
