@@ -40,5 +40,5 @@ extern "C" {
     /// Must be called within fiber environment. Consider using [`with_context`] if possible.
     ///
     /// [`with_context`]: super::with_context
-    pub fn fiber_current() -> usize;
+    pub fn fiber_current() -> std::num::NonZeroUsize;
 }

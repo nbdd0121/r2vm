@@ -2344,7 +2344,7 @@ extern "C" {
 }
 
 #[no_mangle]
-extern "C" fn find_block(ctx: &mut Context) -> (usize, usize) {
+fn find_block(ctx: &mut Context) -> (usize, usize) {
     let pc = ctx.pc;
     let phys_pc = match insn_translate(ctx, pc) {
         Ok(pc) => pc,
