@@ -39,6 +39,7 @@ struct PlicInner {
 pub struct PlicIrq {
     plic: Weak<Mutex<PlicInner>>,
     irq: u32,
+    prev: AtomicBool,
 }
 
 impl PlicInner {
@@ -91,7 +92,7 @@ impl PlicInner {
 
     fn recompute_pending(&mut self) {
         // For level-triggered interrupts, if they are not currently claimed, a high level will trigger a pending interrupt.
-        self.pending |= !self.claimed & !self.edge_trigger & self.level;
+        self.pending = (self.pending & self.edge_trigger) | (!self.edge_trigger & self.level);
 
         for ctx in 0..self.enable.len() {
             self.irq[ctx].set_level(self.pending(ctx));
@@ -290,7 +291,7 @@ impl Plic {
         } else {
             guard.edge_trigger &= !(1 << irq);
         }
-        Box::new(PlicIrq { plic: Arc::downgrade(&self.0), irq })
+        Box::new(PlicIrq { plic: Arc::downgrade(&self.0), irq, prev: AtomicBool::new(false) })
     }
 }
 
@@ -306,6 +307,11 @@ impl IoMemory for Plic {
 
 impl IrqPin for PlicIrq {
     fn set_level(&self, level: bool) {
+        // Don't do anything if the pin level isn't changed.
+        if self.prev.swap(level, Ordering::Relaxed) == level {
+            return;
+        }
+
         if let Some(inner) = self.plic.upgrade() {
             inner.lock().set_level(self.irq, level);
         }
