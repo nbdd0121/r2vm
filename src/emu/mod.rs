@@ -163,6 +163,18 @@ impl IoSystem {
         sys
     }
 
+    fn allocate_mem(&mut self, size: usize) -> usize {
+        let base = self.boundary;
+        self.boundary += size;
+        base
+    }
+
+    fn allocate_irq(&mut self) -> u32 {
+        let irq = self.next_irq;
+        self.next_irq += 1;
+        irq
+    }
+
     pub fn register_io_mem(&mut self, base: usize, size: usize, mem: Arc<dyn IoMemory>) {
         if let Some((k, v)) = self.map.range(..(base + size)).next_back() {
             let last_end = *k + v.0;
@@ -375,6 +387,8 @@ fn init_virtio(sys: &mut IoSystem) {
 }
 
 fn init_console(sys: &mut IoSystem) {
+    use io::hw::console::NS16550;
+
     if let Some(ref config) = crate::CONFIG.console {
         match config.config.r#type {
             ConsoleType::Virtio => {
@@ -386,6 +400,23 @@ fn init_console(sys: &mut IoSystem) {
                         config.config.resize,
                     )
                 });
+            }
+            ConsoleType::NS16550 => {
+                let irq = sys.allocate_irq();
+                let base = config.io_base.unwrap_or_else(|| sys.allocate_mem(0x1000));
+
+                let ns16550 = NS16550::new(
+                    Arc::new(DirectIoContext),
+                    sys.plic.irq_pin(irq, false),
+                    Box::new(&*CONSOLE),
+                );
+                sys.register_io_mem(base, 0x1000, Arc::new(ns16550));
+
+                let mut node = NS16550::build_dt(base);
+                let core_count = crate::core_count();
+                node.add_prop("reg", &[base as u64, 0x1000][..]);
+                node.add_prop("interrupts-extended", &[core_count as u32 + 1, irq][..]);
+                sys.fdt.child.push(node);
             }
         }
     }

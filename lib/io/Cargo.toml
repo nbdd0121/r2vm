@@ -25,6 +25,7 @@ fdt = { path = "../fdt", optional = true }
 default = [
     "block-file",
     "block-shadow",
+    "console-ns16550",
     "entropy",
     "fs",
     "intc-clint",
@@ -44,6 +45,7 @@ network-logger = ["byteorder"]
 network-usernet = ["usernet"]
 entropy = ["rand", "rand_chacha"]
 fs = ["p9"]
+console-ns16550 = []
 intc-clint = []
 intc-plic = []
 rtc-zyncmp = []

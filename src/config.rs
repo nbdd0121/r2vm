@@ -84,6 +84,7 @@ pub struct ClintConfig {}
 #[serde(rename_all = "lowercase")]
 pub enum ConsoleType {
     Virtio,
+    NS16550,
 }
 
 impl Default for ConsoleType {

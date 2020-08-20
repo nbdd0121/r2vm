@@ -29,6 +29,7 @@
 //! [`AbortHandle`]: futures::future::AbortHandle
 //! [`Abortable`]: futures::future::Abortable
 
+pub mod console;
 pub mod intc;
 pub mod network;
 pub mod rtc;
