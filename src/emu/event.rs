@@ -176,11 +176,11 @@ impl EventLoop {
     }
 
     pub fn queue_time(&self, time: u64, handler: Box<dyn FnOnce() + Send>) {
-        self.queue(time * 100, handler);
+        self.queue(time.saturating_mul(100), handler);
     }
 
     pub fn on_time(&self, time: u64) -> impl Future<Output = ()> + Send + 'static {
-        self.on_cycle(time * 100)
+        self.on_cycle(time.saturating_mul(100))
     }
 
     /// Handle all events at or before `cycle`, and return the cycle of next event if any.
