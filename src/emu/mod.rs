@@ -5,7 +5,7 @@ use io::hw::virtio::{Block, Console, Mmio, Rng, P9};
 use io::{IoMemory, IrqPin};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -98,8 +98,15 @@ impl IrqPin for CoreIrq {
 
 /// This describes all I/O aspects of the system.
 struct IoSystem {
+    /// Global contexts
+    ctx: Arc<dyn io::RuntimeContext>,
+    dma_ctx: Option<Arc<dyn io::DmaContext>>,
+
     /// The IO memory map.
     map: BTreeMap<usize, (usize, Arc<dyn IoMemory>)>,
+
+    /// Allocated IRQs
+    irq_set: BTreeSet<u32>,
 
     /// The PLIC instance. It always exist.
     plic: Arc<Plic>,
@@ -113,7 +120,10 @@ struct IoSystem {
 }
 
 impl IoSystem {
-    pub fn new() -> IoSystem {
+    pub fn new(
+        ctx: Arc<dyn io::RuntimeContext>,
+        dma_ctx: Option<Arc<dyn io::DmaContext>>,
+    ) -> IoSystem {
         assert_ne!(crate::get_flags().prv, 0);
 
         // Instantiate PLIC and corresponding device tre
@@ -143,7 +153,10 @@ impl IoSystem {
         plic_node.add_prop("phandle", core_count as u32 + 1);
 
         let mut sys = IoSystem {
+            ctx,
+            dma_ctx,
             map: BTreeMap::default(),
+            irq_set: BTreeSet::default(),
             plic: plic.clone(),
             next_irq: 1,
             boundary: 0x600000,
@@ -159,14 +172,22 @@ impl IoSystem {
         sys
     }
 
-    fn allocate_mem(&mut self, size: usize) -> usize {
+    /// Allocate an unoccupied region of memory
+    pub fn allocate_mem(&mut self, size: usize) -> usize {
         let base = self.boundary;
+        if let Some((k, v)) = self.map.range(..(base + size)).next_back() {
+            let last_end = *k + v.0;
+            assert!(base >= last_end, "allocated memory region overlap");
+        }
         self.boundary += size;
         base
     }
 
-    fn allocate_irq(&mut self) -> u32 {
+    /// Allocate an unoccupied IRQ
+    pub fn allocate_irq(&mut self) -> u32 {
         let irq = self.next_irq;
+        assert!(!self.irq_set.contains(&irq), "allocated irq overlap");
+        self.irq_set.insert(irq);
         self.next_irq += 1;
         irq
     }
@@ -180,15 +201,25 @@ impl IoSystem {
     }
 
     /// Add a virtio device
-    pub fn add_virtio<T>(&mut self, io_base: Option<usize>, f: impl FnOnce(Box<dyn IrqPin>) -> T)
-    where
+    pub fn add_virtio<T>(
+        &mut self,
+        io_base: Option<usize>,
+        f: impl FnOnce(&mut Self, Box<dyn IrqPin>) -> T,
+    ) where
         T: io::hw::virtio::Device + 'static,
     {
         let irq = self.allocate_irq();
         let mem = io_base.unwrap_or_else(|| self.allocate_mem(4096));
 
-        let device = Box::new(f(self.plic.irq_pin(irq, true)));
-        let virtio = Arc::new(Mutex::new(Mmio::new(Arc::new(DirectIoContext), device)));
+        let irq_pin = self.plic.irq_pin(irq, true);
+        let device = Box::new(f(self, irq_pin));
+        let virtio = Arc::new(Mutex::new(Mmio::new(
+            self.dma_ctx
+                .as_ref()
+                .expect("Attempt to create DMA-capable device without DMA context")
+                .clone(),
+            device,
+        )));
         self.register_io_mem(mem, 4096, virtio);
 
         let mut node = Mmio::build_dt(mem);
@@ -209,7 +240,7 @@ impl IoSystem {
 }
 
 static IO_SYSTEM: Lazy<IoSystem> = Lazy::new(|| {
-    let mut sys = IoSystem::new();
+    let mut sys = IoSystem::new(Arc::new(DirectIoContext), Some(Arc::new(DirectIoContext)));
     init_virtio(&mut sys);
     init_console(&mut sys);
     if crate::CONFIG.rtc {
@@ -284,7 +315,7 @@ fn init_network(sys: &mut IoSystem) {
 
     for config in crate::CONFIG.network.iter() {
         let mac = eui48::MacAddress::parse_str(&config.config.mac).expect("unexpected mac address");
-        let usernet = Usernet::new(Arc::new(DirectIoContext));
+        let usernet = Usernet::new(sys.ctx.clone());
         for fwd in config.config.forward.iter() {
             usernet
                 .add_host_forward(
@@ -298,18 +329,15 @@ fn init_network(sys: &mut IoSystem) {
 
         match config.config.r#type.as_str() {
             "virtio" => {
-                sys.add_virtio(config.io_base, |irq| {
-                    Network::new(Arc::new(DirectIoContext), irq, usernet, mac)
+                sys.add_virtio(config.io_base, |sys, irq| {
+                    Network::new(sys.ctx.clone(), irq, usernet, mac)
                 });
             }
             "xemaclite" => {
                 let irq = sys.allocate_irq();
                 let base = config.io_base.unwrap_or_else(|| sys.allocate_mem(0x2000));
-                let xemaclite = XemacLite::new(
-                    Arc::new(DirectIoContext),
-                    sys.plic.irq_pin(irq, true),
-                    Box::new(usernet),
-                );
+                let xemaclite =
+                    XemacLite::new(sys.ctx.clone(), sys.plic.irq_pin(irq, true), Box::new(usernet));
                 sys.register_io_mem(base, 0x2000, Arc::new(xemaclite));
                 let mut node = XemacLite::build_dt(base, mac.to_array());
                 let core_count = crate::core_count();
@@ -338,11 +366,11 @@ fn init_virtio(sys: &mut IoSystem) {
         } else {
             Box::new(file)
         };
-        sys.add_virtio(config.io_base, |irq| Block::new(Arc::new(DirectIoContext), irq, file));
+        sys.add_virtio(config.io_base, |sys, irq| Block::new(sys.ctx.clone(), irq, file));
     }
 
     for config in crate::CONFIG.random.iter() {
-        sys.add_virtio(config.io_base, |irq| {
+        sys.add_virtio(config.io_base, |sys, irq| {
             use io::entropy::rand::SeedableRng;
             use io::entropy::{Entropy, Os, Seeded};
             let source: Box<dyn Entropy + Send + 'static> = match config.config.r#type {
@@ -351,15 +379,15 @@ fn init_virtio(sys: &mut IoSystem) {
                 }
                 crate::config::RandomType::OS => Box::new(Os),
             };
-            Rng::new(Arc::new(DirectIoContext), irq, source)
+            Rng::new(sys.ctx.clone(), irq, source)
         });
     }
 
     for config in crate::CONFIG.share.iter() {
         use io::fs::Passthrough;
-        sys.add_virtio(config.io_base, |irq| {
+        sys.add_virtio(config.io_base, |sys, irq| {
             P9::new(
-                Arc::new(DirectIoContext),
+                sys.ctx.clone(),
                 irq,
                 &config.config.tag,
                 Passthrough::new(&config.config.path).unwrap(),
@@ -376,13 +404,8 @@ fn init_console(sys: &mut IoSystem) {
     if let Some(ref config) = crate::CONFIG.console {
         match config.config.r#type {
             ConsoleType::Virtio => {
-                sys.add_virtio(config.io_base, |irq| {
-                    Console::new(
-                        Arc::new(DirectIoContext),
-                        irq,
-                        Box::new(&*CONSOLE),
-                        config.config.resize,
-                    )
+                sys.add_virtio(config.io_base, |sys, irq| {
+                    Console::new(sys.ctx.clone(), irq, Box::new(&*CONSOLE), config.config.resize)
                 });
             }
             ConsoleType::NS16550 => {
@@ -390,7 +413,7 @@ fn init_console(sys: &mut IoSystem) {
                 let base = config.io_base.unwrap_or_else(|| sys.allocate_mem(0x1000));
 
                 let ns16550 = NS16550::new(
-                    Arc::new(DirectIoContext),
+                    sys.ctx.clone(),
                     sys.plic.irq_pin(irq, false),
                     Box::new(&*CONSOLE),
                 );
