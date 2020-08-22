@@ -371,10 +371,8 @@ impl XemacLite {
 
     /// <div class="stability" style="margin-left: 16px; margin-top: -9px;"><div class="stab unstable"><span class="emoji">🔬</span> This is a unstable API.</div></div>
     /// Build the device tree for this device.
-    pub fn build_dt(mem: (u64, u64), irq: (u32, u32), mac: [u8; 6]) -> fdt::Node {
-        let mut node = fdt::Node::new(format!("ethernet@{:x}", mem.0));
-        node.add_prop("reg", &[mem.0, mem.1][..]);
-        node.add_prop("interrupts-extended", &[irq.0, irq.1][..]);
+    pub fn build_dt(base: usize, mac: [u8; 6]) -> fdt::Node {
+        let mut node = fdt::Node::new(format!("ethernet@{:x}", base));
         node.add_prop("compatible", "xlnx,xps-ethernetlite-3.00.a");
         node.add_prop("device_type", "network");
         node.add_prop("local-mac-address", &mac[..]);

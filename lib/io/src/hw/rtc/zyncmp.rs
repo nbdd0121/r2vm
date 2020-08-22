@@ -24,6 +24,13 @@ impl ZyncMp {
     pub fn new(_alarm_irq: Box<dyn IrqPin>, _sec_irq: Box<dyn IrqPin>) -> ZyncMp {
         ZyncMp {}
     }
+
+    pub fn build_dt(base: usize) -> fdt::Node {
+        let mut node = fdt::Node::new(format!("rtc@{:x}", base));
+        node.add_prop("compatible", "xlnx,zynqmp-rtc");
+        node.add_prop("interrupt-names", &["alarm", "sec"][..]);
+        node
+    }
 }
 
 impl IoMemory for ZyncMp {

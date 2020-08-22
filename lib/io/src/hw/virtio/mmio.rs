@@ -59,6 +59,12 @@ impl Mmio {
             dma_ctx,
         }
     }
+
+    pub fn build_dt(base: usize) -> fdt::Node {
+        let mut node = fdt::Node::new(format!("virtio@{:x}", base));
+        node.add_prop("compatible", "virtio,mmio");
+        node
+    }
 }
 
 impl IoMemoryMut for Mmio {

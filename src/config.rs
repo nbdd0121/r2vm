@@ -52,15 +52,15 @@ pub struct Config {
 
     /// Block devices
     #[serde(default)]
-    pub drive: Vec<DriveConfig>,
+    pub drive: Vec<DeviceConfig<DriveConfig>>,
 
     /// Random devices
     #[serde(default)]
-    pub random: Vec<RandomConfig>,
+    pub random: Vec<DeviceConfig<RandomConfig>>,
 
     /// 9p file sharing
     #[serde(default)]
-    pub share: Vec<ShareConfig>,
+    pub share: Vec<DeviceConfig<ShareConfig>>,
 
     /// Network adapters
     #[serde(default)]

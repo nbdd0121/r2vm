@@ -153,11 +153,7 @@ impl IoSystem {
         sys.register_io_mem(0x200000, 0x400000, plic);
 
         if let Some(ref config) = crate::CONFIG.clint {
-            let base = config.io_base.unwrap_or_else(|| {
-                let mem = sys.boundary;
-                sys.boundary += 0x10000;
-                mem
-            });
+            let base = config.io_base.unwrap_or_else(|| sys.allocate_mem(0x10000));
             sys.register_io_mem(base, 0x10000, Arc::new(&*CLINT));
         }
         sys
@@ -188,24 +184,18 @@ impl IoSystem {
     where
         T: io::hw::virtio::Device + 'static,
     {
-        let irq = self.next_irq;
-        self.next_irq += 1;
-
-        let mem = io_base.unwrap_or_else(|| {
-            let mem = self.boundary;
-            self.boundary += 4096;
-            mem
-        });
+        let irq = self.allocate_irq();
+        let mem = io_base.unwrap_or_else(|| self.allocate_mem(4096));
 
         let device = Box::new(f(self.plic.irq_pin(irq, true)));
         let virtio = Arc::new(Mutex::new(Mmio::new(Arc::new(DirectIoContext), device)));
         self.register_io_mem(mem, 4096, virtio);
 
+        let mut node = Mmio::build_dt(mem);
         let core_count = crate::core_count();
-        let node = self.fdt.add_node(format!("virtio@{:x}", mem));
         node.add_prop("reg", &[mem as u64, 0x1000][..]);
-        node.add_prop("compatible", "virtio,mmio");
         node.add_prop("interrupts-extended", &[core_count as u32 + 1, irq][..]);
+        self.fdt.child.push(node);
     }
 
     pub fn find_io_mem(&self, ptr: usize) -> Option<(usize, &'_ dyn IoMemory)> {
@@ -288,6 +278,7 @@ pub static CONSOLE: Lazy<io::serial::Console> = Lazy::new(|| {
 
 #[cfg(feature = "usernet")]
 fn init_network(sys: &mut IoSystem) {
+    use io::hw::network::XemacLite;
     use io::hw::virtio::Network;
     use io::network::Usernet;
 
@@ -307,36 +298,24 @@ fn init_network(sys: &mut IoSystem) {
 
         match config.config.r#type.as_str() {
             "virtio" => {
-                sys.add_virtio(None, |irq| {
+                sys.add_virtio(config.io_base, |irq| {
                     Network::new(Arc::new(DirectIoContext), irq, usernet, mac)
                 });
             }
             "xemaclite" => {
-                let irq = sys.next_irq;
-                sys.next_irq += 1;
-
-                let base = match config.io_base {
-                    None => {
-                        let mem = sys.boundary;
-                        sys.boundary += 0x2000;
-                        mem
-                    }
-                    Some(v) => v,
-                };
-
-                use io::hw::network::XemacLite;
+                let irq = sys.allocate_irq();
+                let base = config.io_base.unwrap_or_else(|| sys.allocate_mem(0x2000));
                 let xemaclite = XemacLite::new(
                     Arc::new(DirectIoContext),
                     sys.plic.irq_pin(irq, true),
                     Box::new(usernet),
                 );
                 sys.register_io_mem(base, 0x2000, Arc::new(xemaclite));
+                let mut node = XemacLite::build_dt(base, mac.to_array());
                 let core_count = crate::core_count();
-                sys.fdt.child.push(XemacLite::build_dt(
-                    (base as u64, 0x2000),
-                    (core_count as u32 + 1, irq),
-                    mac.to_array(),
-                ));
+                node.add_prop("reg", &[base as u64, 0x2000][..]);
+                node.add_prop("interrupts-extended", &[core_count as u32 + 1, irq][..]);
+                sys.fdt.child.push(node);
             }
             _ => panic!("unknown device type"),
         }
@@ -350,21 +329,26 @@ fn init_virtio(sys: &mut IoSystem) {
     for config in crate::CONFIG.drive.iter() {
         let file = std::fs::OpenOptions::new()
             .read(true)
-            .write(!config.shadow)
-            .open(&config.path)
+            .write(!config.config.shadow)
+            .open(&config.config.path)
             .unwrap();
         let file = io::block::File::new(file).unwrap();
-        let file: Box<dyn io::block::Block + Send> =
-            if config.shadow { Box::new(io::block::Shadow::new(file)) } else { Box::new(file) };
-        sys.add_virtio(None, |irq| Block::new(Arc::new(DirectIoContext), irq, file));
+        let file: Box<dyn io::block::Block + Send> = if config.config.shadow {
+            Box::new(io::block::Shadow::new(file))
+        } else {
+            Box::new(file)
+        };
+        sys.add_virtio(config.io_base, |irq| Block::new(Arc::new(DirectIoContext), irq, file));
     }
 
     for config in crate::CONFIG.random.iter() {
-        sys.add_virtio(None, |irq| {
+        sys.add_virtio(config.io_base, |irq| {
             use io::entropy::rand::SeedableRng;
             use io::entropy::{Entropy, Os, Seeded};
-            let source: Box<dyn Entropy + Send + 'static> = match config.r#type {
-                crate::config::RandomType::Pseudo => Box::new(Seeded::seed_from_u64(config.seed)),
+            let source: Box<dyn Entropy + Send + 'static> = match config.config.r#type {
+                crate::config::RandomType::Pseudo => {
+                    Box::new(Seeded::seed_from_u64(config.config.seed))
+                }
                 crate::config::RandomType::OS => Box::new(Os),
             };
             Rng::new(Arc::new(DirectIoContext), irq, source)
@@ -373,12 +357,12 @@ fn init_virtio(sys: &mut IoSystem) {
 
     for config in crate::CONFIG.share.iter() {
         use io::fs::Passthrough;
-        sys.add_virtio(None, |irq| {
+        sys.add_virtio(config.io_base, |irq| {
             P9::new(
                 Arc::new(DirectIoContext),
                 irq,
-                &config.tag,
-                Passthrough::new(&config.path).unwrap(),
+                &config.config.tag,
+                Passthrough::new(&config.config.path).unwrap(),
             )
         });
     }
@@ -425,20 +409,17 @@ fn init_console(sys: &mut IoSystem) {
 fn init_rtc(sys: &mut IoSystem) {
     let irq = sys.next_irq;
     sys.next_irq += 2;
-
-    let mem = sys.boundary;
-    sys.boundary += 4096;
+    let mem = sys.allocate_mem(4096);
 
     let rtc = Arc::new(ZyncMp::new(sys.plic.irq_pin(irq, true), sys.plic.irq_pin(irq + 1, true)));
     sys.register_io_mem(mem, 4096, rtc);
 
-    let node = sys.fdt.add_node(format!("rtc@{:x}", mem));
-    node.add_prop("compatible", "xlnx,zynqmp-rtc");
+    let mut node = ZyncMp::build_dt(mem);
     node.add_prop("reg", &[mem as u64, 0x100][..]);
     let core_count = crate::core_count();
     node.add_prop("interrupt-parent", core_count as u32 + 1);
     node.add_prop("interrupts", &[irq, irq + 1][..]);
-    node.add_prop("interrupt-names", &["alarm", "sec"][..]);
+    sys.fdt.child.push(node);
 }
 
 /// This governs the boundary between RAM and I/O memory. If an address is strictly below this
