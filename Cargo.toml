@@ -12,7 +12,6 @@ members = [
     "lib/riscv",
     "lib/fdt",
     "lib/usernet",
-    "lib/atomic_ext",
     "lib/fiber",
     "lib/io",
 ]
@@ -40,7 +39,6 @@ p9 = { path = "lib/p9" }
 x86 = { path = "lib/x86" }
 riscv = { path = "lib/riscv" }
 fdt = { path = "lib/fdt" }
-atomic_ext = { path = "lib/atomic_ext" }
 fiber = { path = "lib/fiber" }
 io = { path = "lib/io" }
 

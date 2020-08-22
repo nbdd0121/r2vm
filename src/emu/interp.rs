@@ -1,5 +1,4 @@
 use crate::sim::get_memory_model;
-use atomic_ext::AtomicExt;
 use io::IoMemory;
 use once_cell::sync::Lazy;
 use parking_lot::{Mutex, MutexGuard};
@@ -211,7 +210,7 @@ impl SharedContext {
     pub fn protect_code(&self, page: u64) {
         let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
         for line in self.line.iter() {
-            let _ = line.tag.fetch_update_stable(MemOrder::Relaxed, MemOrder::Relaxed, |value| {
+            let _ = line.tag.fetch_update(MemOrder::Relaxed, MemOrder::Relaxed, |value| {
                 let paddr =
                     (value >> 1 << cache_line_size_log2) ^ line.paddr.load(MemOrder::Relaxed);
                 if paddr & !4095 == page { Some(value | 1) } else { None }
@@ -2030,7 +2029,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicI32>(ctx, addr)?;
-            let current = ptr.fetch_min_stable(src as i32, MemOrder::SeqCst);
+            let current = ptr.fetch_min(src as i32, MemOrder::SeqCst);
             write_32!(rd, current as u32);
         }
         Op::AmominD { rd, rs1, rs2, .. } => {
@@ -2040,7 +2039,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicI64>(ctx, addr)?;
-            let current = ptr.fetch_min_stable(src as i64, MemOrder::SeqCst);
+            let current = ptr.fetch_min(src as i64, MemOrder::SeqCst);
             write_reg!(rd, current as u64);
         }
         Op::AmomaxW { rd, rs1, rs2, .. } => {
@@ -2050,7 +2049,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicI32>(ctx, addr)?;
-            let current = ptr.fetch_max_stable(src as i32, MemOrder::SeqCst);
+            let current = ptr.fetch_max(src as i32, MemOrder::SeqCst);
             write_32!(rd, current as u32);
         }
         Op::AmomaxD { rd, rs1, rs2, .. } => {
@@ -2060,7 +2059,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicI64>(ctx, addr)?;
-            let current = ptr.fetch_max_stable(src as i64, MemOrder::SeqCst);
+            let current = ptr.fetch_max(src as i64, MemOrder::SeqCst);
             write_reg!(rd, current as u64);
         }
         Op::AmominuW { rd, rs1, rs2, .. } => {
@@ -2070,7 +2069,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
-            let current = ptr.fetch_min_stable(src, MemOrder::SeqCst);
+            let current = ptr.fetch_min(src, MemOrder::SeqCst);
             write_32!(rd, current);
         }
         Op::AmominuD { rd, rs1, rs2, .. } => {
@@ -2080,7 +2079,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
-            let current = ptr.fetch_min_stable(src, MemOrder::SeqCst);
+            let current = ptr.fetch_min(src, MemOrder::SeqCst);
             write_reg!(rd, current);
         }
         Op::AmomaxuW { rd, rs1, rs2, .. } => {
@@ -2090,7 +2089,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             }
             let src = read_reg!(rs2) as u32;
             let ptr = ptr_vaddr_x::<AtomicU32>(ctx, addr)?;
-            let current = ptr.fetch_max_stable(src, MemOrder::SeqCst);
+            let current = ptr.fetch_max(src, MemOrder::SeqCst);
             write_32!(rd, current);
         }
         Op::AmomaxuD { rd, rs1, rs2, .. } => {
@@ -2100,7 +2099,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
             }
             let src = read_reg!(rs2);
             let ptr = ptr_vaddr_x::<AtomicU64>(ctx, addr)?;
-            let current = ptr.fetch_max_stable(src, MemOrder::SeqCst);
+            let current = ptr.fetch_max(src, MemOrder::SeqCst);
             write_reg!(rd, current);
         }
 

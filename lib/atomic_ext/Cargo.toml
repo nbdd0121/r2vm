@@ -1,5 +1,0 @@
-[package]
-name = "atomic_ext"
-version = "0.1.0"
-authors = ["Gary Guo <gary@garyguo.net>"]
-edition = "2018"

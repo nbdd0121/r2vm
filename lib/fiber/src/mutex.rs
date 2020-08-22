@@ -1,5 +1,4 @@
 use super::park::{park, unpark_all, unpark_one, UnparkToken};
-use atomic_ext::AtomicExt;
 use lock_api::RawMutex as LRawMutex;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -111,7 +110,7 @@ unsafe impl LRawMutex for RawMutex {
     #[inline]
     fn try_lock(&self) -> bool {
         self.locked
-            .fetch_update_stable(Ordering::Acquire, Ordering::Relaxed, |state| {
+            .fetch_update(Ordering::Acquire, Ordering::Relaxed, |state| {
                 if state & LOCKED_BIT != 0 {
                     return None;
                 }
