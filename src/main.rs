@@ -8,10 +8,10 @@ pub mod emu;
 pub mod sim;
 pub mod util;
 
+use ro_cell::RoCell;
 use std::cell::UnsafeCell;
 use std::ffi::CString;
 use std::path::PathBuf;
-use util::RoCell;
 
 macro_rules! usage_string {
     () => {

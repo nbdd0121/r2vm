@@ -3,7 +3,7 @@ pub mod pipeline;
 pub use memory::MemoryModel;
 pub use pipeline::PipelineModel;
 
-use crate::util::RoCell;
+use ro_cell::RoCell;
 
 type PipelineFactory = fn(usize) -> Box<dyn pipeline::PipelineModel>;
 

@@ -3,6 +3,7 @@ use io::hw::intc::Clint;
 use io::system::IoSystem;
 use io::{IoMemory, IrqPin};
 use once_cell::sync::Lazy;
+use ro_cell::RoCell;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -195,11 +196,11 @@ pub static CONSOLE: Lazy<io::serial::Console> = Lazy::new(|| {
 /// This governs the boundary between RAM and I/O memory. If an address is strictly below this
 /// location, then it is considered I/O. For user-space applications, we consider all memory
 /// locations as RAM, so the default value here is 0.
-static IO_BOUNDARY: crate::util::RoCell<usize> = crate::util::RoCell::new(0);
+static IO_BOUNDARY: RoCell<usize> = RoCell::new(0);
 
 /// Only memory addresses strictly below this location is accessible by the guest. For user-space
 /// application, we consider all memory locations as RAM, so the default value here is usize::MAX.
-static MEM_BOUNDARY: crate::util::RoCell<usize> = crate::util::RoCell::new(usize::MAX);
+static MEM_BOUNDARY: RoCell<usize> = RoCell::new(usize::MAX);
 
 pub fn init() {
     unsafe {
@@ -208,7 +209,7 @@ pub fn init() {
         // 2 MiB - 6 MiB PLIC
         // 6 MiB -       VIRTIO
         // 1 GiB -       main memory
-        crate::util::RoCell::replace(&IO_BOUNDARY, 0x40000000);
+        RoCell::replace(&IO_BOUNDARY, 0x40000000);
 
         // If firmware is present give it 2MiB of extra memory.
         let phys_size = (crate::CONFIG.memory
@@ -217,7 +218,7 @@ pub fn init() {
             * 1024;
         let phys_limit = 0x40000000 + phys_size;
 
-        crate::util::RoCell::replace(&MEM_BOUNDARY, phys_limit);
+        RoCell::replace(&MEM_BOUNDARY, phys_limit);
 
         // First allocate physical memory region, without making them accessible
         let result = libc::mmap(

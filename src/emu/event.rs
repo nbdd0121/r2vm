@@ -99,7 +99,7 @@ pub struct EventLoop {
     cycle: AtomicU64,
     next_event: AtomicU64,
     // Only used in threaded mode
-    epoch: crate::util::RoCell<Instant>,
+    epoch: ro_cell::RoCell<Instant>,
     condvar: Condvar,
     // This has to be a Box to allow repr(C)
     events: Mutex<BinaryHeap<Entry>>,
@@ -122,7 +122,7 @@ impl EventLoop {
             cycle: AtomicU64::new(0),
             lockstep_cycle_base: AtomicU64::new(0),
             next_event: AtomicU64::new(u64::max_value()),
-            epoch: crate::util::RoCell::new(Instant::now()),
+            epoch: ro_cell::RoCell::new(Instant::now()),
             condvar: Condvar::new(),
             events: Mutex::new(BinaryHeap::new()),
             shutdown: AtomicBool::new(false),
@@ -147,10 +147,7 @@ impl EventLoop {
             let micro = (self.cycle() + 99) / 100;
             // No need to worry about data race here due to mode difference.
             unsafe {
-                crate::util::RoCell::replace(
-                    &self.epoch,
-                    Instant::now() - Duration::from_micros(micro),
-                )
+                ro_cell::RoCell::replace(&self.epoch, Instant::now() - Duration::from_micros(micro))
             };
         }
         std::mem::drop(guard);

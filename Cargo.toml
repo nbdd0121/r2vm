@@ -13,6 +13,7 @@ members = [
     "lib/fdt",
     "lib/usernet",
     "lib/fiber",
+    "lib/ro_cell",
     "lib/io",
 ]
 
@@ -40,6 +41,7 @@ x86 = { path = "lib/x86" }
 riscv = { path = "lib/riscv" }
 fdt = { path = "lib/fdt" }
 fiber = { path = "lib/fiber" }
+ro_cell = { path = "lib/ro_cell" }
 io = { path = "lib/io", features = ["serde"] }
 
 [profile.dev]
