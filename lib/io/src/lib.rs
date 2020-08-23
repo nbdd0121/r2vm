@@ -11,6 +11,8 @@ pub mod serial;
 pub mod entropy;
 #[cfg(feature = "fs")]
 pub mod fs;
+#[cfg(feature = "system")]
+pub mod system;
 
 use futures::future::BoxFuture;
 use std::time::Duration;

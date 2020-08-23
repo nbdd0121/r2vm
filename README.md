@@ -49,7 +49,7 @@ kernel = "linux/vmlinux"
 cmdline = "console=hvc0 rw root=/dev/vda"
 
 # Turn on RTC. You'll need to enable Xilinx MPSoC RTC driver in Linux
-rtc = false
+[rtc]
 
 # Create a block device
 [[drive]]

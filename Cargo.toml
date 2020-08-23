@@ -40,7 +40,7 @@ x86 = { path = "lib/x86" }
 riscv = { path = "lib/riscv" }
 fdt = { path = "lib/fdt" }
 fiber = { path = "lib/fiber" }
-io = { path = "lib/io" }
+io = { path = "lib/io", features = ["serde"] }
 
 [profile.dev]
 opt-level = "z"
