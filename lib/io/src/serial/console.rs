@@ -6,12 +6,11 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
-static ACTIVE_CONSOLE: Lazy<Mutex<Option<Arc<Mutex<Inner>>>>> = Lazy::new(|| Mutex::new(None));
+static ACTIVE_CONSOLE: Lazy<Mutex<Option<Arc<Inner>>>> = Lazy::new(|| Mutex::new(None));
 static AT_EXIT: std::sync::Once = std::sync::Once::new();
 static WINCH: std::sync::Once = std::sync::Once::new();
 
-struct Inner {
-    old_tty: libc::termios,
+struct State {
     rx_buffer: VecDeque<u8>,
     rx_waker: Vec<Waker>,
     size_changed: bool,
@@ -19,16 +18,21 @@ struct Inner {
     processor: Box<dyn FnMut(u8) -> Option<u8> + Send>,
 }
 
+struct Inner {
+    state: Mutex<State>,
+    old_tty: libc::termios,
+}
+
 /// A [`Serial`] implementation that uses stdin/stdout TTY.
 ///
 /// This device allow custom processing of the TTY input, to support escape keys, see `set_processor`.
-pub struct Console(Arc<Mutex<Inner>>);
+pub struct Console(Arc<Inner>);
 
 // Regardless the destructor of Console is executed or not, we always want the tty to be restored
 // when exiting. Therefore, use atexit to guard this.
 extern "C" fn console_exit() {
     if let Some(inner) = ACTIVE_CONSOLE.lock().as_ref() {
-        unsafe { libc::tcsetattr(0, libc::TCSANOW, &inner.lock().old_tty) };
+        unsafe { libc::tcsetattr(0, libc::TCSANOW, &inner.old_tty) };
     }
 }
 
@@ -38,7 +42,7 @@ impl Drop for Console {
         *ACTIVE_CONSOLE.lock() = None;
 
         // Restore old TTY config
-        unsafe { libc::tcsetattr(0, libc::TCSANOW, &self.0.lock().old_tty) };
+        unsafe { libc::tcsetattr(0, libc::TCSANOW, &self.0.old_tty) };
     }
 }
 
@@ -67,14 +71,16 @@ impl Console {
             old_tty
         };
 
-        let inner = Arc::new(Mutex::new(Inner {
+        let inner = Arc::new(Inner {
             old_tty,
-            rx_buffer: VecDeque::new(),
-            rx_waker: Vec::new(),
-            size_changed: false,
-            size_changed_wakers: Vec::new(),
-            processor: Box::new(|x| Some(x)),
-        }));
+            state: Mutex::new(State {
+                rx_buffer: VecDeque::new(),
+                rx_waker: Vec::new(),
+                size_changed: false,
+                size_changed_wakers: Vec::new(),
+                processor: Box::new(|x| Some(x)),
+            }),
+        });
 
         // Register the exit hook if not already done.
         AT_EXIT.call_once(|| unsafe {
@@ -105,7 +111,7 @@ impl Console {
                         Some(v) => v,
                         None => return,
                     };
-                    let mut guard = inner.lock();
+                    let mut guard = inner.state.lock();
 
                     for &byte in &buffer[0..size] {
                         if let Some(x) = (&mut guard.processor)(byte) {
@@ -123,7 +129,7 @@ impl Console {
     /// Set the function that is to be used for processing TTY inputs. The value returned will be
     /// read by the user of this device. If `None` is received, the input is discarded.
     pub fn set_processor(&mut self, processor: impl FnMut(u8) -> Option<u8> + Send + 'static) {
-        self.0.lock().processor = Box::new(processor);
+        self.0.state.lock().processor = Box::new(processor);
     }
 }
 
@@ -134,7 +140,7 @@ unsafe extern "C" fn handle_winch(
     _: &mut libc::ucontext_t,
 ) {
     if let Some(inner) = ACTIVE_CONSOLE.lock().as_ref() {
-        let mut guard = inner.lock();
+        let mut guard = inner.state.lock();
         guard.size_changed = true;
         guard.size_changed_wakers.drain(..).for_each(|w| w.wake());
     }
@@ -149,7 +155,7 @@ impl Serial for Console {
     }
 
     fn poll_read(&self, cx: &mut Context, buf: &mut [u8]) -> Poll<std::io::Result<usize>> {
-        let mut inner = self.0.lock();
+        let mut inner = self.0.state.lock();
         if inner.rx_buffer.is_empty() {
             if !inner.rx_waker.iter().any(|w| w.will_wake(cx.waker())) {
                 inner.rx_waker.push(cx.waker().clone());
@@ -182,7 +188,7 @@ impl Serial for Console {
     }
 
     fn poll_window_size_changed(&self, cx: &mut Context) -> Poll<std::io::Result<()>> {
-        let mut guard = self.0.lock();
+        let mut guard = self.0.state.lock();
         if guard.size_changed {
             guard.size_changed = false;
             Poll::Ready(Ok(()))
