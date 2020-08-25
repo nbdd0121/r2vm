@@ -40,6 +40,9 @@ pub struct Config {
     pub clint: Option<DeviceConfig<ClintConfig>>,
 
     #[serde(default)]
+    pub plic: DeviceConfig<PlicConfig>,
+
+    #[serde(default)]
     pub console: Option<DeviceConfig<ConsoleConfig>>,
 
     /// Whether a RTC device should be instantiated.
@@ -62,6 +65,9 @@ pub struct Config {
     #[serde(default)]
     pub network: Vec<DeviceConfig<NetworkConfig>>,
 }
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+pub struct PlicConfig {}
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ClintConfig {}

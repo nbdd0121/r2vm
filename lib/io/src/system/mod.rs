@@ -36,6 +36,7 @@ impl IoSystem {
         ctx: Arc<dyn RuntimeContext>,
         dma_ctx: Option<Arc<dyn DmaContext>>,
         core_count: usize,
+        plic_base: Option<usize>,
         seip_irq: impl FnMut(usize) -> Box<dyn IrqPin>,
     ) -> IoSystem {
         // Instantiate PLIC and corresponding device tre
@@ -47,12 +48,13 @@ impl IoSystem {
         soc.add_prop("#address-cells", 2u32);
         soc.add_prop("#size-cells", 2u32);
 
-        let plic_node = soc.add_node("plic@200000");
+        let plic_base = plic_base.unwrap_or(0x200000);
+        let plic_node = soc.add_node(format!("plic@{:x}", plic_base));
         plic_node.add_prop("#interrupt-cells", 1u32);
         plic_node.add_prop("interrupt-controller", ());
         plic_node.add_prop("compatible", "sifive,plic-1.0.0");
         plic_node.add_prop("riscv,ndev", 31u32);
-        plic_node.add_prop("reg", &[0x200000u64, 0x400000][..]);
+        plic_node.add_prop("reg", &[plic_base as u64, 0x400000][..]);
         let mut vec: Vec<u32> = Vec::with_capacity(core_count * 2);
         for i in 0..(core_count as u32) {
             vec.push(i + 1);
@@ -73,7 +75,10 @@ impl IoSystem {
             fdt: soc,
         };
 
-        sys.register_mem(0x200000, 0x400000, plic);
+        // 0 is not a valid IRQ
+        sys.irq_set.insert(0);
+
+        sys.register_mem(plic_base, 0x400000, plic);
         sys
     }
 

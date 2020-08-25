@@ -99,6 +99,7 @@ static IO_SYSTEM: Lazy<IoSystem> = Lazy::new(|| {
         Arc::new(DirectIoContext),
         Some(Arc::new(DirectIoContext)),
         crate::core_count(),
+        crate::CONFIG.plic.io_base,
         |i| Box::new(CoreIrq(i, 512)),
     );
 
