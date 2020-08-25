@@ -152,12 +152,13 @@ impl IoSystem {
     pub fn add_virtio<T>(
         &mut self,
         base: Option<usize>,
+        irq: Option<u32>,
         f: impl FnOnce(&mut Self, Box<dyn IrqPin>) -> T,
     ) where
         T: crate::hw::virtio::Device + 'static,
     {
         let mem = base.unwrap_or_else(|| self.allocate_mem(4096));
-        let irq = self.allocate_irq();
+        let irq = irq.unwrap_or_else(|| self.allocate_irq());
 
         let irq_pin = self.register_irq(irq, true);
         let device = Box::new(f(self, irq_pin));
@@ -191,7 +192,9 @@ impl IoSystem {
         } else {
             Box::new(file)
         };
-        self.add_virtio(config.io_base, |sys, irq| Block::new(sys.ctx.clone(), irq, file));
+        self.add_virtio(config.io_base, config.irq, |sys, irq| {
+            Block::new(sys.ctx.clone(), irq, file)
+        });
     }
 
     #[cfg(all(feature = "virtio-rng", feature = "entropy"))]
@@ -204,7 +207,9 @@ impl IoSystem {
             RandomType::Pseudo => Box::new(Seeded::seed_from_u64(config.config.seed)),
             RandomType::OS => Box::new(Os),
         };
-        self.add_virtio(config.io_base, |sys, irq| Rng::new(sys.ctx.clone(), irq, source));
+        self.add_virtio(config.io_base, config.irq, |sys, irq| {
+            Rng::new(sys.ctx.clone(), irq, source)
+        });
     }
 
     #[cfg(all(feature = "virtio-p9", feature = "fs"))]
@@ -212,7 +217,7 @@ impl IoSystem {
         use crate::fs::Passthrough;
         use crate::hw::virtio::P9;
 
-        self.add_virtio(config.io_base, |sys, irq| {
+        self.add_virtio(config.io_base, config.irq, |sys, irq| {
             P9::new(
                 sys.ctx.clone(),
                 irq,
@@ -242,7 +247,7 @@ impl IoSystem {
         match config.config.r#type.as_str() {
             #[cfg(feature = "virtio-network")]
             "virtio" => {
-                self.add_virtio(config.io_base, |sys, irq| {
+                self.add_virtio(config.io_base, config.irq, |sys, irq| {
                     crate::hw::virtio::Network::new(sys.ctx.clone(), irq, usernet, mac)
                 });
             }
@@ -250,13 +255,10 @@ impl IoSystem {
             "xemaclite" => {
                 use crate::hw::network::XemacLite;
 
-                let irq = self.allocate_irq();
                 let base = config.io_base.unwrap_or_else(|| self.allocate_mem(0x2000));
-                let xemaclite = XemacLite::new(
-                    self.ctx.clone(),
-                    self.plic.irq_pin(irq, true),
-                    Box::new(usernet),
-                );
+                let irq = config.irq.unwrap_or_else(|| self.allocate_irq());
+                let irq_pin = self.register_irq(irq, true);
+                let xemaclite = XemacLite::new(self.ctx.clone(), irq_pin, Box::new(usernet));
                 self.register_mem(base, 0x2000, Arc::new(xemaclite));
                 let mut node = XemacLite::build_dt(base, mac.to_array());
                 node.add_prop("reg", &[base as u64, 0x2000][..]);
@@ -275,7 +277,7 @@ impl IoSystem {
         match config.config.r#type {
             #[cfg(feature = "virtio-console")]
             ConsoleType::Virtio => {
-                self.add_virtio(config.io_base, |sys, irq| {
+                self.add_virtio(config.io_base, config.irq, |sys, irq| {
                     crate::hw::virtio::Console::new(
                         sys.ctx.clone(),
                         irq,
@@ -288,11 +290,11 @@ impl IoSystem {
             ConsoleType::NS16550 => {
                 use crate::hw::console::NS16550;
 
-                let irq = self.allocate_irq();
                 let base = config.io_base.unwrap_or_else(|| self.allocate_mem(0x1000));
+                let irq = config.irq.unwrap_or_else(|| self.allocate_irq());
+                let irq_pin = self.register_irq(irq, false);
 
-                let ns16550 =
-                    NS16550::new(self.ctx.clone(), self.plic.irq_pin(irq, false), console);
+                let ns16550 = NS16550::new(self.ctx.clone(), irq_pin, console);
                 self.register_mem(base, 0x1000, Arc::new(ns16550));
 
                 let mut node = NS16550::build_dt(base);
@@ -309,11 +311,13 @@ impl IoSystem {
     pub fn instantiate_rtc(&mut self, config: &DeviceConfig<RTCConfig>) {
         use crate::hw::rtc::ZyncMp;
 
-        let irq = self.allocate_irq();
         let mem = config.io_base.unwrap_or_else(|| self.allocate_mem(4096));
+        let irq = config.irq.unwrap_or_else(|| self.allocate_irq());
+        let irq_pin = self.register_irq(irq, true);
+        let irq2 = config.config.irq2.unwrap_or_else(|| self.allocate_irq());
+        let irq2_pin = self.register_irq(irq2, true);
 
-        let rtc =
-            Arc::new(ZyncMp::new(self.plic.irq_pin(irq, true), self.plic.irq_pin(irq + 1, true)));
+        let rtc = Arc::new(ZyncMp::new(irq_pin, irq2_pin));
         self.register_mem(mem, 4096, rtc);
 
         let mut node = ZyncMp::build_dt(mem);

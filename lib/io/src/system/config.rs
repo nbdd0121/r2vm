@@ -15,6 +15,9 @@ pub struct DeviceConfig<T> {
     #[cfg_attr(feature = "serde", serde(default))]
     pub io_base: Option<usize>,
 
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub irq: Option<u32>,
+
     #[cfg_attr(feature = "serde", serde(flatten))]
     pub config: T,
 }
@@ -154,6 +157,9 @@ pub struct NetworkConfig {
     pub forward: Vec<ForwardConfig>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct RTCConfig {}
+pub struct RTCConfig {
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub irq2: Option<u32>,
+}
