@@ -332,8 +332,6 @@ pub fn main() {
 
     unsafe {
         crate::sim::switch_model(FLAGS.model_id);
-        let threaded = !crate::sim::get_memory_model().require_lockstep();
-        RoCell::as_mut(&FLAGS).thread = threaded;
     }
 
     loop {
@@ -389,9 +387,7 @@ pub fn main() {
                 unsafe {
                     crate::sim::switch_model(id);
                     RoCell::as_mut(&FLAGS).model_id = id;
-                    let threaded = !crate::sim::get_memory_model().require_lockstep();
-                    RoCell::as_mut(&FLAGS).thread = threaded;
-                    info!("switching to model={} threaded={}", id, threaded);
+                    info!("switching to model={} threaded={}", id, FLAGS.thread);
                 }
 
                 // Remove translation cache and L0 I$ and D$

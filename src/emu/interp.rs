@@ -192,6 +192,18 @@ impl SharedContext {
         }
     }
 
+    pub fn invalidate_cache_virtual_page(&self, addr: u64) {
+        let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
+        let idx = (addr >> cache_line_size_log2) as usize & 1023;
+
+        let bits_difference = 12 - get_memory_model().cache_line_size_log2();
+        let num_cache_lines = 1 << bits_difference;
+
+        for i in idx..(idx + num_cache_lines) {
+            self.line[i].invalidate();
+        }
+    }
+
     pub fn invalidate_icache_virtual(&self, addr: u64) {
         let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
         let idx = (addr >> cache_line_size_log2) as usize & 1023;
@@ -203,6 +215,18 @@ impl SharedContext {
         let interval = 1 << (12 - cache_line_size_log2);
         let start_idx = (addr >> cache_line_size_log2) as usize & (interval - 1);
         for i in (start_idx..1024).step_by(interval) {
+            self.i_line[i].invalidate();
+        }
+    }
+
+    pub fn invalidate_icache_virtual_page(&self, addr: u64) {
+        let cache_line_size_log2 = get_memory_model().cache_line_size_log2();
+        let idx = (addr >> cache_line_size_log2) as usize & 1023;
+
+        let bits_difference = 12 - get_memory_model().cache_line_size_log2();
+        let num_cache_lines = 1 << bits_difference;
+
+        for i in idx..(idx + num_cache_lines) {
             self.i_line[i].invalidate();
         }
     }
