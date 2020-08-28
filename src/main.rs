@@ -321,7 +321,13 @@ pub fn main() {
         });
         // Load this past memory location
         let location = 0x40000000 + ((CONFIG.memory * 0x100000 + 0x1fffff) & !0x1fffff);
-        unsafe { loader.load_kernel(location as u64) };
+        unsafe {
+            if loader.is_elf() {
+                loader.load_kernel(location as u64);
+            } else {
+                loader.load_bin(location as u64);
+            }
+        }
 
         for ctx in contexts.iter_mut() {
             ctx.registers[12] = ctx.pc;

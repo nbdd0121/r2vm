@@ -364,7 +364,7 @@ impl Loader {
         actual_entry
     }
 
-    unsafe fn load_bin(&self, location: u64) {
+    pub unsafe fn load_bin(&self, location: u64) {
         libc::memcpy(location as usize as _, self.memory, self.file_size as _);
     }
 }
