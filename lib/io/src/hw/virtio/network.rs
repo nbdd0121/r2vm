@@ -3,7 +3,6 @@ use crate::network::Network as NetworkDevice;
 use crate::{IrqPin, RuntimeContext};
 use eui48::MacAddress;
 use futures::future::AbortHandle;
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
 const VIRTIO_BLK_F_MAC: usize = 5;
@@ -60,12 +59,12 @@ impl Network {
 
                 // We don't need any of the fields of the header, so just skip it.
                 let packet_len = reader.len() - hdr_len;
-                reader.seek(SeekFrom::Start(hdr_len as u64)).unwrap();
+                reader.seek(hdr_len).unwrap();
 
                 let mut io_buffer = Vec::with_capacity(packet_len);
                 unsafe { io_buffer.set_len(io_buffer.capacity()) };
-                reader.read_exact(&mut io_buffer).unwrap();
-                drop(buffer);
+                reader.read_exact(&mut io_buffer).await.unwrap();
+                tx.put(buffer).await;
 
                 inner.net.send(&io_buffer).await.unwrap();
                 inner.irq.pulse();
@@ -81,7 +80,7 @@ impl Network {
                 let mut buffer = [0; 2048];
                 loop {
                     let len = inner.net.recv(&mut buffer).await.unwrap();
-                    match rx.try_take() {
+                    match rx.try_take().await {
                         // Queue shutdown, terminate gracefully
                         Err(_) => return,
                         Ok(Some(mut dma_buffer)) => {
@@ -106,9 +105,9 @@ impl Network {
                                 );
                                 return;
                             }
-                            writer.write_all(&header).unwrap();
-                            writer.write_all(&buffer[..len]).unwrap();
-                            drop(dma_buffer);
+                            writer.write_all(&header).await.unwrap();
+                            writer.write_all(&buffer[..len]).await.unwrap();
+                            rx.put(dma_buffer).await;
 
                             inner.irq.pulse();
                         }

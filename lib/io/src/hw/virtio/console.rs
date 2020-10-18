@@ -3,7 +3,6 @@ use crate::serial::Serial;
 use crate::{IrqPin, RuntimeContext};
 use futures::future::{AbortHandle, Abortable};
 use parking_lot::Mutex;
-use std::io::{Read, Write};
 use std::sync::Arc;
 
 const VIRTIO_CONSOLE_F_SIZE: usize = 0;
@@ -86,10 +85,10 @@ impl Console {
                 let mut buffer = [0; 2048];
                 loop {
                     let len = inner.console.read(&mut buffer).await.unwrap();
-                    if let Ok(Some(mut dma_buffer)) = rx.try_take() {
+                    if let Ok(Some(mut dma_buffer)) = rx.try_take().await {
                         let mut writer = dma_buffer.writer();
-                        writer.write_all(&buffer[..len]).unwrap();
-                        drop(dma_buffer);
+                        writer.write_all(&buffer[..len]).await.unwrap();
+                        rx.put(dma_buffer).await;
 
                         inner.irq.pulse();
                     } else {
@@ -113,8 +112,8 @@ impl Console {
 
                 let mut io_buffer = Vec::with_capacity(reader.len());
                 unsafe { io_buffer.set_len(io_buffer.capacity()) };
-                reader.read_exact(&mut io_buffer).unwrap();
-                drop(buffer);
+                reader.read_exact(&mut io_buffer).await.unwrap();
+                tx.put(buffer).await;
 
                 inner.console.write(&io_buffer).await.unwrap();
                 inner.irq.pulse();

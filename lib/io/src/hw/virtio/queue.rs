@@ -1,10 +1,8 @@
 use crate::DmaContext;
+use futures::channel::mpsc::{channel, Receiver, Sender};
+use futures::StreamExt;
 use parking_lot::Mutex;
-use std::future::Future;
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
 
 const VIRTQ_DESC_F_NEXT: u16 = 1;
 const VIRTQ_DESC_F_WRITE: u16 = 2;
@@ -32,14 +30,13 @@ pub(super) struct QueueInner {
     pub desc_addr: u64,
     pub avail_addr: u64,
     pub used_addr: u64,
-    pub last_avail_idx: u16,
-    pub last_used_idx: u16,
-    pub waker: Option<Waker>,
-    pub dma_ctx: Arc<dyn DmaContext>,
+    pub send: Option<Sender<()>>,
+    pub recv: Option<Receiver<()>>,
 }
 
 impl QueueInner {
-    pub fn new(dma_ctx: Arc<dyn DmaContext>, num_max: u16) -> Arc<Mutex<QueueInner>> {
+    pub fn new(num_max: u16) -> Arc<Mutex<QueueInner>> {
+        let (send, recv) = channel(1);
         Arc::new(Mutex::new(QueueInner {
             ready: false,
             num: num_max,
@@ -47,34 +44,53 @@ impl QueueInner {
             desc_addr: 0,
             avail_addr: 0,
             used_addr: 0,
-            waker: None,
-            last_avail_idx: 0,
-            last_used_idx: 0,
-            dma_ctx,
+            send: Some(send),
+            recv: Some(recv),
         }))
     }
 
     pub fn reset(&mut self) {
         self.ready = false;
-        self.num = self.num_max;
-        self.desc_addr = 0;
-        self.avail_addr = 0;
-        self.used_addr = 0;
-        self.waker = None;
-        self.last_avail_idx = 0;
-        self.last_used_idx = 0;
+    }
+}
+
+/// Safe abstraction of a virtio queue.
+pub struct Queue {
+    inner: Arc<Mutex<QueueInner>>,
+    dma_ctx: Arc<dyn DmaContext>,
+    recv: Receiver<()>,
+    last_avail_idx: u16,
+    last_used_idx: u16,
+}
+
+impl Queue {
+    pub(super) fn new(dma_ctx: Arc<dyn DmaContext>, inner: Arc<Mutex<QueueInner>>) -> Option<Self> {
+        let recv = inner.lock().recv.take();
+        if let Some(recv) = recv {
+            Some(Self { inner, dma_ctx, recv, last_avail_idx: 0, last_used_idx: 0 })
+        } else {
+            None
+        }
     }
 
-    /// Try to get a buffer from the available ring. If there are no new buffers, `None` will be
-    /// returned.
-    fn try_take(&mut self, arc: &Arc<Mutex<Self>>) -> Result<Option<Buffer>, QueueNotReady> {
-        // If the queue is not ready, trying to take item from it can cause segfault.
-        if !self.ready {
-            return Err(QueueNotReady);
-        }
+    /// Try to get a buffer from the available ring.
+    ///
+    /// If there are no new buffers, `None` will be returned. If the queue is not ready,
+    /// trying to take an item from it will cause `Err(QueueNotReady)` to be returned.
+    pub async fn try_take(&mut self) -> Result<Option<Buffer>, QueueNotReady> {
+        let (num, desc_addr, avail_addr) = {
+            let guard = self.inner.lock();
+
+            // If the queue is not ready, trying to take item from it can cause segfault.
+            if !guard.ready {
+                return Err(QueueNotReady);
+            }
+
+            (guard.num, guard.desc_addr, guard.avail_addr)
+        };
 
         // Read the current index
-        let avail_idx = self.dma_ctx.read_u16(self.avail_addr + 2);
+        let avail_idx = self.dma_ctx.read_u16(avail_addr + 2).await;
 
         // No extra elements in this queue
         if self.last_avail_idx == avail_idx {
@@ -84,14 +100,14 @@ impl QueueInner {
         // Obtain the corresponding descriptor index for a given index of available ring.
         // Each index is 2 bytes, and there are flags and idx (2 bytes each) before the ring, so
         // we have + 4 here.
-        let idx_ptr = self.avail_addr + 4 + (self.last_avail_idx & (self.num - 1)) as u64 * 2;
-        let mut idx = self.dma_ctx.read_u16(idx_ptr);
+        let idx_ptr = avail_addr + 4 + (self.last_avail_idx & (num - 1)) as u64 * 2;
+        let mut idx = self.dma_ctx.read_u16(idx_ptr).await;
 
         // Now we have obtained this descriptor, increment the index to skip over this.
         self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
 
         let mut avail = Buffer {
-            queue: arc.clone(),
+            queue: self.inner.clone(),
             idx,
             bytes_written: 0,
             read: Vec::new(),
@@ -103,7 +119,7 @@ impl QueueInner {
 
         loop {
             let mut desc = [0; std::mem::size_of::<VirtqDesc>()];
-            self.dma_ctx.dma_read(self.desc_addr + (idx & (self.num - 1)) as u64 * 16, &mut desc);
+            self.dma_ctx.dma_read(desc_addr + (idx & (num - 1)) as u64 * 16, &mut desc).await;
             let desc: VirtqDesc = unsafe { std::mem::transmute(desc) };
 
             // Add to the corresponding buffer (read/write)
@@ -126,65 +142,47 @@ impl QueueInner {
         Ok(Some(avail))
     }
 
-    /// Put back a buffer to the ring.
-    fn put(&mut self, avail: &Buffer) {
-        if !self.ready {
-            return;
-        }
-
-        let elem_ptr = self.used_addr + 4 + (self.last_used_idx & (self.num - 1)) as u64 * 8;
-        let mut buffer = [0; 8];
-        buffer[0..4].copy_from_slice(&(avail.idx as u32).to_le_bytes());
-        buffer[4..8].copy_from_slice(&(avail.bytes_written as u32).to_le_bytes());
-        self.dma_ctx.dma_write(elem_ptr, &buffer);
-
-        self.last_used_idx = self.last_used_idx.wrapping_add(1);
-        self.dma_ctx.write_u16(self.used_addr + 2, self.last_used_idx);
-    }
-}
-
-/// Safe abstraction of a virtio queue.
-pub struct Queue {
-    pub(super) inner: Arc<Mutex<QueueInner>>,
-}
-
-impl Queue {
-    /// Try to get a buffer from the available ring.
-    ///
-    /// If there are no new buffers, `None` will be returned. If the queue is not ready,
-    /// trying to take an item from it will cause `Err(QueueNotReady)` to be returned.
-    pub fn try_take(&mut self) -> Result<Option<Buffer>, QueueNotReady> {
-        self.inner.lock().try_take(&self.inner)
-    }
-
     /// Get a buffer from the available ring.
     ///
     /// The future returned will only resolve when there is an buffer available.
     /// If the queue is not ready,
     /// trying to take an item from it will cause `Err(QueueNotReady)` to be returned.
     pub async fn take(&mut self) -> Result<Buffer, QueueNotReady> {
-        /// The future returned for calling async `wake` function of `Queue`.
-        struct Take<'a> {
-            queue: &'a mut Queue,
-        }
-
-        impl Future for Take<'_> {
-            type Output = Result<Buffer, QueueNotReady>;
-
-            fn poll(self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Self::Output> {
-                let mut inner = self.queue.inner.lock();
-                match inner.try_take(&self.queue.inner) {
-                    Err(v) => Poll::Ready(Err(v)),
-                    Ok(Some(v)) => Poll::Ready(Ok(v)),
-                    Ok(None) => {
-                        inner.waker = Some(ctx.waker().clone());
-                        Poll::Pending
-                    }
-                }
+        loop {
+            match self.try_take().await? {
+                Some(v) => return Ok(v),
+                _ => (),
+            }
+            if self.recv.next().await.is_none() {
+                return Err(QueueNotReady);
             }
         }
+    }
 
-        Take { queue: self }.await
+    pub async fn put(&mut self, buffer: Buffer) {
+        if !Arc::ptr_eq(&buffer.queue, &self.inner) {
+            panic!("Buffer can only be put back to the originating queue");
+        }
+
+        let (num, used_addr) = {
+            let guard = self.inner.lock();
+            if !guard.ready {
+                return;
+            }
+
+            (guard.num, guard.used_addr)
+        };
+
+        let elem_ptr = used_addr + 4 + (self.last_used_idx & (num - 1)) as u64 * 8;
+        let mut descriptor = [0; 8];
+        descriptor[0..4].copy_from_slice(&(buffer.idx as u32).to_le_bytes());
+        descriptor[4..8].copy_from_slice(&(buffer.bytes_written as u32).to_le_bytes());
+        self.dma_ctx.dma_write(elem_ptr, &descriptor).await;
+
+        self.last_used_idx = self.last_used_idx.wrapping_add(1);
+        self.dma_ctx.write_u16(used_addr + 2, self.last_used_idx).await;
+
+        std::mem::forget(buffer);
     }
 }
 
@@ -202,7 +200,8 @@ pub struct Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        self.queue.lock().put(self);
+        // Buffer shouldn't leak in normal operation but is possible during reset.
+        warn!(target: "Mmio", "buffer leaked");
     }
 }
 
@@ -288,29 +287,18 @@ impl<'a> BufferReader<'a> {
     pub fn len(&self) -> usize {
         self.len
     }
-}
 
-impl<'a> Seek for BufferReader<'a> {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        let (base, offset) = match pos {
-            SeekFrom::Start(n) => (0, n as i64),
-            SeekFrom::End(n) => (self.len, n),
-            SeekFrom::Current(n) => (self.pos, n),
-        };
-        let new_pos = (base as i64 + offset) as usize;
-
+    pub fn seek(&mut self, new_pos: usize) -> std::io::Result<usize> {
         // If the position changed, reset slice_idx and slice_offset
         if self.pos != new_pos {
             self.seek_slice(new_pos);
         }
 
         self.pos = new_pos;
-        Ok(new_pos as u64)
+        Ok(new_pos)
     }
-}
 
-impl<'a> Read for BufferReader<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    pub async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.slice_idx >= self.buffer.len() {
             return Ok(0);
         }
@@ -320,18 +308,38 @@ impl<'a> Read for BufferReader<'a> {
         let slice_len = len - self.slice_offset;
 
         let len = if buf.len() >= slice_len {
-            self.dma_ctx.dma_read(slice_addr, &mut buf[..slice_len]);
+            self.dma_ctx.dma_read(slice_addr, &mut buf[..slice_len]).await;
             self.slice_idx += 1;
             self.slice_offset = 0;
             slice_len
         } else {
-            self.dma_ctx.dma_read(slice_addr, buf);
+            self.dma_ctx.dma_read(slice_addr, buf).await;
             self.slice_offset += buf.len();
             buf.len()
         };
 
         self.pos += len;
         Ok(len)
+    }
+
+    pub async fn read_exact(&mut self, mut buf: &mut [u8]) -> std::io::Result<()> {
+        while !buf.is_empty() {
+            match self.read(buf).await {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf = &mut buf[n..];
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        if !buf.is_empty() {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "failed to fill whole buffer",
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -368,33 +376,18 @@ impl<'a> BufferWriter<'a> {
     pub fn len(&self) -> usize {
         self.len
     }
-}
 
-impl<'a> Seek for BufferWriter<'a> {
-    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        let (base, offset) = match pos {
-            SeekFrom::Start(n) => (0, n as i64),
-            SeekFrom::End(n) => (self.len, n),
-            SeekFrom::Current(n) => (self.pos, n),
-        };
-        let new_pos = (base as i64 + offset) as usize;
-
+    pub fn seek(&mut self, new_pos: usize) -> std::io::Result<usize> {
         // If the position changed, reset slice_idx and slice_offset
         if self.pos != new_pos {
             self.seek_slice(new_pos);
         }
 
         self.pos = new_pos;
-        Ok(new_pos as u64)
-    }
-}
-
-impl<'a> Write for BufferWriter<'a> {
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+        Ok(new_pos)
     }
 
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    pub async fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if self.slice_idx >= self.buffer.len() {
             return Ok(0);
         }
@@ -404,12 +397,12 @@ impl<'a> Write for BufferWriter<'a> {
         let slice_len = len - self.slice_offset;
 
         let len = if buf.len() >= slice_len {
-            self.dma_ctx.dma_write(slice_addr, &buf[..slice_len]);
+            self.dma_ctx.dma_write(slice_addr, &buf[..slice_len]).await;
             self.slice_idx += 1;
             self.slice_offset = 0;
             slice_len
         } else {
-            self.dma_ctx.dma_write(slice_addr, buf);
+            self.dma_ctx.dma_write(slice_addr, buf).await;
             self.slice_offset += buf.len();
             buf.len()
         };
@@ -418,5 +411,21 @@ impl<'a> Write for BufferWriter<'a> {
         let bytes_written = usize::max(self.pos, *self.bytes_written);
         *self.bytes_written = bytes_written;
         Ok(len)
+    }
+
+    pub async fn write_all(&mut self, mut buf: &[u8]) -> std::io::Result<()> {
+        while !buf.is_empty() {
+            match self.write(buf).await {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::WriteZero,
+                        "failed to write whole buffer",
+                    ));
+                }
+                Ok(n) => buf = &buf[n..],
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
     }
 }

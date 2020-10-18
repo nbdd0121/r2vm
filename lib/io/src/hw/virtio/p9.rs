@@ -1,13 +1,11 @@
 use super::{Device, DeviceId, Queue};
 use crate::fs::FileSystem;
 use crate::{IrqPin, RuntimeContext};
-use byteorder::{WriteBytesExt, LE};
+use byteorder::{ByteOrder, LE};
 use p9::serialize::{Fcall, Serializable};
 use p9::P9Handler;
 use parking_lot::Mutex;
 use std::sync::Arc;
-
-use std::io::{Seek, SeekFrom};
 
 /// Feature bit indicating presence of mount tag
 const VIRTIO_9P_MOUNT_TAG: u32 = 1;
@@ -64,20 +62,32 @@ where
                 while let Ok(mut buffer) = queue.take().await {
                     let (mut reader, mut writer) = buffer.reader_writer();
 
-                    reader.seek(SeekFrom::Start(4)).unwrap();
-                    let (tag, fcall) = <(u16, Fcall)>::decode(&mut reader).unwrap();
+                    let size = {
+                        let mut size_buf = [0u8; 4];
+                        reader.read_exact(&mut size_buf).await.unwrap();
+                        LE::read_u32(&size_buf) as usize - 4
+                    };
+
+                    let mut msg_buf = Vec::with_capacity(size);
+                    unsafe {
+                        msg_buf.set_len(size);
+                    }
+                    reader.read_exact(&mut msg_buf).await.unwrap();
+                    let (tag, fcall) =
+                        <(u16, Fcall)>::decode(&mut std::io::Cursor::new(&msg_buf)).unwrap();
 
                     trace!(target: "9p", "received {}, {:?}", tag, fcall);
                     let resp = inner.handler.lock().handle_fcall(fcall);
                     trace!(target: "9p", "send {}, {:?}", tag, resp);
 
-                    writer.seek(SeekFrom::Start(4)).unwrap();
-                    (tag, resp).encode(&mut writer).unwrap();
-                    let size = writer.seek(SeekFrom::Current(0)).unwrap();
-                    writer.seek(SeekFrom::Start(0)).unwrap();
-                    writer.write_u32::<LE>(size as u32).unwrap();
+                    msg_buf.resize(4, 0);
+                    (tag, resp).encode(&mut msg_buf).unwrap();
+                    let size = msg_buf.len();
+                    LE::write_u32(&mut msg_buf, size as u32);
 
-                    drop(buffer);
+                    writer.write_all(&mut msg_buf).await.unwrap();
+
+                    queue.put(buffer).await;
                     inner.irq.pulse();
                 }
             }),

@@ -47,7 +47,7 @@ impl Mmio {
         let mut queues = Vec::with_capacity(num_queues);
         for i in 0..num_queues {
             let len_max = dev.max_queue_len(i);
-            let queue = super::queue::QueueInner::new(dma_ctx.clone(), len_max);
+            let queue = super::queue::QueueInner::new(len_max);
             queues.push(queue);
         }
         Mmio {
@@ -178,8 +178,8 @@ impl IoMemoryMut for Mmio {
                     error!(target: "Mmio", "attempting to access unavailable queue {}", self.queue_sel);
                     return;
                 }
-                if let Some(waker) = self.queues[self.queue_sel].lock().waker.take() {
-                    waker.wake();
+                if let Some(ref mut send) = self.queues[self.queue_sel].lock().send {
+                    let _ = send.try_send(());
                 }
             }
             ADDR_QUEUE_NUM..=ADDR_QUEUE_READY | ADDR_QUEUE_DESC_LOW..=ADDR_QUEUE_USED_HIGH => {
@@ -220,10 +220,10 @@ impl IoMemoryMut for Mmio {
                 std::mem::drop(queue);
 
                 if addr == ADDR_QUEUE_READY && value & 1 != 0 {
-                    self.device.queue_ready(
-                        self.queue_sel,
-                        super::Queue { inner: self.queues[self.queue_sel].clone() },
-                    );
+                    let inner = self.queues[self.queue_sel].clone();
+                    if let Some(queue) = super::Queue::new(self.dma_ctx.clone(), inner) {
+                        self.device.queue_ready(self.queue_sel, queue);
+                    }
                 }
             }
             ADDR_INTERRUPT_ACK => self.device.interrupt_ack(value),
@@ -236,12 +236,9 @@ impl IoMemoryMut for Mmio {
                         {
                             let mut lock = queue.lock();
                             lock.reset();
-                            lock.waker.take().map(|x| x.wake());
+                            lock.send.take();
                         }
-                        let inner = super::queue::QueueInner::new(
-                            self.dma_ctx.clone(),
-                            self.device.max_queue_len(i),
-                        );
+                        let inner = super::queue::QueueInner::new(self.device.max_queue_len(i));
                         *queue = inner;
                     }
                     self.queue_sel = 0;

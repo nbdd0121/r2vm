@@ -1,3 +1,4 @@
+use futures::future::poll_fn;
 use futures::future::BoxFuture;
 use io::hw::intc::Clint;
 use io::system::IoSystem;
@@ -5,6 +6,7 @@ use io::{IoMemory, IrqPin};
 use once_cell::sync::Lazy;
 use ro_cell::RoCell;
 use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
 
 pub mod interp;
@@ -21,30 +23,34 @@ pub use syscall::syscall;
 struct DirectIoContext;
 
 impl io::DmaContext for DirectIoContext {
-    fn dma_read(&self, addr: u64, buf: &mut [u8]) {
+    fn dma_read<'asyn>(&'asyn self, addr: u64, buf: &'asyn mut [u8]) -> BoxFuture<'asyn, ()> {
         unsafe {
             std::ptr::copy_nonoverlapping(addr as usize as *const u8, buf.as_mut_ptr(), buf.len())
         };
+        Box::pin(poll_fn(|_| Poll::Ready(())))
     }
 
-    fn dma_write(&self, addr: u64, buf: &[u8]) {
+    fn dma_write<'asyn>(&'asyn self, addr: u64, buf: &'asyn [u8]) -> BoxFuture<'asyn, ()> {
         let addr = addr as usize;
         unsafe { std::ptr::copy_nonoverlapping(buf.as_ptr(), addr as *mut u8, buf.len()) };
         crate::emu::interp::icache_invalidate(addr, addr + buf.len());
+        Box::pin(poll_fn(|_| Poll::Ready(())))
     }
 
-    fn read_u16(&self, addr: u64) -> u16 {
-        unsafe {
+    fn read_u16<'asyn>(&'asyn self, addr: u64) -> BoxFuture<'asyn, u16> {
+        let ret = unsafe {
             (*(addr as *const std::sync::atomic::AtomicU16))
                 .load(std::sync::atomic::Ordering::SeqCst)
-        }
+        };
+        Box::pin(futures::future::ready(ret))
     }
 
-    fn write_u16(&self, addr: u64, value: u16) {
+    fn write_u16<'asyn>(&'asyn self, addr: u64, value: u16) -> BoxFuture<'asyn, ()> {
         unsafe {
             (*(addr as *const std::sync::atomic::AtomicU16))
                 .store(value, std::sync::atomic::Ordering::SeqCst)
         }
+        Box::pin(poll_fn(|_| Poll::Ready(())))
     }
 }
 

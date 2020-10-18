@@ -2,7 +2,6 @@ use super::{Device, DeviceId, Queue};
 use crate::block::Block as BlockDevice;
 use crate::{IrqPin, RuntimeContext};
 use parking_lot::Mutex;
-use std::io::{Read, Write};
 use std::sync::Arc;
 
 #[allow(dead_code)]
@@ -56,37 +55,43 @@ impl Block {
 
                 let header: VirtioBlkReqHeader = unsafe {
                     let mut header: [u8; 16] = std::mem::MaybeUninit::uninit().assume_init();
-                    reader.read_exact(&mut header).unwrap();
+                    reader.read_exact(&mut header).await.unwrap();
                     std::mem::transmute(header)
                 };
 
-                let mut file = inner.file.lock();
                 match header.r#type {
                     VIRTIO_BLK_T_IN => {
                         let mut io_buffer = Vec::with_capacity(writer.len());
                         unsafe { io_buffer.set_len(io_buffer.capacity() - 1) };
-                        (*file).read_exact_at(&mut io_buffer, header.sector * 512).unwrap();
-                        trace!(target: "VirtioBlk", "read {} bytes from sector {:x}", io_buffer.len(), header.sector);
+
+                        {
+                            let mut file = inner.file.lock();
+                            (*file).read_exact_at(&mut io_buffer, header.sector * 512).unwrap();
+                            trace!(target: "VirtioBlk", "read {} bytes from sector {:x}", io_buffer.len(), header.sector);
+                        }
 
                         io_buffer.push(0);
-                        writer.write_all(&io_buffer).unwrap();
+                        writer.write_all(&io_buffer).await.unwrap();
                     }
                     VIRTIO_BLK_T_OUT => {
                         let mut io_buffer = Vec::with_capacity(reader.len() - 16);
                         unsafe { io_buffer.set_len(io_buffer.capacity()) };
-                        reader.read_exact(&mut io_buffer).unwrap();
+                        reader.read_exact(&mut io_buffer).await.unwrap();
 
-                        file.write_all_at(&io_buffer, header.sector * 512).unwrap();
-                        // We must make sure the data has been flushed into the disk before returning
-                        file.flush().unwrap();
-                        trace!(target: "VirtioBlk", "write {} bytes from sector {:x}", io_buffer.len(), header.sector);
+                        {
+                            let mut file = inner.file.lock();
+                            file.write_all_at(&io_buffer, header.sector * 512).unwrap();
+                            // We must make sure the data has been flushed into the disk before returning
+                            file.flush().unwrap();
+                            trace!(target: "VirtioBlk", "write {} bytes from sector {:x}", io_buffer.len(), header.sector);
+                        }
 
-                        writer.write_all(&[0]).unwrap();
+                        writer.write_all(&[0]).await.unwrap();
                     }
                     VIRTIO_BLK_T_GET_ID => {
                         // Fill in a dummy ID for now.
                         let len = writer.len();
-                        writer.write_all(&vec![0; len]).unwrap();
+                        writer.write_all(&vec![0; len]).await.unwrap();
                     }
                     _ => {
                         error!(target: "VirtioBlk", "unsupported block operation type {}", header.r#type);
@@ -94,7 +99,7 @@ impl Block {
                     }
                 }
 
-                drop(buffer);
+                queue.put(buffer).await;
                 inner.irq.pulse();
             }
         }));

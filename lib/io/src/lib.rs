@@ -22,16 +22,16 @@ use std::time::Duration;
 /// This is required to be [`Send`] + [`Sync`] so devices that use them can be `Send`.
 pub trait DmaContext: Send + Sync {
     /// Perform a DMA read at given address.
-    fn dma_read(&self, addr: u64, buf: &mut [u8]);
+    fn dma_read<'asyn>(&'asyn self, addr: u64, buf: &'asyn mut [u8]) -> BoxFuture<'asyn, ()>;
 
     /// Perform a DMA write at given address.
-    fn dma_write(&self, addr: u64, buf: &[u8]);
+    fn dma_write<'asyn>(&'asyn self, addr: u64, buf: &'asyn [u8]) -> BoxFuture<'asyn, ()>;
 
     /// Read a half word atomically
-    fn read_u16(&self, addr: u64) -> u16;
+    fn read_u16<'asyn>(&'asyn self, addr: u64) -> BoxFuture<'asyn, u16>;
 
     /// Write a half word atomically
-    fn write_u16(&self, addr: u64, value: u16);
+    fn write_u16<'asyn>(&'asyn self, addr: u64, value: u16) -> BoxFuture<'asyn, ()>;
 }
 
 /// Context for I/O event loop runtime.

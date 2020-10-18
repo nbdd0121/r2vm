@@ -1,7 +1,6 @@
 use super::{Device, DeviceId, Queue};
 use crate::{IrqPin, RuntimeContext};
 use parking_lot::Mutex;
-use std::io::Read;
 use std::sync::Arc;
 
 /// A virtio entropy source device.
@@ -32,12 +31,19 @@ impl Rng {
         let inner = self.inner.clone();
         self.ctx.spawn(Box::pin(async move {
             while let Ok(mut buffer) = queue.take().await {
-                let mut inner = inner.lock();
-                let rng: &mut dyn rand::RngCore = &mut inner.rng;
                 let mut writer = buffer.writer();
-                std::io::copy(&mut rng.take(writer.len() as u64), &mut writer).unwrap();
-                drop(buffer);
-                inner.irq.pulse();
+                let mut buf = Vec::with_capacity(writer.len());
+                {
+                    let mut inner = inner.lock();
+                    let rng: &mut dyn rand::RngCore = &mut inner.rng;
+                    unsafe {
+                        buf.set_len(writer.len());
+                    }
+                    rng.fill_bytes(&mut buf);
+                }
+                writer.write_all(&buf).await.unwrap();
+                queue.put(buffer).await;
+                inner.lock().irq.pulse();
             }
         }))
     }
