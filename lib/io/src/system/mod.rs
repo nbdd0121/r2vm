@@ -110,7 +110,9 @@ impl IoSystem {
     }
 
     pub fn register_irq(&mut self, irq: u32, edge_trigger: bool) -> Box<dyn IrqPin> {
-        self.irq_set.insert(irq);
+        if !self.irq_set.insert(irq) {
+            panic!("irq overlap");
+        }
         self.plic.irq_pin(irq, edge_trigger)
     }
 
