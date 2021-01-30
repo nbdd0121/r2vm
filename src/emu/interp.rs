@@ -140,15 +140,6 @@ impl SharedContext {
         self.wfi_condvar.notify_one();
     }
 
-    /// Perform a WFI operation. Return after an alarm is fired.
-    pub fn wait_alarm(&self) {
-        let mut guard = self.wfi_mutex.lock();
-        if self.alarm.load(MemOrder::Relaxed) != 0 {
-            return;
-        }
-        self.wfi_condvar.wait(&mut guard);
-    }
-
     /// Inform the hart that there might be a pending interrupt, but without actually touching
     /// `mip`. This should be called, e.g. if SIE or SSTATUS is modified.
     pub fn alert(&self) {
@@ -357,6 +348,20 @@ impl Context {
                 self.shared.fire_alarm(0);
             }
         }
+    }
+
+    /// Perform a WFI operation. Return after an alarm is fired.
+    pub fn wait_alarm(&self) {
+        let mut guard = self.shared.wfi_mutex.lock();
+        if self.shared.alarm.load(MemOrder::Relaxed) != 0 {
+            return;
+        }
+        // In addition to alarm, we also need to check if any interrupt is pending.
+        // Pending interrupt would stop wfi even if it is disabled.
+        if self.shared.mip.load(MemOrder::Relaxed) & self.mie != 0 {
+            return;
+        }
+        self.shared.wfi_condvar.wait(&mut guard);
     }
 
     /// Copy memory from the hart-specific virtual address.
@@ -2183,7 +2188,7 @@ fn step(ctx: &mut Context, op: &Op, compressed: bool) -> Result<(), ()> {
         }
         Op::Wfi => {
             let cycle_before = crate::event_loop().get_lockstep_cycles();
-            ctx.shared.wait_alarm();
+            ctx.wait_alarm();
             // Make sure lockstep cycle count did not increase when sleeping in WFI
             let cycle_after = crate::event_loop().get_lockstep_cycles();
             ctx.cycle_offset -= (cycle_after - cycle_before) as i64;
