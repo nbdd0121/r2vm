@@ -36,7 +36,7 @@ impl RawMutex {
             // invoked from non-fiber threads (e.g. interact with condition variable). We could
             // either augment park/unpark to handle these, but for simplicity just let it spin.
             if !in_fiber {
-                std::sync::atomic::spin_loop_hint();
+                std::hint::spin_loop();
                 state = self.locked.load(Ordering::Relaxed);
                 continue;
             }
@@ -44,7 +44,7 @@ impl RawMutex {
             // If no queue is there, wait a few times
             if state & PARKED_BIT == 0 && spinwait < 20 {
                 if spinwait < 10 {
-                    std::sync::atomic::spin_loop_hint();
+                    std::hint::spin_loop();
                 } else {
                     // We already know we're in fiber, call asm directly.
                     unsafe { super::raw::fiber_sleep(0) };
