@@ -516,6 +516,15 @@ impl Serializable for (u16, Fcall) {
                 },
                 40 => Fcall::Treaddir { fid: decode!(), offset: decode!(), count: decode!() },
                 50 => Fcall::Tfsync { fid: decode!() },
+                52 => Fcall::Tlock {
+                    fid: decode!(),
+                    r#type: decode!(),
+                    flags: decode!(),
+                    start: decode!(),
+                    length: decode!(),
+                    proc_id: decode!(),
+                    client_id: decode!(),
+                },
                 70 => Fcall::Tlink { dfid: decode!(), fid: decode!(), name: decode!() },
                 72 => Fcall::Tmkdir {
                     dfid: decode!(),
@@ -594,6 +603,7 @@ impl Serializable for (u16, Fcall) {
             Fcall::Rxattrcreate { .. } => 33,
             Fcall::Rreaddir { .. } => 41,
             Fcall::Rfsync { .. } => 51,
+            Fcall::Rlock { .. } => 53,
             Fcall::Rlink { .. } => 71,
             Fcall::Rmkdir { .. } => 73,
             Fcall::Rrenameat { .. } => 75,
@@ -647,6 +657,9 @@ impl Serializable for (u16, Fcall) {
                 }
             }
             Fcall::Rfsync {} => (),
+            Fcall::Rlock { status } => {
+                status.encode(writer)?;
+            }
             Fcall::Rlink {} => (),
             Fcall::Rrenameat {} => (),
             Fcall::Runlinkat {} => (),

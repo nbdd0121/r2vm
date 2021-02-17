@@ -11,11 +11,19 @@ pub use passthrough::Passthrough;
 
 use fnv::FnvHashMap;
 use serialize::{DirEntry, Fcall};
-use std::io::Result;
+use std::io::{ErrorKind, Result};
 
 pub trait Inode: Clone {
     fn qid(&mut self) -> serialize::Qid;
     fn mode(&mut self) -> u32;
+}
+
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub enum LockType {
+    Shared = 0,
+    Exclusive = 1,
+    Unlock = 2,
 }
 
 pub trait FileSystem {
@@ -69,6 +77,7 @@ pub trait FileSystem {
     fn read(&mut self, file: &mut Self::File, offset: u64, buf: &mut [u8]) -> Result<usize>;
     fn write(&mut self, file: &mut Self::File, offset: u64, buf: &[u8]) -> Result<usize>;
     fn fsync(&mut self, file: &mut Self::File) -> Result<()>;
+    fn lock(&mut self, file: &mut Self::File, ty: LockType) -> Result<()>;
     fn setattr(
         &mut self,
         file: &mut Self::File,
@@ -214,6 +223,33 @@ impl<T: FileSystem> P9Handler<T> {
                 let file = self.fids.get_mut(&fid).unwrap();
                 self.fs.fsync(file)?;
                 Fcall::Rfsync {}
+            }
+            Fcall::Tlock { fid, r#type, flags, .. } => {
+                // Check for unknown flags
+                const P9_LOCK_FLAGS_BLOCK: u32 = 1;
+                if flags & !P9_LOCK_FLAGS_BLOCK != 0 {
+                    return Err(std::io::Error::from_raw_os_error(libc::ENOTSUP));
+                }
+
+                let ty = match r#type {
+                    0 => LockType::Shared,
+                    1 => LockType::Exclusive,
+                    2 => LockType::Unlock,
+                    _ => return Err(std::io::Error::from_raw_os_error(libc::EINVAL)),
+                };
+
+                let file = self.fids.get_mut(&fid).unwrap();
+
+                const P9_LOCK_SUCCESS: u8 = 0;
+                const P9_LOCK_BLOCKED: u8 = 1;
+                const P9_LOCK_ERROR: u8 = 2;
+                match self.fs.lock(file, ty) {
+                    Ok(_) => Fcall::Rlock { status: P9_LOCK_SUCCESS },
+                    Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                        Fcall::Rlock { status: P9_LOCK_BLOCKED }
+                    }
+                    Err(_) => Fcall::Rlock { status: P9_LOCK_ERROR },
+                }
             }
             Fcall::Tclunk { fid } => {
                 self.fids.remove(&fid);

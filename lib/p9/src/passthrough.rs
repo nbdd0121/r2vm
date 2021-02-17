@@ -1,5 +1,5 @@
 use super::serialize::{Qid, SetAttr, Stat, StatFs};
-use super::{FileSystem, Inode};
+use super::{FileSystem, Inode, LockType};
 use std::ffi::CString;
 use std::fs::ReadDir;
 use std::io::Result;
@@ -7,6 +7,7 @@ use std::io::{Read, Seek, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -262,6 +263,19 @@ impl FileSystem for Passthrough {
     fn fsync(&mut self, file: &mut Self::File) -> std::io::Result<()> {
         let fd = file.fd.as_mut().unwrap();
         fd.sync_data()
+    }
+
+    fn lock(&mut self, file: &mut Self::File, ty: LockType) -> std::io::Result<()> {
+        let fd = file.fd.as_mut().unwrap();
+        let flag = match ty {
+            LockType::Shared => libc::LOCK_SH | libc::LOCK_NB,
+            LockType::Exclusive => libc::LOCK_EX | libc::LOCK_NB,
+            LockType::Unlock => libc::LOCK_UN,
+        };
+        if unsafe { libc::flock(fd.as_raw_fd(), flag) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     fn setattr(&mut self, file: &mut Self::File, valid: u32, stat: SetAttr) -> std::io::Result<()> {
