@@ -1028,27 +1028,23 @@ fn sbi_call(ctx: &mut Context, nr: u64, arg0: u64, arg1: u64, arg2: u64, arg3: u
     }
 }
 
-// #region softfp init
+// #region softfp callbacks
 //
 
-fn get_rounding_mode() -> softfp::RoundingMode {
+#[no_mangle]
+fn softfp_get_rounding_mode() -> softfp::RoundingMode {
     fiber::with_context(|data: &UnsafeCell<Context>| {
         let ctx = unsafe { &(*data.get()).shared };
         ctx.rm.load(MemOrder::Relaxed).try_into().unwrap()
     })
 }
 
-fn set_exception_flags(flags: softfp::ExceptionFlags) {
+#[no_mangle]
+fn softfp_set_exception_flags(flags: softfp::ExceptionFlags) {
     fiber::with_context(|data: &UnsafeCell<Context>| {
         let ctx = unsafe { &(*data.get()).shared };
         ctx.fflags.fetch_or(flags.bits(), MemOrder::Relaxed);
     })
-}
-
-/// Initialise softfp environemnt
-pub fn init_fp() {
-    softfp::register_get_rounding_mode(get_rounding_mode);
-    softfp::register_set_exception_flag(set_exception_flags);
 }
 
 //

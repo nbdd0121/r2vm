@@ -2,7 +2,6 @@ use bitflags::bitflags;
 use core::cmp::Ordering;
 use core::convert::{TryFrom, TryInto};
 use core::ops;
-use core::sync::atomic::{AtomicUsize, Ordering as MemOrder};
 
 use super::int::{CastFrom, CastTo, Int, UInt};
 
@@ -50,33 +49,65 @@ bitflags! {
 // #region Global rounding mode / exception flag callback
 //
 
-// These are made atomic to avoid needing to expose unsafe interfaces.
-static GET_ROUNDING_MODE: AtomicUsize = AtomicUsize::new(0);
-static SET_EXCEPTION_FLAG: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(feature = "register"))]
+mod rm {
+    use super::*;
 
-#[inline]
-fn get_rounding_mode() -> RoundingMode {
-    let func_addr = GET_ROUNDING_MODE.load(MemOrder::Relaxed);
-    let func: Option<fn() -> RoundingMode> = unsafe { core::mem::transmute(func_addr) };
-    (func.unwrap())()
+    extern "Rust" {
+        fn softfp_get_rounding_mode() -> RoundingMode;
+        fn softfp_set_exception_flags(flag: ExceptionFlags);
+    }
+
+    #[inline]
+    pub(crate) fn get_rounding_mode() -> RoundingMode {
+        unsafe { softfp_get_rounding_mode() }
+    }
+
+    #[inline]
+    pub(crate) fn set_exception_flags(flag: ExceptionFlags) {
+        unsafe { softfp_set_exception_flags(flag) }
+    }
 }
 
-#[inline]
-fn set_exception_flag(flag: ExceptionFlags) {
-    let func_addr = SET_EXCEPTION_FLAG.load(MemOrder::Relaxed);
-    let func: Option<fn(ExceptionFlags)> = unsafe { core::mem::transmute(func_addr) };
-    (func.unwrap())(flag)
+#[cfg(not(feature = "register"))]
+use rm::*;
+
+#[cfg(feature = "register")]
+mod rm {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering as MemOrder};
+
+    // These are made atomic to avoid needing to expose unsafe interfaces.
+    static GET_ROUNDING_MODE: AtomicUsize = AtomicUsize::new(0);
+    static SET_EXCEPTION_FLAG: AtomicUsize = AtomicUsize::new(0);
+
+    #[inline]
+    pub(crate) fn get_rounding_mode() -> RoundingMode {
+        let func_addr = GET_ROUNDING_MODE.load(MemOrder::Relaxed);
+        let func: Option<fn() -> RoundingMode> = unsafe { core::mem::transmute(func_addr) };
+        (func.unwrap())()
+    }
+
+    #[inline]
+    pub(crate) fn set_exception_flags(flag: ExceptionFlags) {
+        let func_addr = SET_EXCEPTION_FLAG.load(MemOrder::Relaxed);
+        let func: Option<fn(ExceptionFlags)> = unsafe { core::mem::transmute(func_addr) };
+        (func.unwrap())(flag)
+    }
+
+    /// Register a function to be used when rounding mode is to be accessed.
+    pub fn register_get_rounding_mode(f: fn() -> RoundingMode) {
+        GET_ROUNDING_MODE.store(f as usize, MemOrder::Relaxed);
+    }
+
+    /// Register a function to be called when a floating point exception happens.
+    pub fn register_set_exception_flags(f: fn(ExceptionFlags)) {
+        SET_EXCEPTION_FLAG.store(f as usize, MemOrder::Relaxed);
+    }
 }
 
-/// Register a function to be used when rounding mode is to be accessed.
-pub fn register_get_rounding_mode(f: fn() -> RoundingMode) {
-    GET_ROUNDING_MODE.store(f as usize, MemOrder::Relaxed);
-}
-
-/// Register a function to be called when a floating point exception happens.
-pub fn register_set_exception_flag(f: fn(ExceptionFlags)) {
-    SET_EXCEPTION_FLAG.store(f as usize, MemOrder::Relaxed);
-}
+#[cfg(feature = "register")]
+pub use rm::*;
 
 /// Floating point classification result.
 #[repr(u32)]
@@ -286,7 +317,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
     /// Get the finite number overflowing result in current rounding mode.
     fn round_overflow(sign: bool) -> Self {
-        set_exception_flag(ExceptionFlags::OVERFLOW | ExceptionFlags::INEXACT);
+        set_exception_flags(ExceptionFlags::OVERFLOW | ExceptionFlags::INEXACT);
 
         // When we are rounding away from the Infinity, we set the result
         // to be the largest finite number.
@@ -329,7 +360,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         let (inexact, mut rounded) = Self::round_significand(sign, rounded);
         if inexact {
-            set_exception_flag(ExceptionFlags::INEXACT);
+            set_exception_flags(ExceptionFlags::INEXACT);
 
             // When the significand is all 1 and rounding causes it to round up.
             // Since when this happens, resulting significand should be all zero.
@@ -351,7 +382,7 @@ impl<Desc: FpDesc> Fp<Desc> {
                 if Self::round_significand(sign, significand).1
                     != Desc::Holder::one() << (Desc::SIGNIFICAND_WIDTH + 1)
                 {
-                    set_exception_flag(ExceptionFlags::UNDERFLOW);
+                    set_exception_flags(ExceptionFlags::UNDERFLOW);
                 }
 
                 value.set_biased_exponent(1);
@@ -360,7 +391,7 @@ impl<Desc: FpDesc> Fp<Desc> {
             }
 
             if inexact {
-                set_exception_flag(ExceptionFlags::UNDERFLOW);
+                set_exception_flags(ExceptionFlags::UNDERFLOW);
             }
 
             value.set_biased_exponent(0);
@@ -388,7 +419,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
     fn propagate_nan(a: Self, b: Self) -> Self {
         if a.is_signaling() || b.is_signaling() {
-            set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+            set_exception_flags(ExceptionFlags::INVALID_OPERATION);
         }
         Self::quiet_nan()
     }
@@ -541,7 +572,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         if a.is_infinite() {
             // Subtracting two infinities
             if b.is_infinite() {
-                set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+                set_exception_flags(ExceptionFlags::INVALID_OPERATION);
                 return Self::quiet_nan();
             }
 
@@ -590,7 +621,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         // Handling infinities
         if a.is_infinite() {
             if b.is_zero() {
-                set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+                set_exception_flags(ExceptionFlags::INVALID_OPERATION);
                 return Self::quiet_nan();
             }
             a.set_sign(sign);
@@ -628,7 +659,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         if a.is_infinite() {
             // inf / inf = NaN
             if b.is_infinite() {
-                set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+                set_exception_flags(ExceptionFlags::INVALID_OPERATION);
                 return Self::quiet_nan();
             }
 
@@ -643,7 +674,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         if a.is_zero() {
             // 0 / 0 = NaN
             if b.is_zero() {
-                set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+                set_exception_flags(ExceptionFlags::INVALID_OPERATION);
                 return Self::quiet_nan();
             }
 
@@ -652,7 +683,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         // finite / 0, signaling divide_by_zero exception
         if b.is_zero() {
-            set_exception_flag(ExceptionFlags::DIVIDE_BY_ZERO);
+            set_exception_flags(ExceptionFlags::DIVIDE_BY_ZERO);
             return Self::infinity(sign);
         }
 
@@ -715,7 +746,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         // Handling NaN
         if self.is_nan() {
             if self.is_signaling() {
-                set_exception_flag(ExceptionFlags::DIVIDE_BY_ZERO);
+                set_exception_flags(ExceptionFlags::DIVIDE_BY_ZERO);
                 return Self::quiet_nan();
             }
 
@@ -729,7 +760,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         // For non-zero negative number, sqrt is not defined
         if self.sign() {
-            set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+            set_exception_flags(ExceptionFlags::INVALID_OPERATION);
             return Self::quiet_nan();
         }
 
@@ -817,7 +848,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         if a.is_infinite() {
             // If Infinity * 0, then invalid operation
             if b.is_zero() {
-                set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+                set_exception_flags(ExceptionFlags::INVALID_OPERATION);
                 return Self::quiet_nan();
             }
 
@@ -828,7 +859,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
             // Infinity - Infinity
             if c.is_infinite() && c.sign() != sign_product {
-                set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+                set_exception_flags(ExceptionFlags::INVALID_OPERATION);
                 return Self::quiet_nan();
             }
 
@@ -941,7 +972,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     ) -> (bool, T) {
         // Round NaN to the maximum value
         if self.is_nan() {
-            set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+            set_exception_flags(ExceptionFlags::INVALID_OPERATION);
             return (false, positive_max);
         }
 
@@ -951,7 +982,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         // Round positive/negative infinities to max/min, respectively.
         if self.is_infinite() {
-            set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+            set_exception_flags(ExceptionFlags::INVALID_OPERATION);
             return (sign, max);
         }
 
@@ -978,7 +1009,7 @@ impl<Desc: FpDesc> Fp<Desc> {
             // We does not merge this with the normal case, as negative zero should be made possible
             // before returning.
             if significand == Desc::Holder::zero() {
-                set_exception_flag(ExceptionFlags::INEXACT);
+                set_exception_flags(ExceptionFlags::INEXACT);
                 return (false, T::zero());
             }
 
@@ -988,13 +1019,13 @@ impl<Desc: FpDesc> Fp<Desc> {
                 Ok(v) if v <= max => v,
                 _ => {
                     // Either it does not fit into T, or it exceeds max.
-                    set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+                    set_exception_flags(ExceptionFlags::INVALID_OPERATION);
                     return (sign, max);
                 }
             };
 
             if inexact {
-                set_exception_flag(ExceptionFlags::INEXACT)
+                set_exception_flags(ExceptionFlags::INEXACT)
             }
             return (sign, significand);
         }
@@ -1010,7 +1041,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         let remaining_bits = T::bit_width() as i32 - Desc::SIGNIFICAND_WIDTH as i32 + 1;
         if remaining_bits < 0 || effective_exponent > remaining_bits {
             // Overflow case.
-            set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+            set_exception_flags(ExceptionFlags::INVALID_OPERATION);
             return (sign, max);
         }
 
@@ -1020,7 +1051,7 @@ impl<Desc: FpDesc> Fp<Desc> {
 
         // Do bound check and return.
         if result > max {
-            set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+            set_exception_flags(ExceptionFlags::INVALID_OPERATION);
             return (sign, max);
         }
 
@@ -1060,7 +1091,7 @@ impl<Desc: FpDesc> Fp<Desc> {
         // Handle NaN, infinity and zero
         if self.is_nan() {
             if self.is_signaling() {
-                set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+                set_exception_flags(ExceptionFlags::INVALID_OPERATION);
             }
             return Fp::<TDesc>::quiet_nan();
         }
@@ -1227,7 +1258,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     pub fn min_max(a: Self, b: Self) -> (Self, Self) {
         if a.is_nan() || b.is_nan() {
             if a.is_signaling() || b.is_signaling() {
-                set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+                set_exception_flags(ExceptionFlags::INVALID_OPERATION);
                 return (Self::quiet_nan(), Self::quiet_nan());
             }
 
@@ -1269,7 +1300,7 @@ impl<Desc: FpDesc> Fp<Desc> {
     /// Compare two numbers, triggering floating point exceptions when NaN is encountered.
     pub fn compare_signaling(a: Self, b: Self) -> Option<Ordering> {
         if a.is_nan() || b.is_nan() {
-            set_exception_flag(ExceptionFlags::INVALID_OPERATION);
+            set_exception_flags(ExceptionFlags::INVALID_OPERATION);
             return None;
         }
         if a.is_zero() && b.is_zero() {

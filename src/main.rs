@@ -129,7 +129,6 @@ pub fn main() {
 
     // Top priority: set up page fault handlers so safe_memory features will work.
     emu::signal::init();
-    emu::interp::init_fp();
     pretty_env_logger::init();
 
     let mut args = std::env::args();
