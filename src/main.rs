@@ -290,6 +290,7 @@ pub fn main() {
             newctx.mideleg = 0x222;
             newctx.medeleg = 0xB35D;
             newctx.mcounteren = 0b111;
+            newctx.scounteren = 0b111;
         }
 
         let fiber = fiber::FiberContext::new(UnsafeCell::new(newctx));
