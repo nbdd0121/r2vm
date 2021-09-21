@@ -103,10 +103,20 @@ impl IoMemory for Clint {
             }
             0x4000..=0xBFF7 => {
                 let hart = (addr - 0x4000) / 8;
-                if size != 8 || hart >= self.0.mtimecmp.len() {
+                if hart >= self.0.mtimecmp.len() {
                     error!(target: "CLINT", "illegal register write 0x{:x} = 0x{:x}", addr, value);
                     return;
                 }
+                let value = if size == 8 {
+                    value
+                } else {
+                    let oldvalue = self.0.mtimecmp[hart].load(Ordering::Relaxed);
+                    if addr & 4 == 0 {
+                        oldvalue & 0xffffffff00000000 | value as u32 as u64
+                    } else {
+                        oldvalue & 0xffffffff | (value as u32 as u64) << 32
+                    }
+                };
                 self.0.mtimecmp[hart].store(value, Ordering::Relaxed);
 
                 let new_time = Duration::from_micros(value);
