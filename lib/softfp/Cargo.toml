@@ -9,3 +9,4 @@ bitflags = "1.1"
 
 [features]
 register = []
+default = ["register"]
