@@ -30,7 +30,7 @@ unsafe impl LRawRwLock for RawRwLock {
     }
 
     #[inline]
-    fn unlock_exclusive(&self) {
+    unsafe fn unlock_exclusive(&self) {
         self.write.unlock()
     }
 
@@ -42,7 +42,7 @@ unsafe impl LRawRwLock for RawRwLock {
             self.write.lock();
         }
         self.readers.set(readers + 1);
-        self.read.unlock();
+        unsafe { self.read.unlock() };
     }
 
     #[inline]
@@ -58,12 +58,12 @@ unsafe impl LRawRwLock for RawRwLock {
             }
         }
         self.readers.set(readers + 1);
-        self.read.unlock();
+        unsafe { self.read.unlock() };
         true
     }
 
     #[inline]
-    fn unlock_shared(&self) {
+    unsafe fn unlock_shared(&self) {
         self.read.lock();
         let readers = self.readers.get() - 1;
         self.readers.set(readers);
@@ -71,6 +71,11 @@ unsafe impl LRawRwLock for RawRwLock {
             self.write.unlock();
         }
         self.read.unlock();
+    }
+
+    #[inline]
+    fn is_locked(&self) -> bool {
+        self.write.is_locked()
     }
 }
 

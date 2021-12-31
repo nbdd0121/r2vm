@@ -120,7 +120,7 @@ unsafe impl LRawMutex for RawMutex {
     }
 
     #[inline]
-    fn unlock(&self) {
+    unsafe fn unlock(&self) {
         if self
             .locked
             .compare_exchange(LOCKED_BIT, 0, Ordering::Release, Ordering::Relaxed)
@@ -128,6 +128,11 @@ unsafe impl LRawMutex for RawMutex {
         {
             self.unlock_slow();
         }
+    }
+
+    #[inline]
+    fn is_locked(&self) -> bool {
+        self.locked.load(Ordering::Relaxed) & LOCKED_BIT != 0
     }
 }
 
@@ -177,7 +182,7 @@ impl Condvar {
                 }
                 true
             },
-            || {
+            || unsafe {
                 mutex.unlock();
             },
         );

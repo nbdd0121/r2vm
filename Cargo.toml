@@ -21,19 +21,19 @@ cc = "1.0"
 
 [dependencies]
 log = "0.4"
-pretty_env_logger = "0.3"
+pretty_env_logger = "0.4"
 libc = "0.2"
-rand = "0.7"
-rand_chacha = "0.2"
+rand = "0.8"
+rand_chacha = "0.3"
 byteorder = "1.3"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.5"
-eui48 = "0.4"
-lock_api = "0.3"
-parking_lot = "0.9"
+eui48 = "1.1"
+lock_api = "0.4"
+parking_lot = "0.11"
 futures = "0.3"
 once_cell = "1.3"
-memoffset = "0.5"
+memoffset = "0.6"
 softfp = { version = "0.1", default-features = false }
 p9 = { path = "lib/p9" }
 x86 = { path = "lib/x86" }

@@ -146,7 +146,7 @@ extern "C" fn timer_mod(timer: *mut c_void, expire_time: i64, opaque: *mut c_voi
         }
     }));
 
-    Arc::into_raw(timer);
+    core::mem::forget(timer);
 }
 
 extern "C" fn register_poll_fd(_fd: c_int, _opaque: *mut c_void) {}

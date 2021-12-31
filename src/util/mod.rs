@@ -24,11 +24,11 @@ impl ILog2 for usize {
     }
 
     fn clog2(self) -> usize {
-        (self - 1).log2() + 1
+        ILog2::log2(self - 1) + 1
     }
 
     fn log2_assert(self) -> usize {
-        let log2 = self.log2();
+        let log2 = ILog2::log2(self);
         assert_eq!(1 << log2, self);
         log2
     }
@@ -40,11 +40,11 @@ impl ILog2 for u64 {
     }
 
     fn clog2(self) -> usize {
-        (self - 1).log2() + 1
+        ILog2::log2(self - 1) + 1
     }
 
     fn log2_assert(self) -> usize {
-        let log2 = self.log2();
+        let log2 = ILog2::log2(self);
         assert_eq!(1 << log2, self);
         log2
     }
