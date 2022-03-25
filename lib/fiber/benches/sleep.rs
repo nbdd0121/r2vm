@@ -1,4 +1,4 @@
-#![feature(test, llvm_asm, naked_functions)]
+#![feature(test, naked_functions)]
 
 extern crate test;
 
@@ -28,17 +28,19 @@ fn run(fiber: usize, iter: usize) {
     });
 }
 
-#[inline(never)]
 #[naked]
 unsafe extern "C" fn test(_x: usize) {
-    llvm_asm!("call fiber_save_raw
+    core::arch::asm!(
+        "call fiber_save_raw
     push rdi
-    l:
+    2:
     call fiber_yield_raw
     sub qword ptr [rsp], 1
-    jnz l
+    jnz 2b
     pop rdi
-    jmp fiber_restore_ret_raw"::::"intel");
+    jmp fiber_restore_ret_raw",
+        options(noreturn)
+    );
 }
 
 fn run_asm(fiber: usize, iter: usize) {
