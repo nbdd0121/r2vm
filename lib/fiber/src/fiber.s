@@ -118,10 +118,12 @@ fiber_start:
 1:
     mov [rbp + OFFSET_DATA + 0x200000 - 16], rsp
     mov [rbp + OFFSET_DATA + 0x200000 - 24], rax
+    mov rdx, rbp
     mov rbp, [rbp + OFFSET_NEXT]
     cmp rbp, rdi
     jne 1b
 
+    mov rbp, [rdx + OFFSET_NEXT_AVAIL]
     mov rsp, [rbp + OFFSET_STACK_POINTER]
     ret
 

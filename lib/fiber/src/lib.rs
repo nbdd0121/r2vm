@@ -315,7 +315,7 @@ impl<'a> FiberGroup<'a> {
         // All modifications to fiber structures must hold the lock.
         let mut guard = group.mutex.lock();
 
-        // Unpause has been called on thie fiber between `prepare_pause` and `pause`.
+        // Unpause has been called on this fiber between `prepare_pause` and `pause`.
         if !stack.data().paused.load(Ordering::Relaxed) {
             return true;
         }
@@ -392,6 +392,10 @@ impl<'a> FiberGroup<'a> {
             unsafe {
                 Self::prepare_pause(stack);
                 Self::pause(stack);
+
+                // All modifications to fiber structures must hold the lock.
+                let mut _guard = inner.mutex.lock();
+
                 let prev = stack.data().prev;
                 if stack == inner.first.unwrap() {
                     inner.first = Some(next);

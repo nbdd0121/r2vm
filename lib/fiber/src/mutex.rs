@@ -67,7 +67,7 @@ impl RawMutex {
                 }
             }
 
-            // Park the fiber until woekn up by unlock again
+            // Park the fiber until woken up by unlock again
             park(
                 self as *const _ as usize,
                 || {

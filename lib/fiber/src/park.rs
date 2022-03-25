@@ -87,8 +87,8 @@ pub fn unpark_all(key: usize, token: UnparkToken) {
         while let Some(mut entry) = ptr {
             let entry = unsafe { entry.as_mut() };
             entry.token = token;
-            unsafe { FiberGroup::unpause(entry.fiber) };
             ptr = entry.next;
+            unsafe { FiberGroup::unpause(entry.fiber) };
         }
     }
 }
