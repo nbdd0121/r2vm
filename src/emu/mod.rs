@@ -300,11 +300,11 @@ pub fn read_memory<T: Copy>(addr: usize) -> T {
 }
 
 pub fn io_read(addr: usize, size: u32) -> u64 {
-    assert!(addr < *IO_BOUNDARY, "{:x} access out-of-bound", addr);
+    assert!(addr >= 4096 && addr < *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     IO_SYSTEM.read(addr, size)
 }
 
 pub fn io_write(addr: usize, value: u64, size: u32) {
-    assert!(addr < *IO_BOUNDARY, "{:x} access out-of-bound", addr);
+    assert!(addr >= 4096 && addr < *IO_BOUNDARY, "{:x} access out-of-bound", addr);
     IO_SYSTEM.write(addr, value, size)
 }
