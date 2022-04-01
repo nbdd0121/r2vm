@@ -159,7 +159,12 @@ impl TLB for PageWalker {
 }
 
 impl dyn TLB {
-    pub fn translate(&self, ctx: &mut Context, addr: u64, ty: AccessType) -> Result<(u64, bool), ()> {
+    pub fn translate(
+        &self,
+        ctx: &mut Context,
+        addr: u64,
+        ty: AccessType,
+    ) -> Result<(u64, bool), ()> {
         let (prv, asid) = prv_asid_of_ctx(ctx, ty == AccessType::Execute);
         if asid == Asid::Physical {
             return Ok((addr, true));
@@ -243,12 +248,7 @@ impl TLBModel {
             d_tlbs.push(d_tlb);
         }
 
-        Self {
-            i_tlbs: i_tlbs.into(),
-            d_tlbs: d_tlbs.into(),
-            i_stats,
-            d_stats,
-        }
+        Self { i_tlbs: i_tlbs.into(), d_tlbs: d_tlbs.into(), i_stats, d_stats }
     }
 }
 
