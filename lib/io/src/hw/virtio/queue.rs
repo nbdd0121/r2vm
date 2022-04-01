@@ -106,7 +106,7 @@ impl Queue {
         // Now we have obtained this descriptor, increment the index to skip over this.
         self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
 
-        let mut avail = Buffer {
+        let mut avail = BufferInner {
             queue: self.inner.clone(),
             idx,
             bytes_written: 0,
@@ -139,7 +139,7 @@ impl Queue {
             idx = desc.next;
         }
 
-        Ok(Some(avail))
+        Ok(Some(Buffer(avail)))
     }
 
     /// Get a buffer from the available ring.
@@ -160,6 +160,9 @@ impl Queue {
     }
 
     pub async fn put(&mut self, buffer: Buffer) {
+        // Get inner without invoking the `Buffer::drop`.
+        let buffer = unsafe { std::mem::transmute::<_, BufferInner>(buffer) };
+
         if !Arc::ptr_eq(&buffer.queue, &self.inner) {
             panic!("Buffer can only be put back to the originating queue");
         }
@@ -181,13 +184,10 @@ impl Queue {
 
         self.last_used_idx = self.last_used_idx.wrapping_add(1);
         self.dma_ctx.write_u16(used_addr + 2, self.last_used_idx).await;
-
-        std::mem::forget(buffer);
     }
 }
 
-/// A buffer passed from the kernel to the virtio device.
-pub struct Buffer {
+struct BufferInner {
     queue: Arc<Mutex<QueueInner>>,
     idx: u16,
     bytes_written: usize,
@@ -197,6 +197,10 @@ pub struct Buffer {
     write_len: usize,
     dma_ctx: Arc<dyn DmaContext>,
 }
+
+/// A buffer passed from the kernel to the virtio device.
+#[repr(transparent)]
+pub struct Buffer(BufferInner);
 
 impl Drop for Buffer {
     fn drop(&mut self) {
@@ -209,25 +213,25 @@ impl Buffer {
     /// Get the readonly part of this buffer.
     pub fn reader(&self) -> BufferReader<'_> {
         BufferReader {
-            buffer: &self.read,
-            len: self.read_len,
+            buffer: &self.0.read,
+            len: self.0.read_len,
             pos: 0,
             slice_idx: 0,
             slice_offset: 0,
-            dma_ctx: &*self.dma_ctx,
+            dma_ctx: &*self.0.dma_ctx,
         }
     }
 
     /// Get the write-only part of this buffer.
     pub fn writer(&mut self) -> BufferWriter<'_> {
         BufferWriter {
-            buffer: &self.write,
-            len: self.write_len,
-            bytes_written: &mut self.bytes_written,
+            buffer: &self.0.write,
+            len: self.0.write_len,
+            bytes_written: &mut self.0.bytes_written,
             pos: 0,
             slice_idx: 0,
             slice_offset: 0,
-            dma_ctx: &*self.dma_ctx,
+            dma_ctx: &*self.0.dma_ctx,
         }
     }
 
@@ -235,21 +239,21 @@ impl Buffer {
     pub fn reader_writer(&mut self) -> (BufferReader<'_>, BufferWriter<'_>) {
         (
             BufferReader {
-                buffer: &self.read,
-                len: self.read_len,
+                buffer: &self.0.read,
+                len: self.0.read_len,
                 pos: 0,
                 slice_idx: 0,
                 slice_offset: 0,
-                dma_ctx: &*self.dma_ctx,
+                dma_ctx: &*self.0.dma_ctx,
             },
             BufferWriter {
-                buffer: &self.write,
-                len: self.write_len,
-                bytes_written: &mut self.bytes_written,
+                buffer: &self.0.write,
+                len: self.0.write_len,
+                bytes_written: &mut self.0.bytes_written,
                 pos: 0,
                 slice_idx: 0,
                 slice_offset: 0,
-                dma_ctx: &*self.dma_ctx,
+                dma_ctx: &*self.0.dma_ctx,
             },
         )
     }
