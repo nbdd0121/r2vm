@@ -222,7 +222,7 @@ impl IoMemory for XemacLite {
 
     fn write(&self, addr: usize, value: u64, size: u32) {
         let mut state = self.inner.state.lock();
-        let mut state = &mut *state;
+        let state = &mut *state;
 
         // For wider access, break it into 32-bit memory accesses if necessary
         if size == 8 && (addr & 0x7ff) < 0x7e0 {

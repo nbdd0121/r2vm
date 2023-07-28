@@ -54,7 +54,7 @@ impl Block {
                 let (mut reader, mut writer) = buffer.reader_writer();
 
                 let header: VirtioBlkReqHeader = unsafe {
-                    let mut header: [u8; 16] = std::mem::MaybeUninit::uninit().assume_init();
+                    let mut header = [0u8; 16];
                     reader.read_exact(&mut header).await.unwrap();
                     std::mem::transmute(header)
                 };

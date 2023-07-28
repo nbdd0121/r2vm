@@ -24,11 +24,15 @@ pub struct CacheLine {
 
 impl Default for CacheLine {
     fn default() -> Self {
-        Self { tag: AtomicU64::new(i64::max_value() as u64), paddr: AtomicU64::new(0) }
+        Self::new()
     }
 }
 
 impl CacheLine {
+    pub const fn new() -> Self {
+        Self { tag: AtomicU64::new(i64::max_value() as u64), paddr: AtomicU64::new(0) }
+    }
+
     pub fn invalidate(&self) {
         self.tag.store(i64::max_value() as u64, MemOrder::Relaxed);
     }
@@ -95,23 +99,13 @@ impl SharedContext {
         assert_eq!(offset_of!(Context, cycle_offset), 0x128);
         assert_eq!(offset_of!(Context, shared) + offset_of!(SharedContext, alarm), 0x130);
 
+        const CACHE_LINE: CacheLine = CacheLine::new();
+
         SharedContext {
             mip: AtomicU64::new(0),
             alarm: AtomicU64::new(0),
-            line: unsafe {
-                let mut arr: [CacheLine; 1024] = std::mem::MaybeUninit::uninit().assume_init();
-                for item in arr.iter_mut() {
-                    std::ptr::write(item, Default::default());
-                }
-                arr
-            },
-            i_line: unsafe {
-                let mut arr: [CacheLine; 1024] = std::mem::MaybeUninit::uninit().assume_init();
-                for item in arr.iter_mut() {
-                    std::ptr::write(item, Default::default());
-                }
-                arr
-            },
+            line: [CACHE_LINE; 1024],
+            i_line: [CACHE_LINE; 1024],
             rm: AtomicU32::new(0),
             fflags: AtomicU32::new(0),
             wfi_mutex: fiber::Mutex::new(()),
