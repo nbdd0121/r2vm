@@ -112,7 +112,7 @@ extern "C" fn timer_new(
 }
 
 extern "C" fn timer_free(timer: *mut c_void, _opaque: *mut c_void) {
-    unsafe { Arc::from_raw(timer) };
+    unsafe { Arc::from_raw(timer as *const Timer) };
 }
 
 extern "C" fn timer_mod(timer: *mut c_void, expire_time: i64, opaque: *mut c_void) {
