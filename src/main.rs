@@ -8,26 +8,12 @@ pub mod emu;
 pub mod sim;
 pub mod util;
 
+use clap::{CommandFactory, FromArgMatches, Parser};
 use ro_cell::RoCell;
 use std::cell::UnsafeCell;
-use std::ffi::CString;
+use std::ffi::{CString, OsString};
+use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
-
-macro_rules! usage_string {
-    () => {
-        "Usage: {} [options] program [arguments...]
-Options:
-  --strace              Log system calls.
-  --disassemble         Log decoded instructions.
-  --perf                Generate /tmp/perf-<PID>.map for perf tool.
-  --lockstep            Use lockstep non-threaded mode for execution.
-  --wfi-nop             Treat WFI as nops in lock-step mode.
-  --sysroot             Change the sysroot to a non-default value.
-  --dump-fdt            Save FDT to the specified path.
-  --help                Display this help message.
-"
-    };
-}
 
 pub struct Flags {
     // A flag to determine whether to print instruction out when it is decoded.
@@ -52,7 +38,7 @@ pub struct Flags {
     wfi_nop: bool,
 
     /// Dump FDT option
-    dump_fdt: Option<String>,
+    dump_fdt: Option<OsString>,
 
     /// A flag to determine whether to trace all system calls. If true then all guest system calls will be logged.
     strace: bool,
@@ -63,6 +49,34 @@ pub struct Flags {
     /// Path of sysroot. When the guest application tries to open a file, and the corresponding file exists in sysroot,
     /// it will be redirected.
     sysroot: PathBuf,
+}
+
+#[derive(Parser)]
+pub struct Args {
+    /// Log system calls.
+    #[arg(long)]
+    strace: bool,
+    /// Log decoded instructions.
+    #[arg(long)]
+    disassemble: bool,
+    /// Generate /tmp/perf-<PID>.map for perf tool.
+    #[arg(long)]
+    perf: bool,
+    /// Use lockstep non-threaded mode for execution.
+    #[arg(long)]
+    lockstep: bool,
+    /// Turn WFI instructions to NOPs instead of sleeping.
+    #[arg(long)]
+    wfi_nop: bool,
+    /// Change the sysroot to a non-default value.
+    #[arg(long)]
+    sysroot: Option<OsString>,
+    /// Save FDT to the specified path.
+    #[arg(long)]
+    dump_fdt: Option<OsString>,
+    #[arg(value_name = "PROGRAM")]
+    exec_path: OsString,
+    arguments: Vec<OsString>,
 }
 
 static FLAGS: RoCell<Flags> = unsafe { RoCell::new_uninit() };
@@ -131,82 +145,42 @@ pub fn main() {
     emu::signal::init();
     pretty_env_logger::init();
 
-    let mut args = std::env::args();
-
-    // Ignore interpreter name
-    let mut item = args.next();
-    let interp_name = item.expect("program name should not be absent");
+    let mut command = Args::command();
+    let args = Args::from_arg_matches_mut(&mut command.get_matches_mut()).unwrap();
 
     let mut flags = Flags {
-        disassemble: false,
+        disassemble: args.disassemble,
         prv: 1,
-        perf: false,
+        perf: args.perf,
         thread: true,
-        blocking_io: false,
-        model_id: 0,
-        wfi_nop: false,
-        dump_fdt: None,
-        strace: false,
+        blocking_io: !args.lockstep,
+        model_id: if args.lockstep { 1 } else { 0 },
+        wfi_nop: args.wfi_nop,
+        dump_fdt: args.dump_fdt,
+        strace: args.strace,
         exec_path: CString::default(),
-        sysroot: "/opt/riscv/sysroot".into(),
+        sysroot: args.sysroot.unwrap_or_else(|| "/opt/riscv/sysroot".into()).into(),
     };
 
-    item = args.next();
-    while let Some(ref arg) = item {
-        // We've parsed all arguments. This indicates the name of the executable.
-        if !arg.starts_with('-') {
-            break;
-        }
-
-        match arg.as_str() {
-            "--strace" => flags.strace = true,
-            "--disassemble" => flags.disassemble = true,
-            "--perf" => flags.perf = true,
-            "--lockstep" => {
-                flags.model_id = 1;
-                flags.blocking_io = true;
-            }
-            "--wfi-nop" => flags.wfi_nop = true,
-            "--help" => {
-                eprintln!(usage_string!(), interp_name);
-                std::process::exit(0);
-            }
-            _ => {
-                if arg.starts_with("--sysroot=") {
-                    flags.sysroot = arg["--sysroot=".len()..].into();
-                } else if arg.starts_with("--dump-fdt=") {
-                    let path_slice = &arg["--dump-fdt=".len()..];
-                    flags.dump_fdt = Some(path_slice.to_owned());
-                } else {
-                    eprintln!("{}: unrecognized option '{}'", interp_name, arg);
-                    std::process::exit(1);
-                }
-            }
-        }
-
-        item = args.next();
-    }
-
-    let program_name = item.unwrap_or_else(|| {
-        eprintln!(usage_string!(), interp_name);
-        std::process::exit(1);
-    });
-
-    flags.exec_path = CString::new(program_name.as_str()).unwrap();
+    let program_name = args.exec_path;
+    flags.exec_path = CString::new(program_name.as_bytes()).unwrap();
 
     unsafe { RoCell::init(&FLAGS, flags) };
 
     let mut loader = emu::loader::Loader::new(program_name.as_ref()).unwrap_or_else(|err| {
-        eprintln!("{}: cannot load {}: {}", interp_name, program_name, err);
-        std::process::exit(1);
+        command
+            .error(
+                clap::error::ErrorKind::ValueValidation,
+                format_args!("cannot load {}: {}", program_name.to_string_lossy(), err),
+            )
+            .exit();
     });
 
     // We accept two types of input. The file can either be a user-space ELF file,
     // or it can be a config file.
     if loader.is_elf() {
         if let Err(msg) = loader.validate_elf() {
-            eprintln!("{}: {}", interp_name, msg);
-            std::process::exit(1);
+            command.error(clap::error::ErrorKind::ValueValidation, msg).exit();
         }
         unsafe { RoCell::as_mut(&FLAGS).prv = 0 }
     } else {
@@ -214,19 +188,25 @@ pub fn main() {
         // directly, but as full-system emulation requires many peripheral devices as well,
         // we decided to only accept config files.
         let Ok(toml_str) = std::str::from_utf8(loader.as_slice()) else {
-            eprintln!("{}: invalid config file: not utf8", interp_name);
-            std::process::exit(1);
+            command
+                .error(clap::error::ErrorKind::InvalidUtf8, "invalid config file: not utf8")
+                .exit();
         };
         let config: config::Config = toml::from_str(toml_str).unwrap_or_else(|err| {
-            eprintln!("{}: invalid config file: {}", interp_name, err);
-            std::process::exit(1);
+            command
+                .error(
+                    clap::error::ErrorKind::ValueValidation,
+                    format_args!("invalid config file: {}", err),
+                )
+                .exit();
         });
         unsafe { RoCell::init(&CONFIG, config) };
 
         // Currently due to our icache implementation, we cannot efficiently support >32 cores
         if CONFIG.core > 32 {
-            eprintln!("{}: at most 32 cores allowed", interp_name);
-            std::process::exit(1);
+            command
+                .error(clap::error::ErrorKind::ValueValidation, "at most 32 cores allowed")
+                .exit();
         }
 
         if CONFIG.firmware.is_some() {
@@ -234,8 +214,12 @@ pub fn main() {
         }
 
         loader = emu::loader::Loader::new(&CONFIG.kernel).unwrap_or_else(|err| {
-            eprintln!("{}: cannot load {}: {}", interp_name, CONFIG.kernel.to_string_lossy(), err);
-            std::process::exit(1);
+            command
+                .error(
+                    clap::error::ErrorKind::ValueValidation,
+                    format_args!("cannot load {}: {}", CONFIG.kernel.to_string_lossy(), err),
+                )
+                .exit();
         });
     }
 
@@ -313,15 +297,23 @@ pub fn main() {
 
     // Load the program
     unsafe {
-        emu::loader::load(&loader, &mut std::iter::once(program_name).chain(args), &mut contexts)
+        emu::loader::load(
+            &loader,
+            &mut std::iter::once(program_name).chain(args.arguments),
+            &mut contexts,
+        )
     };
     std::mem::drop(loader);
 
     // Load firmware if present
     if let Some(ref firmware) = CONFIG.firmware {
         let loader = emu::loader::Loader::new(firmware).unwrap_or_else(|err| {
-            eprintln!("{}: cannot load {}: {}", interp_name, firmware.to_string_lossy(), err);
-            std::process::exit(1);
+            command
+                .error(
+                    clap::error::ErrorKind::ValueValidation,
+                    format_args!("cannot load {}: {}", firmware.to_string_lossy(), err),
+                )
+                .exit();
         });
         // Load this past memory location
         let location = 0x40000000 + ((CONFIG.memory * 0x100000 + 0x1fffff) & !0x1fffff);

@@ -1,9 +1,10 @@
 use super::abi;
 use super::interp::Context;
 use rand::RngCore;
-use std::ffi::CStr;
+use std::ffi::{CStr, OsString};
 use std::fs::File;
 use std::io::Write;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
 use std::path::Path;
 
@@ -371,7 +372,7 @@ impl Loader {
 
 pub unsafe fn load(
     file: &Loader,
-    args: &mut dyn Iterator<Item = String>,
+    args: &mut dyn Iterator<Item = OsString>,
     ctxs: &mut [&mut Context],
 ) {
     if crate::get_flags().prv == 0 {

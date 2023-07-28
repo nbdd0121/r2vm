@@ -42,6 +42,7 @@ fdt = { path = "lib/fdt" }
 fiber = { path = "lib/fiber" }
 ro_cell = { path = "lib/ro_cell" }
 io = { path = "lib/io", features = ["serde"] }
+clap = { version = "4.3", features = ["derive", "deprecated"] }
 
 [profile.dev]
 opt-level = "z"
