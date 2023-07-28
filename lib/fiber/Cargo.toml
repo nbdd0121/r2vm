@@ -7,10 +7,10 @@ edition = "2018"
 [dependencies]
 libc = "0.2"
 lock_api = "0.4"
-parking_lot = "0.11"
+parking_lot = "0.12"
 fnv = "1.0"
 once_cell = "1.3"
-memoffset = "0.6"
+memoffset = "0.9"
 
 [build-dependencies]
 cc = "1.0"

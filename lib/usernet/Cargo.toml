@@ -7,6 +7,6 @@ edition = "2018"
 
 [dependencies]
 libslirp-sys = { git = "https://gitlab.freedesktop.org/nbdd0121/libslirp-sys.git" }
-parking_lot = "0.11"
+parking_lot = "0.12"
 libc = "0.2"
 log = "0.4"

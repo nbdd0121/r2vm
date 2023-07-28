@@ -213,7 +213,11 @@ pub fn main() {
         // Full-system emulation is needed. Originally we uses kernel path as "program name"
         // directly, but as full-system emulation requires many peripheral devices as well,
         // we decided to only accept config files.
-        let config: config::Config = toml::from_slice(loader.as_slice()).unwrap_or_else(|err| {
+        let Ok(toml_str) = std::str::from_utf8(loader.as_slice()) else {
+            eprintln!("{}: invalid config file: not utf8", interp_name);
+            std::process::exit(1);
+        };
+        let config: config::Config = toml::from_str(toml_str).unwrap_or_else(|err| {
             eprintln!("{}: invalid config file: {}", interp_name, err);
             std::process::exit(1);
         });
