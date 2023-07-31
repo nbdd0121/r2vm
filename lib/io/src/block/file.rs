@@ -13,6 +13,37 @@ pub struct File {
     len: u64,
 }
 
+#[cfg(windows)]
+fn get_disk_len(f: &mut std::fs::File) -> Result<u64> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Ioctl::{GET_LENGTH_INFORMATION, IOCTL_DISK_GET_LENGTH_INFO};
+
+    let handle = HANDLE(f.as_raw_handle() as _);
+    let mut out_buffer: GET_LENGTH_INFORMATION = Default::default();
+    let mut bytes_returned = 0;
+
+    let ret = unsafe {
+        windows::Win32::System::IO::DeviceIoControl(
+            handle,
+            IOCTL_DISK_GET_LENGTH_INFO,
+            None,
+            0,
+            Some(&mut out_buffer as *mut GET_LENGTH_INFORMATION as _),
+            std::mem::size_of::<GET_LENGTH_INFORMATION>() as _,
+            Some(&mut bytes_returned),
+            None,
+        )
+        .as_bool()
+    };
+
+    if !ret {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    Ok(out_buffer.Length as _)
+}
+
 fn query_len(f: &mut std::fs::File) -> Result<u64> {
     if let Ok(metadata) = f.metadata() {
         if metadata.is_file() {
@@ -20,10 +51,15 @@ fn query_len(f: &mut std::fs::File) -> Result<u64> {
         }
     }
 
-    if let Ok(x) = f.seek(SeekFrom::End(0)) {
-        if x != 0 {
-            return Ok(x);
+    if let Ok(len) = f.seek(SeekFrom::End(0)) {
+        if len != 0 {
+            return Ok(len);
         }
+    }
+
+    #[cfg(windows)]
+    if let Ok(len) = get_disk_len(f) {
+        return Ok(len);
     }
 
     Err(Error::new(ErrorKind::Other, "cannot get file size"))

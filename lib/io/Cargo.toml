@@ -21,6 +21,9 @@ usernet = { path = "../usernet", optional = true }
 p9 = { path = "../p9", optional = true }
 fdt = { path = "../fdt", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.48", optional = true, features = ["Win32_System_Ioctl", "Win32_System_IO", "Win32_Foundation"] }
+
 [features]
 default = [
     "block-file",
@@ -40,7 +43,7 @@ default = [
     "virtio-console",
     "system",
 ]
-block-file = []
+block-file = ["windows"]
 block-shadow = ["fnv"]
 network-logger = ["byteorder"]
 network-usernet = ["usernet"]
