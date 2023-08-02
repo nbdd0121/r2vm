@@ -194,7 +194,7 @@ impl IoSystem {
             .open(&config.config.path)
             .unwrap();
         let file = crate::block::File::new(file).unwrap();
-        let file: Box<dyn crate::block::Block + Send> = if config.config.shadow {
+        let file: Box<dyn crate::block::Block + Send + Sync> = if config.config.shadow {
             Box::new(crate::block::Shadow::new(file))
         } else {
             Box::new(file)

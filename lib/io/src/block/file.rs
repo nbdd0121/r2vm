@@ -77,12 +77,12 @@ impl File {
 
 impl Block for File {
     #[cfg(unix)]
-    fn read_exact_at(&mut self, buf: &mut [u8], offset: u64) -> Result<()> {
+    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> Result<()> {
         self.file.read_exact_at(buf, offset)
     }
 
     #[cfg(windows)]
-    fn read_exact_at(&mut self, mut buf: &mut [u8], mut offset: u64) -> Result<()> {
+    fn read_exact_at(&self, mut buf: &mut [u8], mut offset: u64) -> Result<()> {
         while !buf.is_empty() {
             match self.file.seek_read(buf, offset) {
                 Ok(0) => {
@@ -103,12 +103,12 @@ impl Block for File {
     }
 
     #[cfg(unix)]
-    fn write_all_at(&mut self, buf: &[u8], offset: u64) -> Result<()> {
+    fn write_all_at(&self, buf: &[u8], offset: u64) -> Result<()> {
         self.file.write_all_at(buf, offset)
     }
 
     #[cfg(windows)]
-    fn write_all_at(&mut self, mut buf: &[u8], mut offset: u64) -> Result<()> {
+    fn write_all_at(&self, mut buf: &[u8], mut offset: u64) -> Result<()> {
         while !buf.is_empty() {
             match self.file.seek_write(buf, offset) {
                 Ok(0) => {
@@ -125,7 +125,7 @@ impl Block for File {
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<()> {
+    fn flush(&self) -> Result<()> {
         self.file.sync_data()
     }
 

@@ -1,7 +1,6 @@
 use super::{Device, DeviceId, Queue};
 use crate::block::Block as BlockDevice;
 use crate::{IrqPin, RuntimeContext};
-use parking_lot::Mutex;
 use std::sync::Arc;
 
 #[allow(dead_code)]
@@ -28,7 +27,7 @@ pub struct Block {
 }
 
 struct Inner {
-    file: Mutex<Box<dyn BlockDevice + Send>>,
+    file: Box<dyn BlockDevice + Send + Sync>,
     irq: Box<dyn IrqPin>,
 }
 
@@ -37,13 +36,13 @@ impl Block {
     pub fn new(
         ctx: Arc<dyn RuntimeContext>,
         irq: Box<dyn IrqPin>,
-        file: Box<dyn BlockDevice + Send>,
+        file: Box<dyn BlockDevice + Send + Sync>,
     ) -> Block {
         let len = file.len();
         if len % 512 != 0 {
             panic!("Size of block device must be multiple of 512 bytes");
         }
-        let inner = Arc::new(Inner { file: Mutex::new(file), irq });
+        let inner = Arc::new(Inner { file, irq });
         Block { status: 0, config: (len / 512).to_le_bytes(), ctx, inner }
     }
 
@@ -64,11 +63,8 @@ impl Block {
                         let mut io_buffer = Vec::with_capacity(writer.len());
                         unsafe { io_buffer.set_len(io_buffer.capacity() - 1) };
 
-                        {
-                            let mut file = inner.file.lock();
-                            (*file).read_exact_at(&mut io_buffer, header.sector * 512).unwrap();
-                            trace!(target: "VirtioBlk", "read {} bytes from sector {:x}", io_buffer.len(), header.sector);
-                        }
+                        inner.file.read_exact_at(&mut io_buffer, header.sector * 512).unwrap();
+                        trace!(target: "VirtioBlk", "read {} bytes from sector {:x}", io_buffer.len(), header.sector);
 
                         io_buffer.push(0);
                         writer.write_all(&io_buffer).await.unwrap();
@@ -78,13 +74,10 @@ impl Block {
                         unsafe { io_buffer.set_len(io_buffer.capacity()) };
                         reader.read_exact(&mut io_buffer).await.unwrap();
 
-                        {
-                            let mut file = inner.file.lock();
-                            file.write_all_at(&io_buffer, header.sector * 512).unwrap();
-                            // We must make sure the data has been flushed into the disk before returning
-                            file.flush().unwrap();
-                            trace!(target: "VirtioBlk", "write {} bytes from sector {:x}", io_buffer.len(), header.sector);
-                        }
+                        inner.file.write_all_at(&io_buffer, header.sector * 512).unwrap();
+                        // We must make sure the data has been flushed into the disk before returning
+                        inner.file.flush().unwrap();
+                        trace!(target: "VirtioBlk", "write {} bytes from sector {:x}", io_buffer.len(), header.sector);
 
                         writer.write_all(&[0]).await.unwrap();
                     }

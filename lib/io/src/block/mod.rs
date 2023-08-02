@@ -35,17 +35,17 @@ pub trait Block {
     /// Reads the exact number of byte required to fill buf from the given offset.
     ///
     /// Caller must ensure `offset` and buffer size is aligned to `blksize` queried by `capability`.
-    fn read_exact_at(&mut self, buf: &mut [u8], offset: u64) -> Result<()>;
+    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> Result<()>;
 
     /// Attempts to write an entire buffer starting from a given offset.
     ///
     /// Caller must ensure `offset` and buffer size is aligned to `blksize` queried by `capability`.
-    fn write_all_at(&mut self, buf: &[u8], offset: u64) -> Result<()>;
+    fn write_all_at(&self, buf: &[u8], offset: u64) -> Result<()>;
 
     /// Attempts to write zero to a given offset.
     ///
     /// Caller must ensure `offset` and `len` is aligned to `blksize` queried by `capability`.
-    fn write_zero_at(&mut self, offset: u64, len: usize) -> Result<()> {
+    fn write_zero_at(&self, offset: u64, len: usize) -> Result<()> {
         let buf = vec![0; len];
         self.write_all_at(&buf, offset)
     }
@@ -53,13 +53,13 @@ pub trait Block {
     /// Discard contents at the given offset.
     ///
     /// Caller must ensure `offset` and `len` is aligned to `blksize` queried by `capability`.
-    fn discard(&mut self, offset: u64, len: usize) -> Result<()> {
+    fn discard(&self, offset: u64, len: usize) -> Result<()> {
         let _ = (offset, len);
         Ok(())
     }
 
     /// Flush this block device.
-    fn flush(&mut self) -> Result<()> {
+    fn flush(&self) -> Result<()> {
         Ok(())
     }
 
