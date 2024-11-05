@@ -1,0 +1,4 @@
+[build]
+rustflags = [
+    "-C", "link-arg=-Wl,-Ttext-segment=0x7fff00000000", "-Zlinker-features=-lld"
+]
