@@ -1,4 +1,4 @@
-#![feature(test, naked_functions)]
+#![feature(test)]
 
 extern crate test;
 
@@ -28,9 +28,9 @@ fn run(fiber: usize, iter: usize) {
     });
 }
 
-#[naked]
+#[unsafe(naked)]
 unsafe extern "C" fn test(_x: usize) {
-    core::arch::asm!(
+    core::arch::naked_asm!(
         "call fiber_save_raw
     push rdi
     2:
@@ -38,8 +38,7 @@ unsafe extern "C" fn test(_x: usize) {
     sub qword ptr [rsp], 1
     jnz 2b
     pop rdi
-    jmp fiber_restore_ret_raw",
-        options(noreturn)
+    jmp fiber_restore_ret_raw"
     );
 }
 
